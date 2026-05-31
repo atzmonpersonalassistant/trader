@@ -2,6 +2,20 @@
 
 Trading tools and experiments.
 
+## Options Trade Lab
+
+Research-first options trading lab for challenging and evaluating options trade ideas before risking capital. Planning and context live under:
+
+- `docs/options-trade-lab/README.md`
+- `docs/options-trade-lab/PROJECT_PLAN.md`
+- `docs/options-trade-lab/ARCHITECTURE.md`
+- `docs/options-trade-lab/context/`
+
+Legacy scanner code preserved for migration/reference lives under:
+
+- `legacy/options-trade-lab-scanner/`
+
+
 ## Options Radar
 
 Local option-chain scanner for low-priced contracts. It does **not** depend on Google Sheets.
