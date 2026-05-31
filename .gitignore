@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local config and generated output
+config/universe.csv
+output/
+*.log
+.DS_Store
