@@ -43,3 +43,26 @@ Useful environment variables:
 - `OPTIONS_RADAR_IGNORE_WRAPPER_WINDOW=1` — bypass wrapper time gate
 
 Information only, not investment advice.
+
+## Market Radar
+
+RSS-only market-news radar. It fetches market RSS feeds, scores relevant items, deduplicates stories, stores seen item IDs locally, and optionally sends a concise WhatsApp summary.
+
+```bash
+MARKET_RADAR_IGNORE_MARKET_WINDOW=1 uv run python scripts/market_radar_scan.py --ignore-market-window
+```
+
+Runtime files are written under `output/` by default:
+
+- `output/market_radar_state.json`
+- `output/market_radar_cron.log`
+
+Useful environment variables:
+
+- `MARKET_RADAR_WHATSAPP_TARGET` — optional WhatsApp target for sending summaries
+- `MARKET_RADAR_STATE_PATH` — state file path
+- `MARKET_RADAR_LOG_FILE` — wrapper log file
+- `MARKET_RADAR_IGNORE_MARKET_WINDOW=1` — bypass script market-hours gate
+- `MARKET_RADAR_IGNORE_WRAPPER_WINDOW=1` — bypass wrapper time gate
+
+RSS only — no YouTube and no independent stock scanning.
