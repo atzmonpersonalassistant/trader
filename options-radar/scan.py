@@ -20,8 +20,8 @@ from zoneinfo import ZoneInfo
 DEFAULT_EXPIRIES = ["2026-06-18", "2026-07-17"]
 DEFAULT_MAX_PRICE = 0.30
 DEFAULT_MAX_WORKERS = 8
-DEFAULT_UNIVERSE = Path("config/universe.csv")
-DEFAULT_OUTPUT_DIR = Path("output")
+DEFAULT_UNIVERSE = Path("options-radar/universe.csv")
+DEFAULT_OUTPUT_DIR = Path("options-radar/output")
 HEADER = [
     "Scan timestamp", "Ticker", "Company / Theme", "Category", "Underlying price",
     "Expiry", "Type", "Strike", "Bid", "Ask", "Mid", "Volume", "Open interest",
@@ -42,7 +42,7 @@ def load_universe(path):
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
-            f"Universe file not found: {path}. Copy config/universe.example.csv to config/universe.csv "
+            f"Universe file not found: {path}. Copy options-radar/universe.example.csv to options-radar/universe.csv "
             "or pass --universe /path/to/file.csv"
         )
 

@@ -27,8 +27,8 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 WHATSAPP_TARGET = os.environ.get("MARKET_RADAR_WHATSAPP_TARGET", "")
-STATE_PATH = Path(os.environ.get("MARKET_RADAR_STATE_PATH", "output/market_radar_state.json"))
-LOG_PATH = Path(os.environ.get("MARKET_RADAR_LOG_PATH", "output/market_radar_cron.log"))
+STATE_PATH = Path(os.environ.get("MARKET_RADAR_STATE_PATH", "market-radar/output/market_radar_state.json"))
+LOG_PATH = Path(os.environ.get("MARKET_RADAR_LOG_PATH", "market-radar/output/market_radar_cron.log"))
 
 FEEDS = [
     {
