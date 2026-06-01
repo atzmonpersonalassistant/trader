@@ -11,6 +11,7 @@ Scanner for low-priced option contracts across a local ticker universe.
 - Main docs: `options-radar/README.md`
 - Main script: `options-radar/scan.py`
 - Scheduler wrapper: `options-radar/run.sh`
+- Outputs: `options-radar/output/options-radar.csv`, `options-radar/output/options-radar.json`, and optional WhatsApp summary
 - Universe example: `options-radar/universe.example.csv`
 
 ### `market-radar/`
@@ -20,10 +21,11 @@ RSS-only market-news radar that scores and deduplicates high-value market items.
 - Main docs: `market-radar/README.md`
 - Main script: `market-radar/scan.py`
 - Scheduler wrapper: `market-radar/run.sh`
+- Outputs: `market-radar/output/market_radar_state.json`, `market-radar/output/market_radar_cron.log`, and optional WhatsApp summary
 
 ### `options-trade-lab/`
 
-Research/planning docs for the broader Options Trade Lab idea.
+Research/planning docs for the broader Options Trade Lab idea. Currently no runtime output; planned future outputs live under `options-trade-lab/data/results/` and `options-trade-lab/reports/`.
 
 Legacy scanner code from the old `legacy/options-trade-lab-scanner` folder was intentionally removed from this repo structure; active scanner work should live in a dedicated top-level project directory.
 

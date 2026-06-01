@@ -41,6 +41,21 @@ uv run --with yfinance --with pandas python options-radar/scan.py \
   --ignore-market-window
 ```
 
+
+## Outputs
+
+By default, scanner results are written under:
+
+- `options-radar/output/options-radar.csv` — latest tabular candidate list.
+- `options-radar/output/options-radar.json` — latest machine-readable candidate list.
+- `options-radar/output/options_radar_cron.log` — wrapper log when `run.sh` is used with the default log path.
+
+The output directory can be changed with `--output-dir` or `OPTIONS_RADAR_OUTPUT_DIR`.
+
+If `OPTIONS_RADAR_WHATSAPP_TARGET` or `--send-whatsapp-to` is set, the scanner also sends the concise summary to that WhatsApp chat.
+
+`options-radar/output/*` is ignored by git except for `output/README.md`. Runtime outputs are disposable artifacts, not source-of-truth research records.
+
 ## Scheduler wrapper
 
 ```bash

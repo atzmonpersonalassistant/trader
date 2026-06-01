@@ -17,6 +17,24 @@ Design constraints:
 - `run.sh` — launchd/cron-friendly wrapper with weekday/time gates.
 - `output/` — local state/logs when configured to write here.
 
+
+## Outputs
+
+By default, runtime state/logs are written under:
+
+- `market-radar/output/market_radar_state.json` — deduplication state for seen RSS items and recently sent stories.
+- `market-radar/output/market_radar_cron.log` — wrapper log when `run.sh` is used with the default log path.
+
+The paths can be changed with:
+
+- `MARKET_RADAR_STATE_PATH`
+- `MARKET_RADAR_LOG_FILE` for the wrapper log
+- `MARKET_RADAR_LOG_PATH` for the script's internal log path if used
+
+If `MARKET_RADAR_WHATSAPP_TARGET` is set, high-value summaries are sent to that WhatsApp chat. If it is not set, the message is printed to stdout instead.
+
+`market-radar/output/*` is ignored by git except for `output/README.md`. Runtime state/logs are local artifacts.
+
 ## Run manually
 
 From the repo root:
