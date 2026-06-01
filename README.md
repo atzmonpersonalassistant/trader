@@ -21,7 +21,7 @@ RSS-only market-news radar that scores and deduplicates high-value market items.
 - Main script: `market-radar/scan.py`
 - Scheduler wrapper: `market-radar/run.sh`
 
-### `docs/options-trade-lab/`
+### `options-trade-lab/`
 
 Research/planning docs for the broader Options Trade Lab idea.
 
