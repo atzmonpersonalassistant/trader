@@ -52,7 +52,7 @@ By default, scanner results are written under:
 
 The output directory can be changed with `--output-dir` or `OPTIONS_RADAR_OUTPUT_DIR`.
 
-If `OPTIONS_RADAR_WHATSAPP_TARGET` or `--send-whatsapp-to` is set, the scanner also sends the concise summary to that WhatsApp chat.
+If `OPTIONS_RADAR_WHATSAPP_TARGET` or `--send-whatsapp-to` is set, the scanner also sends the concise summary to the **Options radar** WhatsApp group. The repo does not hard-code the group JID; configure it through `OPTIONS_RADAR_WHATSAPP_TARGET` (or `--send-whatsapp-to` for manual runs).
 
 `options-radar/output/*` is ignored by git except for `output/README.md`. Runtime outputs are disposable artifacts, not source-of-truth research records.
 
@@ -69,7 +69,7 @@ Useful environment variables:
 - `OPTIONS_RADAR_UNIVERSE` — path to universe CSV.
 - `OPTIONS_RADAR_OUTPUT_DIR` — output directory.
 - `OPTIONS_RADAR_MAX_PRICE` — max ask/mid filter, default `$0.30`.
-- `OPTIONS_RADAR_WHATSAPP_TARGET` — optional WhatsApp target for sending summaries.
+- `OPTIONS_RADAR_WHATSAPP_TARGET` — WhatsApp target for the **Options radar** group.
 - `OPTIONS_RADAR_LOG_FILE` — wrapper log file.
 - `OPTIONS_RADAR_IGNORE_WRAPPER_WINDOW=1` — bypass wrapper time gate.
 
