@@ -4,6 +4,16 @@ Minimal Interactive Brokers Gateway client utility for local IB Gateway account 
 
 This project is intentionally **read-only** for now. It does not place, modify, or cancel orders.
 
+## Quick run
+
+One-liner from anywhere:
+
+```bash
+cd ~/.openclaw/workspace/code/trader && ibkr-client/run.sh
+```
+
+The runner opens IB Gateway, auto-detects the local API port (`4002` or `4001`), runs diagnostics, and writes JSON to `ibkr-client/output/client.json`.
+
 ## Intended setup
 
 Use **IB Gateway only** for automation-oriented access. TWS is intentionally out of scope for this project.
@@ -35,13 +45,14 @@ What it does:
 1. opens the installed IB Gateway app;
 2. waits a few seconds so you can complete login if needed;
 3. prints diagnostics;
-4. tries the read-only client against Paper Gateway port `4002`;
-5. writes JSON to `ibkr-client/output/client.json`.
+4. auto-detects Gateway port `4002` or `4001`;
+5. tries the read-only client;
+6. writes JSON to `ibkr-client/output/client.json`.
 
 Useful overrides:
 
 ```bash
-IBKR_CLIENT_PORT=4002 IBKR_CLIENT_SYMBOL=AAPL ibkr-client/run.sh
+IBKR_CLIENT_SYMBOL=AAPL ibkr-client/run.sh
 ```
 
 ## Install/run
