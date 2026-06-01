@@ -31,7 +31,7 @@ The paths can be changed with:
 - `MARKET_RADAR_LOG_FILE` for the wrapper log
 - `MARKET_RADAR_LOG_PATH` for the script's internal log path if used
 
-If `MARKET_RADAR_WHATSAPP_TARGET` is set, high-value summaries are sent to that WhatsApp chat. If it is not set, the message is printed to stdout instead.
+If `MARKET_RADAR_WHATSAPP_TARGET` is set, high-value summaries are sent to the **Market Radar** WhatsApp group. The repo does not hard-code the group JID; configure it through `MARKET_RADAR_WHATSAPP_TARGET`. If it is not set, the message is printed to stdout instead.
 
 `market-radar/output/*` is ignored by git except for `output/README.md`. Runtime state/logs are local artifacts.
 
@@ -51,7 +51,7 @@ market-radar/run.sh
 
 Useful environment variables:
 
-- `MARKET_RADAR_WHATSAPP_TARGET` — optional WhatsApp target for sending summaries.
+- `MARKET_RADAR_WHATSAPP_TARGET` — WhatsApp target for the **Market Radar** group.
 - `MARKET_RADAR_STATE_PATH` — state file path.
 - `MARKET_RADAR_LOG_FILE` — wrapper log file.
 - `MARKET_RADAR_IGNORE_MARKET_WINDOW=1` — bypass script market-hours gate.
