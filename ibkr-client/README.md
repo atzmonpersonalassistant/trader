@@ -1,25 +1,24 @@
 # IBKR Client
 
-Minimal Interactive Brokers client utilities for local connectivity checks and market/account data access.
+Minimal Interactive Brokers Gateway client utilities for local connectivity checks and market/account data access.
 
 This project is intentionally **read-only** for now. It does not place, modify, or cancel orders.
 
 ## Intended setup
 
-Use **IB Gateway**, not TWS, for automation-oriented access.
+Use **IB Gateway only** for automation-oriented access. TWS is intentionally out of scope for this project.
 
 Recommended first connection:
 
 - Environment: **Paper Trading**
 - Host: `127.0.0.1`
-- Common paper ports:
+- Common paper port:
   - IB Gateway paper: `4002`
-  - TWS paper: `7497`
 - Keep API access restricted to localhost at first.
 
 ## Files
 
-- `connectivity_check.py` — connects to IB Gateway/TWS and prints basic account and quote data.
+- `connectivity_check.py` — connects to IB Gateway and prints basic account and quote data.
 - `output/` — optional local outputs/logs.
 
 ## Install/run
@@ -28,12 +27,6 @@ From repo root:
 
 ```bash
 uv run --with ib-insync python ibkr-client/connectivity_check.py --host 127.0.0.1 --port 4002
-```
-
-If using TWS paper instead:
-
-```bash
-uv run --with ib-insync python ibkr-client/connectivity_check.py --host 127.0.0.1 --port 7497
 ```
 
 Test a different symbol:
