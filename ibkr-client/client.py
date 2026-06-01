@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only IBKR connectivity check.
+"""Read-only IBKR Gateway client.
 
 Connects to a local IB Gateway API socket, reads basic account metadata and
 one market-data snapshot, then disconnects. This script intentionally contains
@@ -73,7 +73,7 @@ def market_snapshot(ib: IB, symbol: str, exchange: str, currency: str) -> dict:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Read-only IBKR connectivity check")
+    p = argparse.ArgumentParser(description="Read-only IBKR Gateway client")
     p.add_argument("--host", default="127.0.0.1", help="IB Gateway API host")
     p.add_argument("--port", type=int, default=4002, help="IB Gateway API port; paper Gateway commonly 4002")
     p.add_argument("--client-id", type=int, default=71, help="API client id")
