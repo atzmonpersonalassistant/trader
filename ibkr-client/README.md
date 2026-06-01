@@ -29,6 +29,18 @@ From repo root:
 uv run --with ib-insync python ibkr-client/client.py --host 127.0.0.1 --port 4002
 ```
 
+Local diagnostics only, without connecting to the API:
+
+```bash
+uv run --with ib-insync python ibkr-client/client.py --diagnose
+```
+
+Open the installed Gateway app first, then try connecting:
+
+```bash
+uv run --with ib-insync python ibkr-client/client.py --start-gateway --host 127.0.0.1 --port 4002
+```
+
 Test a different symbol:
 
 ```bash
@@ -37,16 +49,28 @@ uv run --with ib-insync python ibkr-client/client.py --symbol AAPL
 
 ## Outputs
 
-By default this script prints JSON to stdout only.
+By default this script prints JSON to stdout only. The JSON includes local diagnostics: whether the Gateway app exists, matching Gateway processes, and whether common Gateway API ports are listening.
 
 If `--output ibkr-client/output/client.json` is passed, it also writes the result there.
 
 Runtime outputs are ignored by git except for `output/README.md`.
 
-## What the check reads
+
+## Current local status note
+
+On this Mac, IB Gateway 10.45 was installed under:
+
+```text
+~/Applications/IB Gateway 10.45/IB Gateway 10.45.app
+```
+
+The client can open that app with `--start-gateway`, but the API socket will not listen until Gateway is logged in and API access is enabled/configured inside Gateway.
+
+## What the client reads
 
 The client attempts to read:
 
+- local Gateway process/port diagnostics;
 - server version / connection status;
 - managed accounts;
 - account summary;
