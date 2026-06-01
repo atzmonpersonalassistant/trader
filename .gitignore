@@ -3,8 +3,15 @@ __pycache__/
 *.py[cod]
 .venv/
 
-# Local config and generated output
-config/universe.csv
-output/
+# Local config
+options-radar/universe.csv
+
+# Generated scanner output/logs
+options-radar/output/*
+!options-radar/output/README.md
+market-radar/output/*
+!market-radar/output/README.md
 *.log
+
+# OS/editor noise
 .DS_Store

@@ -25,7 +25,7 @@ SCRIPT_DIR="${0:A:h}"
 REPO_DIR="${SCRIPT_DIR:h}"
 cd "$REPO_DIR"
 
-LOG_FILE="${MARKET_RADAR_LOG_FILE:-$REPO_DIR/output/market_radar_cron.log}"
+LOG_FILE="${MARKET_RADAR_LOG_FILE:-$SCRIPT_DIR/output/market_radar_cron.log}"
 mkdir -p "${LOG_FILE:h}"
 
-/opt/homebrew/bin/uv run python scripts/market_radar_scan.py "$@" >> "$LOG_FILE" 2>&1
+/opt/homebrew/bin/uv run python market-radar/scan.py "$@" >> "$LOG_FILE" 2>&1

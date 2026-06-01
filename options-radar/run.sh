@@ -25,8 +25,8 @@ SCRIPT_DIR="${0:A:h}"
 REPO_DIR="${SCRIPT_DIR:h}"
 cd "$REPO_DIR"
 
-LOG_FILE="${OPTIONS_RADAR_LOG_FILE:-$REPO_DIR/output/options_radar_cron.log}"
+LOG_FILE="${OPTIONS_RADAR_LOG_FILE:-$SCRIPT_DIR/output/options_radar_cron.log}"
 mkdir -p "${LOG_FILE:h}"
 
 /opt/homebrew/bin/uv run --with yfinance --with pandas \
-  python scripts/options_radar_scan.py "$@" >> "$LOG_FILE" 2>&1
+  python options-radar/scan.py "$@" >> "$LOG_FILE" 2>&1
