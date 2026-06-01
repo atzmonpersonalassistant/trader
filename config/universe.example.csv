@@ -1,4 +1,10 @@
 Ticker,Company / Theme,Category,Notes,Use in scanner
-IBM,IBM,AI / Enterprise tech,,TRUE
-HPE,Hewlett Packard Enterprise,Infrastructure,,TRUE
-CRDO,Credo Technology Group,Semiconductors,,TRUE
+PANW,Palo Alto Networks,Earnings / cybersecurity,Weekly event scanner; options may be liquid but event IV risk,TRUE
+GTLB,GitLab,Earnings / software,Weekly event scanner; event IV risk,TRUE
+AVGO,Broadcom,Earnings / semiconductors,Weekly event scanner; high-priced underlying; check spreads,TRUE
+CRWD,CrowdStrike,Earnings / cybersecurity,Weekly event scanner; options may be liquid but event IV risk,TRUE
+AI,C3.ai,Earnings / AI software,Weekly event scanner; highly volatile/event IV risk,TRUE
+LULU,Lululemon,Earnings / consumer discretionary,Weekly event scanner; event IV risk,TRUE
+CRDO,Credo Technology Group,User reminder / semiconductor connectivity,Uriel asked to check/remind; daily options scanner,TRUE
+HPE,Hewlett Packard Enterprise,User reminder / enterprise hardware,Uriel asked to check/remind; daily options scanner,TRUE
+IBM,IBM,User reminder / enterprise tech,Uriel asked to check/remind; daily options scanner,TRUE
