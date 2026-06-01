@@ -1,6 +1,6 @@
 # IBKR Client
 
-Minimal Interactive Brokers Gateway client utilities for local connectivity checks and market/account data access.
+Minimal Interactive Brokers Gateway client utility for local IB Gateway account and market data access.
 
 This project is intentionally **read-only** for now. It does not place, modify, or cancel orders.
 
@@ -18,7 +18,7 @@ Recommended first connection:
 
 ## Files
 
-- `connectivity_check.py` — connects to IB Gateway and prints basic account and quote data.
+- `client.py` — connects to IB Gateway and prints basic account and quote data.
 - `output/` — optional local outputs/logs.
 
 ## Install/run
@@ -26,26 +26,26 @@ Recommended first connection:
 From repo root:
 
 ```bash
-uv run --with ib-insync python ibkr-client/connectivity_check.py --host 127.0.0.1 --port 4002
+uv run --with ib-insync python ibkr-client/client.py --host 127.0.0.1 --port 4002
 ```
 
 Test a different symbol:
 
 ```bash
-uv run --with ib-insync python ibkr-client/connectivity_check.py --symbol AAPL
+uv run --with ib-insync python ibkr-client/client.py --symbol AAPL
 ```
 
 ## Outputs
 
 By default this script prints JSON to stdout only.
 
-If `--output ibkr-client/output/connectivity.json` is passed, it also writes the result there.
+If `--output ibkr-client/output/client.json` is passed, it also writes the result there.
 
 Runtime outputs are ignored by git except for `output/README.md`.
 
 ## What the check reads
 
-The connectivity check attempts to read:
+The client attempts to read:
 
 - server version / connection status;
 - managed accounts;

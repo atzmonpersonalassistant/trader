@@ -39,8 +39,8 @@ Rolling earnings options-volatility radar. It dynamically builds a daily univers
 Read-only Interactive Brokers connectivity utilities for **IB Gateway only**. Starts with local Paper Trading checks only: managed accounts, account summary, positions, and one quote snapshot.
 
 - Main docs: `ibkr-client/README.md`
-- Main script: `ibkr-client/connectivity_check.py`
-- Outputs: stdout by default, or `ibkr-client/output/connectivity.json` when `--output` is supplied
+- Main script: `ibkr-client/client.py`
+- Outputs: stdout by default, or `ibkr-client/output/client.json` when `--output` is supplied
 
 ### `options-trade-lab/`
 
