@@ -21,6 +21,29 @@ Recommended first connection:
 - `client.py` — connects to IB Gateway and prints basic account and quote data.
 - `output/` — optional local outputs/logs.
 
+
+## One-command local run
+
+From repo root:
+
+```bash
+ibkr-client/run.sh
+```
+
+What it does:
+
+1. opens the installed IB Gateway app;
+2. waits a few seconds so you can complete login if needed;
+3. prints diagnostics;
+4. tries the read-only client against Paper Gateway port `4002`;
+5. writes JSON to `ibkr-client/output/client.json`.
+
+Useful overrides:
+
+```bash
+IBKR_CLIENT_PORT=4002 IBKR_CLIENT_SYMBOL=AAPL ibkr-client/run.sh
+```
+
 ## Install/run
 
 From repo root:
