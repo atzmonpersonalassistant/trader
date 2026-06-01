@@ -20,8 +20,20 @@ This is **not** a live-trading system. Live execution is explicitly out of scope
 
 - `PROJECT_PLAN.md` — task list and approval workflow.
 - `ARCHITECTURE.md` — proposed modular architecture.
-- `docs/context/` — conversation-derived context, preferences, lessons, and source-of-truth notes.
-- `legacy/trading-scanner/` — existing scanner code copied from the older local trading folder for reference/migration.
+- `context/` — conversation-derived context, preferences, lessons, and source-of-truth notes.
+
+
+## Outputs
+
+This project is currently a research/planning folder, not a runnable scanner. It does not generate runtime outputs yet.
+
+The intended future output locations, according to `ARCHITECTURE.md`, are:
+
+- `options-trade-lab/data/results/` — scan and backtest output artifacts.
+- `options-trade-lab/reports/daily/` — generated daily candidate reports.
+- `options-trade-lab/reports/backtests/` — generated backtest reports.
+
+When implementation starts, generated data/results/reports should be clearly documented here and ignored/tracked intentionally in `.gitignore`.
 
 ## Workflow Rule
 
