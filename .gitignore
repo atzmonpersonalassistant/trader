@@ -22,3 +22,7 @@ earnings-volatility-radar/config/watchlist.csv
 earnings-volatility-radar/data/earnings_history.csv
 earnings-volatility-radar/output/*
 !earnings-volatility-radar/output/README.md
+
+# IBKR Client local/runtime files
+ibkr-client/output/*
+!ibkr-client/output/README.md

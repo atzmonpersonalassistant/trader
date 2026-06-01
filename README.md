@@ -33,6 +33,15 @@ Rolling earnings options-volatility radar. It dynamically builds a daily univers
 - Scheduler wrapper: `earnings-volatility-radar/run.sh`
 - Outputs: `earnings-volatility-radar/output/candidates.csv`, `earnings-volatility-radar/output/candidates.json`, and optional WhatsApp summary to the Options radar group
 
+
+### `ibkr-client/`
+
+Read-only Interactive Brokers connectivity utilities for IB Gateway/TWS. Starts with local Paper Trading checks only: managed accounts, account summary, positions, and one quote snapshot.
+
+- Main docs: `ibkr-client/README.md`
+- Main script: `ibkr-client/connectivity_check.py`
+- Outputs: stdout by default, or `ibkr-client/output/connectivity.json` when `--output` is supplied
+
 ### `options-trade-lab/`
 
 Research/planning docs for the broader Options Trade Lab idea. Currently no runtime output; planned future outputs live under `options-trade-lab/data/results/` and `options-trade-lab/reports/`.
