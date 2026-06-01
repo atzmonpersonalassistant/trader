@@ -23,6 +23,16 @@ RSS-only market-news radar that scores and deduplicates high-value market items.
 - Scheduler wrapper: `market-radar/run.sh`
 - Outputs: `market-radar/output/market_radar_state.json`, `market-radar/output/market_radar_cron.log`, and optional WhatsApp summary to the Market Radar group
 
+
+### `earnings-volatility-radar/`
+
+Rolling earnings options-volatility radar. It dynamically builds a daily universe from upcoming earnings plus a fixed watchlist, estimates expected moves from ATM straddles, compares them with local earnings-move history, and classifies candidates for manual review.
+
+- Main docs: `earnings-volatility-radar/README.md`
+- Main script: `earnings-volatility-radar/scan.py`
+- Scheduler wrapper: `earnings-volatility-radar/run.sh`
+- Outputs: `earnings-volatility-radar/output/candidates.csv`, `earnings-volatility-radar/output/candidates.json`, and optional WhatsApp summary to the Options radar group
+
 ### `options-trade-lab/`
 
 Research/planning docs for the broader Options Trade Lab idea. Currently no runtime output; planned future outputs live under `options-trade-lab/data/results/` and `options-trade-lab/reports/`.
