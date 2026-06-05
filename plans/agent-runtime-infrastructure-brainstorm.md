@@ -360,9 +360,94 @@ Runtime:
   - Do not use an unmanaged long-running Claude/Codex chat as the final architecture
 ```
 
+
 ---
 
-## 12. Open Questions
+## 12. Agent Health / Heartbeat Monitor
+
+Add a lightweight health-monitor agent/process whose only job is to reflect the operational status of all agents to Uriel.
+
+Logical name:
+
+```text
+Agent Health Monitor
+```
+
+This can run on the Governance VM. It does not need its own model most of the time; a script is enough. Claude can be invoked only when summarization or anomaly explanation is useful.
+
+Responsibilities:
+
+- Track whether each agent is alive and running on schedule.
+- Track last successful cycle per agent.
+- Track last attempted task per agent.
+- Track current status: idle, working, blocked, failed, degraded.
+- Track GitHub API/auth health.
+- Track model backend health: Codex available, Claude available.
+- Track budget/cost limits if available.
+- Track VM disk/CPU/memory basics.
+- Track stuck jobs and repeated failures.
+- Send concise heartbeat summaries to Uriel.
+
+Suggested monitored agents:
+
+```text
+trader-builder / Coding Agent
+trader-governance / Review Agent
+trader-governance / Quant Validator
+trader-governance / Reporter-Orchestrator
+```
+
+Suggested state file/table fields:
+
+```text
+agent_id
+role
+host
+last_cycle_started_at
+last_cycle_finished_at
+last_success_at
+last_error_at
+last_error_summary
+current_state
+current_task_ref
+last_github_object
+model_backend
+model_last_ok_at
+consecutive_failures
+```
+
+Suggested heartbeat cadence:
+
+- Internal health check: every 5–10 minutes.
+- User-facing summary: once or twice per day if everything is healthy.
+- Immediate alert: critical failure, auth failure, budget cap hit, repeated failures, stuck job, disk full, or no successful cycle for too long.
+
+Example normal report:
+
+```text
+Trader agents heartbeat:
+- Builder: healthy, idle, last cycle 09:40
+- Reviewer: healthy, reviewed PR #12 at 09:35
+- Quant Validator: healthy, no pending artifacts
+- Reporter: healthy, last summary sent yesterday 22:10
+- Issues: none
+```
+
+Example alert:
+
+```text
+Trader agents alert:
+- Reviewer failed 3 consecutive cycles.
+- Cause: GitHub token expired / 401.
+- Impact: PR reviews are not running.
+- Suggested action: rotate trader-review-agent token.
+```
+
+The Health Monitor should not become the primary orchestrator. It observes and reports. The individual agents still decide their own work by polling GitHub.
+
+---
+
+## 13. Open Questions
 
 1. Should the runtime be OpenClaw, Hermes, or a small custom daemon?
 2. Should the two GitHub identities be machine users or GitHub Apps?
@@ -374,7 +459,7 @@ Runtime:
 
 ---
 
-## 13. Suggested Next Step
+## 14. Suggested Next Step
 
 Before provisioning cloud infrastructure, define a concrete MVP runtime plan:
 
