@@ -254,6 +254,61 @@ It should not receive:
 
 The reviewer should behave like a cold, independent judge of the PR.
 
+### Review Idempotency
+
+The Review Agent must not write repeated reviews for the same code state.
+
+A PR review should be keyed by at least:
+
+```text
+repo
+pr_number
+head_sha
+review_agent_version
+review_policy_version
+relevant_context_hash
+```
+
+Before writing a new review/check/comment, the Review Agent should check whether it has already reviewed the current `head_sha` with the same policy/context. If yes, it should not post another duplicate review.
+
+Allowed reasons to review again:
+
+- PR head SHA changed.
+- Review policy/checklist changed.
+- Relevant plan/spec file changed.
+- CI/test/backtest result changed materially.
+- Human explicitly requested re-review with a command/label/comment.
+- Prior review failed/incomplete due to tool/runtime error.
+
+Preferred output behavior:
+
+- Use GitHub Check Runs as the canonical pass/fail state for the current SHA.
+- Post a PR comment only when there are new findings or a meaningful status change.
+- If the same finding still applies, update/replace the prior bot comment if practical, or avoid reposting noise.
+
+### PR Readiness Trigger
+
+It may be better for the heavier Claude-based Validator to wake only after the PR reaches a useful state, rather than every polling cycle.
+
+Potential readiness conditions:
+
+```text
+PR is open
+PR is not draft
+head_sha has not been validated yet
+required CI finished
+unit/lint/notebook checks passed or produced artifacts
+backtest smoke/full results are available when relevant
+```
+
+Recommended behavior:
+
+- Codex Review Agent can run early on diff/static checks.
+- Claude Quant Validator should usually wait until CI/backtest artifacts exist, or until the PR is explicitly marked ready for validation.
+- Reporter should summarize only meaningful transitions, not every polling cycle.
+
+This reduces duplicate comments, wasted model calls, and noisy reviews.
+
 Expected output:
 
 ```text
