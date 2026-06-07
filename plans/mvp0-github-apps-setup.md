@@ -294,3 +294,39 @@ Group B is complete when:
 - App IDs and Installation IDs are recorded in config.
 - Private keys are stored as secrets, not in git.
 - Token helper can mint installation tokens for orchestrator/coding/review.
+
+---
+
+## 10. Prepared Manifest Flow Helper
+
+A helper script is available:
+
+```bash
+python3 tools/github_app_manifest_flow.py serve
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8787/
+```
+
+The helper prepares GitHub App manifests for all four Apps:
+
+```text
+trading-orchestrator-agent
+trading-coding-agent
+trading-review-agent
+trading-validator-agent
+```
+
+The fourth App, `trading-validator-agent`, is included even though it is not active in MVP-0. Creating it now completes the identity set and avoids reopening GitHub App setup later.
+
+After GitHub redirects back to the local helper, the helper converts the manifest code and saves outputs outside git:
+
+```text
+~/.trading-agents/github-apps/<role>.private-key.pem
+~/.trading-agents/github-apps/<role>.app.json
+```
+
+Do not commit these files.
