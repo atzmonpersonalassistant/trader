@@ -76,6 +76,25 @@ Mandatory human approval gates:
 
 ### Group A — Repository and Branch Protection
 
+Status: Completed ✅
+
+Completed evidence:
+
+```text
+Repo: atzmonpersonalassistant/trader
+Default branch: main
+Labels: created
+Branch protection: enabled on main
+Required status check: review-agent/pass
+GitHub native auto-merge: enabled
+Merge method: squash
+Merge commits: disabled
+Rebase merge: disabled
+Delete branch on merge: enabled
+Force push/deletion on main: disabled
+```
+
+
 #### A1. Confirm target repo
 
 Goal: Confirm MVP-0 target repository.
