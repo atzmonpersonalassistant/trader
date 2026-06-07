@@ -99,10 +99,6 @@ def manifest_for(role: str) -> dict:
         "description": spec["description"],
         "redirect_url": f"{BASE_URL}/callback?role={urllib.parse.quote(role)}",
         "callback_urls": [f"{BASE_URL}/callback?role={urllib.parse.quote(role)}"],
-        "hook_attributes": {
-            "active": False,
-            "url": f"{BASE_URL}/unused-webhook",
-        },
         "public": False,
         "default_permissions": spec["permissions"],
         "default_events": [],
