@@ -330,3 +330,5 @@ After GitHub redirects back to the local helper, the helper converts the manifes
 ```
 
 Do not commit these files.
+
+Manifest helper note: the manifest intentionally omits webhook/hook attributes. MVP-0 uses polling only, and GitHub rejects localhost webhook URLs even when the intended webhook flow is inactive.
