@@ -174,13 +174,22 @@ mvp0
 
 ### Group B — GitHub Apps
 
-Status: In progress 🟡
+Status: Completed ✅
 
-Current progress:
+Completed evidence:
 
 ```text
-GitHub App setup guide created: plans/mvp0-github-apps-setup.md
-Manual GitHub UI creation still required for the Apps and private keys.
+GitHub App setup guide: plans/mvp0-github-apps-setup.md
+Manifest helper: tools/github_app_manifest_flow.py
+Token helper: tools/trading_agent_token.py
+
+trading-orchestrator-agent app_id=3988813 installation_id=138640121
+trading-coding-agent       app_id=3988816 installation_id=138640143
+trading-review-agent       app_id=3988836 installation_id=138640182
+trading-validator-agent    app_id=3988837 installation_id=138640218
+
+Private keys saved outside git under ~/.trading-agents/github-apps/*.private-key.pem
+Installation tokens successfully minted for all four Apps.
 ```
 
 

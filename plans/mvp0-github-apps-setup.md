@@ -332,3 +332,49 @@ After GitHub redirects back to the local helper, the helper converts the manifes
 Do not commit these files.
 
 Manifest helper note: the manifest intentionally omits webhook/hook attributes. MVP-0 uses polling only, and GitHub rejects localhost webhook URLs even when the intended webhook flow is inactive.
+
+---
+
+## 11. Created Apps and Installation IDs
+
+Created on 2026-06-07.
+
+```yaml
+apps:
+  orchestrator:
+    app_slug: trading-orchestrator-agent
+    app_id: 3988813
+    installation_id: 138640121
+    private_key_local_path: ~/.trading-agents/github-apps/orchestrator.private-key.pem
+
+  coding:
+    app_slug: trading-coding-agent
+    app_id: 3988816
+    installation_id: 138640143
+    private_key_local_path: ~/.trading-agents/github-apps/coding.private-key.pem
+
+  review:
+    app_slug: trading-review-agent
+    app_id: 3988836
+    installation_id: 138640182
+    private_key_local_path: ~/.trading-agents/github-apps/review.private-key.pem
+
+  validator:
+    app_slug: trading-validator-agent
+    app_id: 3988837
+    installation_id: 138640218
+    private_key_local_path: ~/.trading-agents/github-apps/validator.private-key.pem
+```
+
+Private keys are intentionally stored outside git and must later be moved to GCP Secret Manager or locked-down VM secrets.
+
+Installation token helper:
+
+```bash
+python3 tools/trading_agent_token.py orchestrator
+python3 tools/trading_agent_token.py coding
+python3 tools/trading_agent_token.py review
+python3 tools/trading_agent_token.py validator
+```
+
+Token minting has been verified for all four Apps.
