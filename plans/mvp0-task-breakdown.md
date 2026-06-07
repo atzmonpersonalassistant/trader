@@ -174,6 +174,16 @@ mvp0
 
 ### Group B — GitHub Apps
 
+Status: In progress 🟡
+
+Current progress:
+
+```text
+GitHub App setup guide created: plans/mvp0-github-apps-setup.md
+Manual GitHub UI creation still required for the Apps and private keys.
+```
+
+
 #### B1. Create `trading-orchestrator-agent` GitHub App
 
 Goal: Create Orchestrator identity.
