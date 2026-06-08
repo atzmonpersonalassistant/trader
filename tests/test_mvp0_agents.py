@@ -72,8 +72,9 @@ class MVP0AgentTests(unittest.TestCase):
         })
         self.assertTrue(safe["pass"])
 
+        private_key_marker = "-----BEGIN " + "PRIVATE KEY-----"
         unsafe = review.deterministic_review({
-            "diff": "+-----BEGIN PRIVATE KEY-----\n+abc\n+-----END PRIVATE KEY-----\n",
+            "diff": "+" + private_key_marker + "\n+abc\n+-----END PRIVATE KEY-----\n",
             "pr": {"labels": []},
         })
         self.assertFalse(unsafe["pass"])
