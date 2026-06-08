@@ -54,17 +54,15 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("Model review failed", text)
 
-    def test_review_agent_redacts_github_installation_tokens(self):
+    def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
-        result = review.run_cmd([
-            "python3",
-            "-c",
-            "print('ok')",
-            "https://x-access-token:ghs_ABC123SECRET@github.com/owner/repo.git",
-        ])
-        rendered = " ".join(result["command"])
+        coding = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        secret_url = "https://x-access-token:ghs_ABC123SECRET@github.com/owner/repo.git"
+        result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", secret_url])
+        rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
         self.assertIn("x-access-token:***@github.com", rendered)
         self.assertNotIn("ghs_ABC123SECRET", rendered)
+        self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([secret_url])) + coding.redact_text(secret_url))
 
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")

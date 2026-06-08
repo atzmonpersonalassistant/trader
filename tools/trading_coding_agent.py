@@ -113,9 +113,13 @@ def slugify(text: str, max_len: int = 40) -> str:
     return (slug[:max_len].strip("-") or "work")
 
 
+def redact_text(text: str) -> str:
+    return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+
+
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180, env: dict[str, str] | None = None) -> dict[str, Any]:
     proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout, env=env)
-    return {"command": redact_command(cmd), "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    return {"command": redact_command(cmd), "returncode": proc.returncode, "stdout": redact_text(proc.stdout), "stderr": redact_text(proc.stderr)}
 
 
 def require_ok(result: dict[str, Any]) -> dict[str, Any]:
@@ -125,7 +129,7 @@ def require_ok(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def redact_command(cmd: list[str]) -> list[str]:
-    return [re.sub(r"x-access-token:[^@]+@", "x-access-token:***@", part) for part in cmd]
+    return [redact_text(part) for part in cmd]
 
 
 def ensure_issue_workspace(issue: int, config: dict[str, Any], token: str) -> dict[str, Any]:

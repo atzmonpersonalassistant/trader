@@ -100,10 +100,14 @@ def authenticated_url(url: str, token: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(netloc=f"x-access-token:{token}@{parsed.netloc}"))
 
 
+def redact_text(text: str) -> str:
+    return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+
+
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180) -> dict[str, Any]:
     proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
-    redacted = [re.sub(r"x-access-token:[^@]+@", "x-access-token:***@", part) for part in cmd]
-    return {"command": redacted, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+    redacted = [redact_text(part) for part in cmd]
+    return {"command": redacted, "returncode": proc.returncode, "stdout": redact_text(proc.stdout), "stderr": redact_text(proc.stderr)}
 
 
 def require_ok(result: dict[str, Any]) -> dict[str, Any]:
@@ -115,7 +119,14 @@ def require_ok(result: dict[str, Any]) -> dict[str, Any]:
 def fetch_pr_context(config: dict[str, Any], pr_number: int, token: str) -> dict[str, Any]:
     owner, repo = repo_parts(config)
     pr = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}", token)
-    files = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files?per_page=100", token)
+    files: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        batch = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files?per_page=100&page={page}", token)
+        files.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
     diff = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}", token, accept="application/vnd.github.v3.diff")
     linked_issue = None
     for text in [pr.get("body") or "", pr.get("title") or ""]:
@@ -186,7 +197,7 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         + "\nPR labels: " + ", ".join(label.get("name", "") for label in context["pr"].get("labels", []))
         + "\nPR body:\n" + (context["pr"].get("body") or "")[:3000]
         + "\nChanged files:\n" + "\n".join(f.get("filename", "") for f in context["files"])
-        + "\nDiff:\n" + context["diff"][:12000]
+        + "\nDiff:\n" + context["diff"]
     )
     output = workspace / ".review-agent" / "model-review.md"
     cmd = [
