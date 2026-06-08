@@ -169,7 +169,7 @@ def checkout_existing_pr_branch(workspace: Path, config: dict[str, Any], token: 
 def build_prompt(issue: dict[str, Any], fix_context: dict[str, Any] | None = None) -> str:
     title = issue.get("title") or ""
     body = issue.get("body") or ""
-    return f"""
+    prompt = f"""
 You are the MVP-0 Coding Agent working in a disposable git workspace.
 
 Issue #{issue.get('number')}: {title}

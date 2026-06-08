@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import urllib.parse
 import urllib.request
@@ -163,7 +164,11 @@ def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
     diff = context["diff"]
     lower = diff.lower()
     findings: list[str] = []
-    if any(term in lower for term in ["private key", "api_key", "password=", "secret="]):
+    secret_patterns = [
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        r"(?i)(api[_-]?key|password|secret)\s*=\s*['\"]?[^\s'\"]{8,}",
+    ]
+    if any(re.search(pattern, diff) for pattern in secret_patterns):
         findings.append("Potential secret-like text found in diff.")
     if any(term in lower for term in ["live trading", "ibkr", "position sizing", "risk limit"]):
         labels = [label.get("name") for label in context["pr"].get("labels", [])]
@@ -179,6 +184,7 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         + "Checklist:\n"
         + "\n".join(f"- {item}" for item in CHECKLIST)
         + "\n\nPR title: " + (context["pr"].get("title") or "")
+        + "\nPR labels: " + ", ".join(label.get("name", "") for label in context["pr"].get("labels", []))
         + "\nPR body:\n" + (context["pr"].get("body") or "")[:3000]
         + "\nChanged files:\n" + "\n".join(f.get("filename", "") for f in context["files"])
         + "\nDiff:\n" + context["diff"][:12000]
