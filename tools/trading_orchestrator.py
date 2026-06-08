@@ -154,6 +154,12 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def redact_text(text: str) -> str:
+    text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
+    return text
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -929,7 +935,9 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                     }
                 )
                 continue
-            labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
+            live_labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
+            stored_labels = json.loads(row["labels"] or "[]")
+            labels = sorted(set(live_labels) | set(stored_labels))
             branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
             if not branch.startswith("agent/issue-") or "agent:pr-opened" not in labels:
                 event_id = record_event(
@@ -1033,7 +1041,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
             finished = now_iso()
             state = "succeeded" if proc.returncode == 0 else "failed"
-            result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "command": cmd, "check": check}
+            result = {"returncode": proc.returncode, "stdout": redact_text(proc.stdout), "stderr": redact_text(proc.stderr), "command": cmd, "check": check}
             conn.execute(
                 """
                 UPDATE attempts
@@ -1122,8 +1130,8 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
     state = "succeeded" if proc.returncode == 0 else "failed"
     result = {
         "returncode": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
+        "stdout": redact_text(proc.stdout),
+        "stderr": redact_text(proc.stderr),
         "command": cmd,
     }
     with connect(args.db) as conn:
@@ -1143,8 +1151,8 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
                 "attempt": attempt_external_id,
                 "state": state,
                 "issue": {"number": row["number"], "external_id": row["external_id"], "title": row["title"]},
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "stdout": redact_text(proc.stdout),
+                "stderr": redact_text(proc.stderr),
             },
             indent=2,
             sort_keys=True,

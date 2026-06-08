@@ -119,10 +119,11 @@ class MVP0AgentTests(unittest.TestCase):
         })
         self.assertTrue(safe["pass"])
 
-        self.assertEqual(review.redact_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"), "<private-key-redacted>")
-        private_key_marker = "-----BEGIN " + "PRIVATE KEY-----"
+        begin_marker = "-----BEGIN " + "PRIVATE KEY-----"
+        end_marker = "-----END " + "PRIVATE KEY-----"
+        self.assertEqual(review.redact_text(begin_marker + "\nabc\n" + end_marker), "<private-key-redacted>")
         unsafe = review.deterministic_review({
-            "diff": "+" + private_key_marker + "\n+abc\n+-----END PRIVATE KEY-----\n",
+            "diff": "+" + begin_marker + "\n+abc\n+" + end_marker + "\n",
             "pr": {"labels": []},
         })
         self.assertFalse(unsafe["pass"])
