@@ -18,11 +18,14 @@ class MVP0AgentTests(unittest.TestCase):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success"}
         failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure"}
-        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing), (True, "ok"))
-        self.assertEqual(orch.is_auto_merge_candidate([], passing), (False, "missing_agent_pr_opened"))
-        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:needs-fix"], passing), (False, "needs_fix"))
-        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], failing), (False, "review_not_successful"))
-        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None), (False, "missing_review_check"))
+        self.assertTrue(orch.is_trusted_agent_pr({"head": {"ref": "agent/issue-5-docs"}}))
+        self.assertFalse(orch.is_trusted_agent_pr({"head": {"ref": "docs/manual-pr"}}))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "agent/issue-5-docs"), (True, "ok"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "docs/manual-pr"), (False, "untrusted_branch"))
+        self.assertEqual(orch.is_auto_merge_candidate([], passing, "agent/issue-5-docs"), (False, "missing_agent_pr_opened"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:needs-fix"], passing, "agent/issue-5-docs"), (False, "needs_fix"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], failing, "agent/issue-5-docs"), (False, "review_not_successful"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None, "agent/issue-5-docs"), (False, "missing_review_check"))
 
     def test_coding_agent_fix_prompt_includes_review_context(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")

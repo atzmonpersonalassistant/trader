@@ -352,6 +352,11 @@ def infer_issue_number_from_pr(pr: dict[str, Any]) -> int | None:
     return None
 
 
+def is_trusted_agent_pr(pr: dict[str, Any]) -> bool:
+    branch = ((pr.get("head") or {}).get("ref")) or ""
+    return branch.startswith("agent/issue-")
+
+
 def upsert_pr(conn: sqlite3.Connection, pr: dict[str, Any], issue_external_id: str | None) -> str:
     ts = now_iso()
     external_id = str(pr["id"])
@@ -464,6 +469,8 @@ def cmd_scan_prs(args: argparse.Namespace) -> int:
     with connect(args.db) as conn:
         for pr in prs:
             issue_external_id = None
+            if not is_trusted_agent_pr(pr):
+                continue
             pr_number = int(pr["number"])
             pr_labels_url = f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{pr_number}/labels"
             label_update_ok = True
@@ -702,7 +709,9 @@ def record_event(
     return external_id
 
 
-def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | None) -> tuple[bool, str]:
+def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | None, branch: str = "") -> tuple[bool, str]:
+    if not branch.startswith("agent/issue-"):
+        return False, "untrusted_branch"
     if "agent:pr-opened" not in labels:
         return False, "missing_agent_pr_opened"
     if "agent:needs-fix" in labels or "review-failed" in labels:
@@ -728,7 +737,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
     with connect(args.db) as conn:
         rows = conn.execute(
             """
-            SELECT external_id, number, state, labels, payload_json
+            SELECT external_id, number, state, labels, branch, payload_json
             FROM pull_requests
             WHERE state='open'
             ORDER BY number ASC
@@ -773,7 +782,8 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
             pr_payload = json.loads(row["payload_json"] or "{}")
             head_sha = ((pr_payload.get("head") or {}).get("sha") or "")
             review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name) if head_sha else None
-            candidate, reason = is_auto_merge_candidate(labels, review_check)
+            branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            candidate, reason = is_auto_merge_candidate(labels, review_check, branch)
             if not candidate:
                 payload = {"pr": pr_number, "labels": labels, "reason": reason, "review_check": review_check}
                 event_id = record_event(
