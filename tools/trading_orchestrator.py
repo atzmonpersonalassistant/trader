@@ -941,6 +941,9 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             stored_labels = json.loads(row["labels"] or "[]")
             labels = sorted(set(live_labels) | set(stored_labels))
             branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            if "agent:needs-fix" in labels or "review-failed" in labels:
+                results.append({"pr": pr_number, "routed": False, "reason": "already_routed_failed_review", "check": check})
+                continue
             if not branch.startswith("agent/issue-") or "agent:pr-opened" not in labels:
                 event_id = record_event(
                     conn,
@@ -957,6 +960,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 pr_payload = json.loads(row["payload_json"] or "{}")
                 try:
                     add_issue_label(args.owner, args.repo, pr_number, "agent:blocked", token)
+                    add_issue_label(args.owner, args.repo, pr_number, "needs:human-approval", token)
                     github_label_updated = True
                 except urllib.error.HTTPError as exc:
                     if exc.code not in {403, 404}:
