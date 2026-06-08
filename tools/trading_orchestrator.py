@@ -944,7 +944,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             previous_success = conn.execute(
                 """
                 SELECT id FROM events
-                WHERE entity_external_id=? AND type='review_failure_routed' AND state='succeeded' AND payload_json LIKE ?
+                WHERE entity_external_id=? AND event_type='review_failure_routed' AND state='succeeded' AND payload_json LIKE ?
                 LIMIT 1
                 """,
                 (row["external_id"], f'%"head_sha": "{sha}"%'),
