@@ -28,7 +28,8 @@ DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
 DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
-DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-dispatch-stub")
+DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-agent-stub")
+DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "trading-coding-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
 
@@ -648,6 +649,11 @@ def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token:
     github_api_post(labels_url, token, {"labels": [label]})
 
 
+def remove_issue_label(owner: str, repo: str, issue_number: int, label: str, token: str) -> None:
+    encoded = urllib.parse.quote(label, safe="")
+    github_request("DELETE", f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/labels/{encoded}", token)
+
+
 def create_approval_request_outbox(
     conn: sqlite3.Connection,
     *,
@@ -821,6 +827,14 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
             head_sha = ((pr_payload.get("head") or {}).get("sha") or "")
             review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name) if head_sha else None
             branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            if (review_check or {}).get("status") == "completed" and (review_check or {}).get("conclusion") == "success" and "agent:needs-fix" in labels:
+                try:
+                    remove_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)
+                except urllib.error.HTTPError as exc:
+                    if exc.code not in {403, 404}:
+                        raise
+                labels = [label for label in labels if label not in {"agent:needs-fix", "review-failed"}]
+                conn.execute("UPDATE pull_requests SET labels=?, updated_at=?, last_seen_at=? WHERE external_id=?", (json.dumps(labels, sort_keys=True), now_iso(), now_iso(), row["external_id"]))
             candidate, reason = is_auto_merge_candidate(labels, review_check, branch)
             if not candidate:
                 payload = {"pr": pr_number, "labels": labels, "reason": reason, "review_check": review_check}
@@ -881,7 +895,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
     with connect(args.db) as conn:
         rows = conn.execute(
             """
-            SELECT external_id, number, branch, state, labels, payload_json, retry_count
+            SELECT external_id, number, issue_external_id, branch, state, labels, payload_json, retry_count
             FROM pull_requests
             WHERE state='open'
             ORDER BY number ASC
@@ -980,14 +994,28 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                     ts,
                 ),
             )
+            issue_row = None
+            if row["issue_external_id"]:
+                issue_row = conn.execute("SELECT number FROM issues WHERE external_id=?", (row["issue_external_id"],)).fetchone()
+            if not issue_row:
+                event_id = record_event(
+                    conn,
+                    event_type="review_failure_route_failed",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="failed",
+                    payload={"pr": pr_number, "reason": "missing_linked_issue"},
+                )
+                results.append({"pr": pr_number, "routed": False, "reason": "missing_linked_issue", "event": event_id})
+                continue
+            issue_number = int(issue_row["number"])
             cmd = [
-                args.coding_stub_cmd,
-                "--issue-number",
+                args.coding_agent_cmd,
+                "run",
+                "--issue",
+                str(issue_number),
+                "--fix-pr",
                 str(pr_number),
-                "--issue-external-id",
-                str(row["external_id"]),
-                "--title",
-                f"Fix failed {args.review_check_name} for PR #{pr_number}",
             ]
             proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
             finished = now_iso()
@@ -1009,6 +1037,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 state=state,
                 payload={
                     "pr": pr_number,
+                    "issue": issue_number,
                     "head_sha": sha,
                     "check": check,
                     "attempt": attempt_external_id,
@@ -1280,6 +1309,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--claimed-label", default=DEFAULT_CLAIMED_LABEL)
     p.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
     p.add_argument("--coding-stub-cmd", default=DEFAULT_CODING_STUB_CMD)
+    p.add_argument("--coding-agent-cmd", default=DEFAULT_CODING_AGENT_CMD)
     sub = p.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status")

@@ -227,8 +227,21 @@ def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], ar
 
 
 def changed_files(workspace: Path) -> list[str]:
-    out = subprocess.check_output(["git", "-C", str(workspace), "status", "--porcelain"], text=True)
-    return [line[3:] for line in out.splitlines() if line.strip()]
+    out = subprocess.check_output(["git", "-C", str(workspace), "status", "--porcelain=v1", "-z"], text=True)
+    entries = [entry for entry in out.split("\0") if entry]
+    files: list[str] = []
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        status = entry[:2]
+        path = entry[3:]
+        if status[0] in {"R", "C"} or status[1] in {"R", "C"}:
+            files.append(path)
+            i += 2  # porcelain -z stores the old path in the following entry.
+        else:
+            files.append(path)
+            i += 1
+    return files
 
 
 def verify(workspace: Path) -> dict[str, Any]:
