@@ -14,6 +14,16 @@ def load(name, rel):
 
 
 class MVP0AgentTests(unittest.TestCase):
+    def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success"}
+        failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure"}
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing), (True, "ok"))
+        self.assertEqual(orch.is_auto_merge_candidate([], passing), (False, "missing_agent_pr_opened"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:needs-fix"], passing), (False, "needs_fix"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], failing), (False, "review_not_successful"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None), (False, "missing_review_check"))
+
     def test_coding_agent_fix_prompt_includes_review_context(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         prompt = agent.build_prompt(

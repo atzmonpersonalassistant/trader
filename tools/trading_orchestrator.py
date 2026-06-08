@@ -702,6 +702,18 @@ def record_event(
     return external_id
 
 
+def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | None) -> tuple[bool, str]:
+    if "agent:pr-opened" not in labels:
+        return False, "missing_agent_pr_opened"
+    if "agent:needs-fix" in labels or "review-failed" in labels:
+        return False, "needs_fix"
+    if not review_check:
+        return False, "missing_review_check"
+    if review_check.get("status") != "completed" or review_check.get("conclusion") != "success":
+        return False, "review_not_successful"
+    return True, "ok"
+
+
 def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
     init_db(args.db)
     token = mint_github_token(args.token_cmd)
@@ -759,6 +771,21 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                 results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "needs_human_approval", "outbox_id": outbox_id, "outbox_created": created, "event": event_id})
                 continue
             pr_payload = json.loads(row["payload_json"] or "{}")
+            head_sha = ((pr_payload.get("head") or {}).get("sha") or "")
+            review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name) if head_sha else None
+            candidate, reason = is_auto_merge_candidate(labels, review_check)
+            if not candidate:
+                payload = {"pr": pr_number, "labels": labels, "reason": reason, "review_check": review_check}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_skipped",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="skipped",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": reason, "event": event_id})
+                continue
             node_id = pr_payload.get("node_id")
             if not node_id:
                 payload = {"pr": pr_number, "reason": "missing_node_id"}
@@ -1205,6 +1232,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim.set_defaults(func=cmd_claim)
 
     auto_merge = sub.add_parser("enable-auto-merge")
+    auto_merge.add_argument("--review-check-name", default=DEFAULT_REVIEW_CHECK_NAME)
     auto_merge.set_defaults(func=cmd_enable_auto_merge)
 
     route_review = sub.add_parser("route-review-failures")
