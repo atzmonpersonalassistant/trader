@@ -524,7 +524,10 @@ E4 Codex execution wrapper is implemented and production-verified on the VM afte
 E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `plans/mvp0-task-breakdown.md` with a small documentation change and `git diff --check` passed.
 E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `ce3ef11` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main. Existing branch update uses explicit `--force-with-lease=<ref>:<sha>`.
 E7 PR creation is implemented and verified on the VM: the Coding App opened/updated PR #4 targeting main.
-F1 Review Agent CLI skeleton remains next.
+E8 fix retry mode is implemented and verified on PR #4: `trading-coding-agent run --issue 3 --fix-pr 4` read review context, checked out the existing PR branch, updated it, and pushed with explicit force-with-lease.
+F1-F6 Review Agent MVP is implemented and verified on PR #4. `trading-review-agent review --pr 4` creates `/agents/review/workspaces/pr-4/`, fetches PR metadata/files/diff, uses the standard checklist, runs Codex review, writes `.review-agent/review.md`, posts a PR comment, and publishes the required `review-agent/pass` check. A first review failed with actionable feedback; after E8 retry, review passed and published a success check.
+G1 Orchestrator systemd service/timer is implemented on the VM. `trading-orchestrator.timer` is enabled and active, runs every 10 minutes as `agent-orchestrator`, uses a flock lock, and logs to `/agents/orchestrator/logs/tick.log`.
+G2 manual operator command docs remain next.
 ```
 
 
@@ -838,7 +841,7 @@ Acceptance criteria:
 
 ---
 
-#### E8. Implement fix retry mode
+#### E8. Implement fix retry mode — Completed ✅
 
 Goal: Allow Coding Agent to respond to Review Agent failures.
 
@@ -856,7 +859,7 @@ It reads review comments/check output and updates the existing branch.
 
 ### Group F — Review Agent MVP
 
-#### F1. Create Review Agent CLI skeleton
+#### F1. Create Review Agent CLI skeleton — Completed ✅
 
 Goal: Provide basic Review Agent entry point.
 
@@ -872,7 +875,7 @@ It logs PR number, loads config, and exits cleanly.
 
 ---
 
-#### F2. Create PR review workspace
+#### F2. Create PR review workspace — Completed ✅
 
 Goal: Create isolated workspace per PR.
 
@@ -888,7 +891,7 @@ Workspace contains base/PR checkout or enough diff context.
 
 ---
 
-#### F3. Fetch PR diff and metadata
+#### F3. Fetch PR diff and metadata — Completed ✅
 
 Goal: Give reviewer the necessary context.
 
@@ -901,7 +904,7 @@ Acceptance criteria:
 
 ---
 
-#### F4. Implement review checklist prompt
+#### F4. Implement review checklist prompt — Completed ✅
 
 Goal: Standardize Review Agent behavior.
 
@@ -921,7 +924,7 @@ Checklist includes:
 
 ---
 
-#### F5. Run Review Agent analysis
+#### F5. Run Review Agent analysis — Completed ✅
 
 Goal: Produce pass/fail review result.
 
@@ -933,7 +936,7 @@ Acceptance criteria:
 
 ---
 
-#### F6. Publish GitHub review/check
+#### F6. Publish GitHub review/check — Completed ✅
 
 Goal: Make Review Agent blocking in GitHub.
 
@@ -948,7 +951,7 @@ Acceptance criteria:
 
 ### Group G — Systemd and Scheduling
 
-#### G1. Create Orchestrator systemd service/timer
+#### G1. Create Orchestrator systemd service/timer — Completed ✅
 
 Goal: Run Orchestrator polling every 10 minutes.
 

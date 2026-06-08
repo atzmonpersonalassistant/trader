@@ -95,6 +95,18 @@ def fetch_issue(config: dict[str, Any], issue: int, token: str) -> dict[str, Any
     return github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/issues/{issue}", token)
 
 
+def fetch_pr(config: dict[str, Any], pr_number: int, token: str) -> dict[str, Any]:
+    owner, repo = repo_parts(config)
+    return github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}", token)
+
+
+def fetch_pr_review_context(config: dict[str, Any], pr_number: int, token: str) -> dict[str, Any]:
+    owner, repo = repo_parts(config)
+    comments = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}/comments?per_page=50", token)
+    check_runs = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/commits/" + fetch_pr(config, pr_number, token)["head"]["sha"] + "/check-runs?per_page=50", token)
+    return {"comments": comments, "check_runs": check_runs.get("check_runs", [])}
+
+
 def slugify(text: str, max_len: int = 40) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
     slug = re.sub(r"-+", "-", slug)
@@ -142,13 +154,19 @@ def ensure_issue_workspace(issue: int, config: dict[str, Any], token: str) -> di
     return {"workspace": str(workspace), "created": created, "checkout": checkout, "base_branch": base_branch, "commit": commit}
 
 
-def create_branch(workspace: Path, issue: int, title: str) -> dict[str, Any]:
-    branch = f"agent/issue-{issue}-{slugify(title)}"
+def create_branch(workspace: Path, issue: int, title: str, existing_branch: str | None = None) -> dict[str, Any]:
+    branch = existing_branch or f"agent/issue-{issue}-{slugify(title)}"
     require_ok(run_cmd(["git", "checkout", "-B", branch], cwd=workspace))
     return {"branch": branch}
 
 
-def build_prompt(issue: dict[str, Any]) -> str:
+def checkout_existing_pr_branch(workspace: Path, config: dict[str, Any], token: str, branch: str) -> None:
+    auth_url = authenticated_url(repo_clone_url(config), token)
+    require_ok(run_cmd(["git", "fetch", auth_url, f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], cwd=workspace, timeout=180))
+    require_ok(run_cmd(["git", "checkout", "-B", branch, f"refs/remotes/origin/{branch}"], cwd=workspace))
+
+
+def build_prompt(issue: dict[str, Any], fix_context: dict[str, Any] | None = None) -> str:
     title = issue.get("title") or ""
     body = issue.get("body") or ""
     return f"""
@@ -166,10 +184,15 @@ Task:
 - Keep the diff small.
 - Run a minimal verification command if appropriate.
 """.strip()
+    if fix_context:
+        comments = "\n\n".join((c.get("body") or "")[:1500] for c in fix_context.get("comments", [])[-5:])
+        checks = "\n".join(f"{c.get('name')}: {c.get('conclusion')} - {(c.get('output') or {}).get('summary','')[:1000]}" for c in fix_context.get("check_runs", [])[-10:])
+        prompt += f"\n\nFix mode context:\nRecent review comments:\n{comments}\n\nRecent check runs:\n{checks}\n\nUpdate the existing PR branch only."
+    return prompt
 
 
-def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    prompt = build_prompt(issue)
+def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], args: argparse.Namespace, fix_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    prompt = build_prompt(issue, fix_context)
     logs_dir = Path(args.log_dir)
     logs_dir.mkdir(parents=True, exist_ok=True)
     ts = now_iso().replace(":", "")
@@ -289,8 +312,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     issue = fetch_issue(config, args.issue, token)
     workspace_info = ensure_issue_workspace(args.issue, config, token)
     workspace = Path(workspace_info["workspace"])
-    branch_info = create_branch(workspace, args.issue, issue.get("title") or "work")
-    codex_result = run_codex(workspace, issue, config, args)
+    fix_pr = fetch_pr(config, args.fix_pr, token) if args.fix_pr else None
+    fix_context = fetch_pr_review_context(config, args.fix_pr, token) if args.fix_pr else None
+    existing_branch = (fix_pr or {}).get("head", {}).get("ref")
+    if existing_branch:
+        checkout_existing_pr_branch(workspace, config, token, existing_branch)
+        branch_info = {"branch": existing_branch, "mode": "fix-pr"}
+    else:
+        branch_info = create_branch(workspace, args.issue, issue.get("title") or "work")
+    codex_result = run_codex(workspace, issue, config, args, fix_context)
     if codex_result.get("returncode", 0) != 0:
         raise RuntimeError(json.dumps(codex_result, sort_keys=True))
     verification = verify(workspace)
