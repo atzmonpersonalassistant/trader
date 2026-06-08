@@ -557,6 +557,7 @@ Acceptance criteria:
 - Does not claim more than configured concurrency.
 
 Issue #3 verification target: Orchestrator claim flow removes `agent:ready`, adds `agent:claimed`, and records the SQLite lock.
+MVP-0 test record: use this transition as the D5 acceptance check before dispatching any Coding Agent work.
 
 ---
 
