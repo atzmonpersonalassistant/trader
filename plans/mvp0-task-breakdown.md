@@ -552,9 +552,12 @@ Goal: Safely claim one issue.
 Acceptance criteria:
 
 - Adds label `agent:claimed`.
-- Removes or keeps `agent:ready` according to chosen state convention.
+- Removes label `agent:ready`; MVP-0 claim state is represented by `agent:claimed` only.
 - Records lock in SQLite.
 - Does not claim more than configured concurrency.
+
+Issue #3 verification target: Orchestrator claim flow removes `agent:ready`, adds `agent:claimed`, and records the SQLite lock.
+MVP-0 test record: use this transition as the D5 acceptance check before dispatching any Coding Agent work.
 
 ---
 
