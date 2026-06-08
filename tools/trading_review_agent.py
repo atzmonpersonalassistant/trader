@@ -176,8 +176,8 @@ def ensure_review_workspace(config: dict[str, Any], pr_number: int, token: str, 
     require_ok(run_cmd(["git", "checkout", "-B", f"review/pr-{pr_number}", f"refs/remotes/origin/{head_ref}"], cwd=workspace))
     artifacts = workspace / ".review-agent"
     artifacts.mkdir(exist_ok=True)
-    safe_context = json.loads(redact_text(json.dumps({k: v for k, v in context.items() if k != "diff"}, sort_keys=True)))
-    (artifacts / "context.json").write_text(json.dumps(safe_context, indent=2, sort_keys=True), encoding="utf-8")
+    safe_context_json = json.dumps({k: v for k, v in context.items() if k != "diff"}, indent=2, sort_keys=True)
+    (artifacts / "context.json").write_text(redact_text(safe_context_json), encoding="utf-8")
     (artifacts / "diff.patch").write_text(redact_text(context["diff"]), encoding="utf-8")
     return {"workspace": str(workspace), "head_ref": head_ref, "base_ref": base_ref, "artifacts": str(artifacts)}
 
