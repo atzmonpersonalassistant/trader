@@ -195,6 +195,10 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         "-C", str(workspace), "--output-last-message", str(output), prompt,
     ]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout)
+    # Do not persist the full review prompt/diff in JSON logs. The prompt can
+    # contain PR content, including the very secrets this agent is meant to flag.
+    result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
+    result["stderr"] = "<codex-stderr-redacted>"
     if result["returncode"] == 0 and output.exists():
         result["review_text"] = output.read_text(encoding="utf-8")
     return result
@@ -202,16 +206,22 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
 
 def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any], model: dict[str, Any] | None) -> tuple[Path, str, bool]:
     passed = bool(deterministic["pass"])
-    if model and model.get("returncode") == 0 and model.get("review_text"):
-        text = model["review_text"]
-        if text.strip().upper().startswith("FAIL"):
+    model_findings: list[str] = []
+    if model:
+        if model.get("returncode") != 0 or not model.get("review_text"):
             passed = False
-        elif text.strip().upper().startswith("PASS") and passed:
-            passed = True
+            model_findings.append("Model review failed or returned no review text; required check cannot pass.")
+        else:
+            text = model["review_text"]
+            if text.strip().upper().startswith("FAIL"):
+                passed = False
+            elif text.strip().upper().startswith("PASS") and passed:
+                passed = True
     body = [f"# Review Agent result for PR #{pr_number}", "", f"Result: {'PASS' if passed else 'FAIL'}", "", "## Checklist"]
     body.extend(f"- {item}" for item in CHECKLIST)
     body.append("\n## Findings")
-    body.extend(f"- {f}" for f in deterministic["findings"] or ["No blocking deterministic findings."])
+    findings = list(deterministic["findings"] or []) + model_findings
+    body.extend(f"- {f}" for f in findings or ["No blocking findings."])
     if model and model.get("review_text"):
         body.extend(["", "## Model review", model["review_text"][:6000]])
     review_path = workspace / ".review-agent" / "review.md"

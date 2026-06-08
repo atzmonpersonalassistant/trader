@@ -1,6 +1,7 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +41,18 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Review says update", prompt)
         self.assertIn("review-agent/pass: failure", prompt)
         self.assertIn("Update the existing PR branch only", prompt)
+
+    def test_review_required_check_fails_when_model_review_missing(self):
+        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            path, text, passed = review.write_review(
+                Path(tmp),
+                9,
+                {"pass": True, "findings": [], "checklist": []},
+                {"returncode": 1, "stdout": "", "stderr": "redacted"},
+            )
+        self.assertFalse(passed)
+        self.assertIn("Model review failed", text)
 
     def test_review_agent_redacts_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
