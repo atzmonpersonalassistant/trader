@@ -517,7 +517,8 @@ D8 auto-merge enablement is implemented and verified on PR #1. The Orchestrator 
 D9 review failure routing is implemented and verified on VM using a synthetic failing review-agent/pass check-run on PR #1. The Orchestrator labels PRs agent:needs-fix, increments retry_count, records review_failure_routed events, and dispatches the Coding Agent stub while retry_count <= 50.
 D10 outbox CLI is implemented and verified locally and on the VM. `trading-orchestrator outbox next` now returns `{"type":"none"}` when empty, or a structured pending message including type/id/body/channel and payload fields such as pr/title/url.
 D11 inbox ack CLI is implemented and verified locally against PR #1: approve marks outbox acknowledged, inserts an acknowledged inbox record, adds human:approved, and comments /human-approved. The updated command is deployed on the VM.
-Group E Coding Agent MVP remains next.
+E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM under agent-coding. `trading-coding-agent run --issue 123` loads config, writes `/agents/coding/logs/coding-agent.jsonl`, and exits cleanly.
+E2 issue workspace creation remains next.
 ```
 
 
@@ -729,7 +730,7 @@ For rejections:
 
 ### Group E — Coding Agent MVP
 
-#### E1. Create Coding Agent CLI skeleton
+#### E1. Create Coding Agent CLI skeleton — Completed ✅
 
 Goal: Provide basic Coding Agent entry point.
 
