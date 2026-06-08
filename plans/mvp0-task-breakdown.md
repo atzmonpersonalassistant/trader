@@ -527,7 +527,13 @@ E7 PR creation is implemented and verified on the VM: the Coding App opened/upda
 E8 fix retry mode is implemented and verified on PR #4: `trading-coding-agent run --issue 3 --fix-pr 4` read review context, checked out the existing PR branch, updated it, and pushed with explicit force-with-lease.
 F1-F6 Review Agent MVP is implemented and verified on PR #4. `trading-review-agent review --pr 4` creates `/agents/review/workspaces/pr-4/`, fetches PR metadata/files/diff, uses the standard checklist, runs Codex review, writes `.review-agent/review.md`, posts a PR comment, and publishes the required `review-agent/pass` check. A first review failed with actionable feedback; after E8 retry, review passed and published a success check.
 G1 Orchestrator systemd service/timer is implemented on the VM. `trading-orchestrator.timer` is enabled and active, runs every 10 minutes as `agent-orchestrator`, uses a flock lock, and logs to `/agents/orchestrator/logs/tick.log`.
-G2 manual operator command docs remain next.
+G2 manual operator commands are documented in `plans/mvp0-operator-runbook.md`.
+G3 log locations and rotation are documented in the runbook and deployed on the VM as `/etc/logrotate.d/trading-agents`; `logrotate -d` validates the config.
+H1 approval request payload is defined in the runbook and implemented in Orchestrator outbox payloads.
+H2 approval request creation is implemented in `enable-auto-merge`: PRs labeled `needs:human-approval` without `human:approved` are skipped and deduped into `approval-pr-<n>` outbox messages.
+H3 approval response handling is implemented in `inbox ack`, adding human approval/rejection labels and comments.
+I1-I6 E2E test completed with issue #5 and PR #6: issue was created with `agent:ready,mvp0`, scan/claim found it, Coding Agent opened PR #6, Review Agent published passing `review-agent/pass`, GitHub squash-merged PR #6, and `finalize-merged` marked PR #6 merged and issue #5 closed in SQLite/GitHub. Edge case: when checks were already clean, GitHub rejected auto-merge enablement as `Pull request is in clean status`, so the final merge was executed with GitHub squash merge to complete the E2E validation.
+MVP-0 completion validation is complete except PR #1 still contains accumulated implementation work and remains open/behind for review/merge hygiene.
 ```
 
 
@@ -964,7 +970,7 @@ Acceptance criteria:
 
 ---
 
-#### G2. Add manual operator commands
+#### G2. Add manual operator commands — Completed ✅
 
 Goal: Allow manual debugging.
 
@@ -982,7 +988,7 @@ trading-review-agent review --pr <number>
 
 ---
 
-#### G3. Add log locations and rotation
+#### G3. Add log locations and rotation — Completed ✅
 
 Goal: Prevent unbounded logs.
 
@@ -996,7 +1002,7 @@ Acceptance criteria:
 
 ### Group H — Human Approval Relay
 
-#### H1. Define approval request payload
+#### H1. Define approval request payload — Completed ✅
 
 Goal: Standardize messages from Orchestrator to OpenClaw.
 
@@ -1016,7 +1022,7 @@ allowed replies: approve/reject
 
 ---
 
-#### H2. Implement approval request creation
+#### H2. Implement approval request creation — Completed ✅
 
 Goal: Queue human approval request when a PR is gated.
 
@@ -1028,7 +1034,7 @@ Acceptance criteria:
 
 ---
 
-#### H3. Implement approval response handling
+#### H3. Implement approval response handling — Completed ✅
 
 Goal: Convert Uriel's WhatsApp response into GitHub state.
 
@@ -1052,7 +1058,7 @@ comment /human-rejected
 
 ### Group I — MVP-0 End-to-End Test
 
-#### I1. Create safe test issue
+#### I1. Create safe test issue — Completed ✅
 
 Goal: Provide first real task.
 
@@ -1064,7 +1070,7 @@ Acceptance criteria:
 
 ---
 
-#### I2. Run Orchestrator scan manually
+#### I2. Run Orchestrator scan manually — Completed ✅
 
 Goal: Confirm issue discovery.
 
@@ -1080,7 +1086,7 @@ trading-orchestrator scan
 
 ---
 
-#### I3. Verify Coding Agent PR creation
+#### I3. Verify Coding Agent PR creation — Completed ✅
 
 Goal: Confirm Coding Agent can produce a PR.
 
@@ -1093,7 +1099,7 @@ Acceptance criteria:
 
 ---
 
-#### I4. Verify Review Agent required check
+#### I4. Verify Review Agent required check — Completed ✅
 
 Goal: Confirm review gates merge.
 
@@ -1105,7 +1111,7 @@ Acceptance criteria:
 
 ---
 
-#### I5. Verify GitHub native auto-merge
+#### I5. Verify GitHub native auto-merge — Completed ✅
 
 Goal: Confirm GitHub performs final merge.
 
@@ -1118,7 +1124,7 @@ Acceptance criteria:
 
 ---
 
-#### I6. Verify cleanup
+#### I6. Verify cleanup — Completed ✅
 
 Goal: Confirm no resource leak after merge.
 

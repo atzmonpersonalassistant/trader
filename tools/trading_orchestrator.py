@@ -641,6 +641,46 @@ def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token:
     github_api_post(labels_url, token, {"labels": [label]})
 
 
+def create_approval_request_outbox(
+    conn: sqlite3.Connection,
+    *,
+    pr_number: int,
+    title: str,
+    url: str,
+    reason: str,
+    risk_summary: str,
+) -> tuple[str, bool]:
+    ts = now_iso()
+    external_id = f"approval-pr-{pr_number}"
+    payload = {
+        "type": "approval_request",
+        "pr": pr_number,
+        "title": title,
+        "reason": reason,
+        "risk_summary": risk_summary,
+        "url": url,
+        "allowed_replies": ["approve", "reject"],
+    }
+    message = (
+        f"Approval required for PR #{pr_number}: {title}\n"
+        f"Reason: {reason}\n"
+        f"Risk: {risk_summary}\n"
+        f"URL: {url}\n"
+        "Reply approve or reject."
+    )
+    existing = conn.execute("SELECT state FROM outbox WHERE external_id=?", (external_id,)).fetchone()
+    if existing:
+        return external_id, False
+    conn.execute(
+        """
+        INSERT INTO outbox(external_id, state, labels, channel, message, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)
+        """,
+        (external_id, json.dumps(["approval_request"], sort_keys=True), message, json.dumps(payload, sort_keys=True), ts, ts, ts),
+    )
+    return external_id, True
+
+
 def record_event(
     conn: sqlite3.Connection,
     *,
@@ -685,8 +725,8 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
         for row in rows:
             pr_number = int(row["number"])
             labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
-            if "needs:human-approval" in labels or "human:rejected" in labels:
-                payload = {"pr": pr_number, "labels": labels, "reason": "human_gate"}
+            if "human:rejected" in labels:
+                payload = {"pr": pr_number, "labels": labels, "reason": "human_rejected"}
                 event_id = record_event(
                     conn,
                     event_type="auto_merge_skipped",
@@ -695,7 +735,28 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                     state="skipped",
                     payload=payload,
                 )
-                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "human_gate", "event": event_id})
+                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "human_rejected", "event": event_id})
+                continue
+            if "needs:human-approval" in labels and "human:approved" not in labels:
+                pr_payload = json.loads(row["payload_json"] or "{}")
+                outbox_id, created = create_approval_request_outbox(
+                    conn,
+                    pr_number=pr_number,
+                    title=pr_payload.get("title") or f"PR #{pr_number}",
+                    url=pr_payload.get("html_url") or f"https://github.com/{args.owner}/{args.repo}/pull/{pr_number}",
+                    reason="PR is labeled needs:human-approval",
+                    risk_summary="Manual approval gate is active; auto-merge is paused until approve/reject.",
+                )
+                payload = {"pr": pr_number, "labels": labels, "reason": "needs_human_approval", "outbox_id": outbox_id, "outbox_created": created}
+                event_id = record_event(
+                    conn,
+                    event_type="approval_request_queued" if created else "approval_request_existing",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="pending",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "needs_human_approval", "outbox_id": outbox_id, "outbox_created": created, "event": event_id})
                 continue
             pr_payload = json.loads(row["payload_json"] or "{}")
             node_id = pr_payload.get("node_id")
@@ -958,6 +1019,54 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
     return 0 if proc.returncode == 0 else proc.returncode
 
 
+def cmd_finalize_merged(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    finalized: list[dict[str, Any]] = []
+    with connect(args.db) as conn:
+        rows = conn.execute("SELECT external_id, number, issue_external_id, state FROM pull_requests ORDER BY number ASC").fetchall()
+        for row in rows:
+            pr_number = int(row["number"])
+            pr, _ = github_api_get(f"https://api.github.com/repos/{args.owner}/{args.repo}/pulls/{pr_number}", token)
+            if not pr.get("merged_at"):
+                continue
+            ts = now_iso()
+            conn.execute(
+                "UPDATE pull_requests SET state='merged', payload_json=?, updated_at=?, last_seen_at=? WHERE external_id=?",
+                (json.dumps(pr, sort_keys=True), ts, ts, row["external_id"]),
+            )
+            issue_external_id = row["issue_external_id"]
+            issue_number = None
+            if issue_external_id:
+                issue_row = conn.execute("SELECT number FROM issues WHERE external_id=?", (issue_external_id,)).fetchone()
+                if issue_row:
+                    issue_number = int(issue_row["number"])
+                    github_api_post(
+                        f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{issue_number}/comments",
+                        token,
+                        {"body": f"/agent-completed via merged PR #{pr_number}"},
+                    )
+                    github_request(
+                        "PATCH",
+                        f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{issue_number}",
+                        token,
+                        {"state": "closed", "state_reason": "completed"},
+                    )
+                    refreshed, _ = github_api_get(f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{issue_number}", token)
+                    upsert_issue(conn, refreshed)
+            record_event(
+                conn,
+                event_type="pr_finalized",
+                entity_type="pull_request",
+                entity_external_id=row["external_id"],
+                state="succeeded",
+                payload={"pr": pr_number, "issue": issue_number, "merged_at": pr.get("merged_at")},
+            )
+            finalized.append({"pr": pr_number, "issue": issue_number, "merged_at": pr.get("merged_at")})
+    print(json.dumps({"ok": True, "command": "finalize-merged", "finalized": finalized}, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_outbox_next(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -1103,6 +1212,9 @@ def build_parser() -> argparse.ArgumentParser:
     route_review.add_argument("--max-review-fix-retries", type=int, default=DEFAULT_MAX_REVIEW_FIX_RETRIES)
     route_review.add_argument("--timeout-seconds", type=int, default=60)
     route_review.set_defaults(func=cmd_route_review_failures)
+
+    finalize = sub.add_parser("finalize-merged")
+    finalize.set_defaults(func=cmd_finalize_merged)
 
     dispatch = sub.add_parser("dispatch")
     dispatch_sub = dispatch.add_subparsers(dest="dispatch_command", required=True)
