@@ -518,7 +518,8 @@ D9 review failure routing is implemented and verified on VM using a synthetic fa
 D10 outbox CLI is implemented and verified locally and on the VM. `trading-orchestrator outbox next` now returns `{"type":"none"}` when empty, or a structured pending message including type/id/body/channel and payload fields such as pr/title/url.
 D11 inbox ack CLI is implemented and verified locally against PR #1: approve marks outbox acknowledged, inserts an acknowledged inbox record, adds human:approved, and comments /human-approved. The updated command is deployed on the VM.
 E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM under agent-coding. `trading-coding-agent run --issue 123` loads config, writes `/agents/coding/logs/coding-agent.jsonl`, and exits cleanly.
-E2 issue workspace creation remains next.
+E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
+E3 branch creation remains next.
 ```
 
 
@@ -746,7 +747,7 @@ It logs issue number, loads config, and exits cleanly.
 
 ---
 
-#### E2. Implement issue workspace creation
+#### E2. Implement issue workspace creation — Completed ✅
 
 Goal: Create isolated workspace per issue.
 
