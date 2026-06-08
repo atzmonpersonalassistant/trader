@@ -103,13 +103,14 @@ def authenticated_url(url: str, token: str) -> str:
 def redact_text(text: str) -> str:
     text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
     text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
+    text = re.sub(r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*[^\s`'\"]+", r"\1=<redacted>", text)
     return text
 
 
-def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180) -> dict[str, Any]:
+def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180, input_text: str | None = None) -> dict[str, Any]:
     redacted = [redact_text(part) for part in cmd]
     try:
-        proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout, input=input_text)
     except subprocess.TimeoutExpired as exc:
         return {
             "command": redacted,
@@ -214,9 +215,9 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     cmd = [
         "codex", "exec", "--model", str(config.get("review_model") or "gpt-5.5"),
         "--sandbox", "workspace-write", "-c", 'approval_policy="never"',
-        "-C", str(workspace), "--output-last-message", str(output), prompt,
+        "-C", str(workspace), "--output-last-message", str(output),
     ]
-    result = run_cmd(cmd, cwd=workspace, timeout=timeout)
+    result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
     # Do not persist the full review prompt/diff in JSON logs. The prompt can
     # contain PR content, including the very secrets this agent is meant to flag.
     result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
@@ -237,7 +238,8 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
         passed = False
         model_findings.append("Model review failed or returned no review text; required check cannot pass.")
     else:
-        text = model["review_text"]
+        text = redact_text(model["review_text"])
+        model["review_text"] = text
         normalized = text.strip().upper()
         if normalized.startswith("FAIL"):
             passed = False

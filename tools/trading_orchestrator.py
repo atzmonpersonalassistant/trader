@@ -1261,7 +1261,13 @@ def cmd_inbox_ack(args: argparse.Namespace) -> int:
         if not outbox:
             print(json.dumps({"ok": False, "reason": "outbox_not_found", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
             return 1
+        if outbox["state"] != "pending":
+            print(json.dumps({"ok": False, "reason": "outbox_not_pending", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
         payload = json.loads(outbox["payload_json"] or "{}")
+        if payload.get("type") != "approval_request" or args.decision not in payload.get("allowed_replies", []):
+            print(json.dumps({"ok": False, "reason": "not_an_approval_request", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
         target_number = payload.get("pr") or payload.get("issue")
         if not target_number:
             print(json.dumps({"ok": False, "reason": "missing_pr_or_issue", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
