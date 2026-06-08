@@ -48,6 +48,37 @@ Research/planning docs for the broader Options Trade Lab idea. Currently no runt
 
 Legacy scanner code from the old `legacy/options-trade-lab-scanner` folder was intentionally removed from this repo structure; active scanner work should live in a dedicated top-level project directory.
 
+## VPS access
+
+OVHcloud VPS used for simple always-on agent/trader infrastructure experiments:
+
+```bash
+# SSH with the dedicated key created on the assistant Mac
+ssh -i ~/.ssh/ovh_vps_ce2ba5e7 ubuntu@144.217.82.149
+
+# Optional: add a local SSH alias
+cat >> ~/.ssh/config <<'EOF'
+Host trader-ovh
+  HostName 144.217.82.149
+  User ubuntu
+  IdentityFile ~/.ssh/ovh_vps_ce2ba5e7
+EOF
+
+# Then connect with:
+ssh trader-ovh
+```
+
+Host details:
+
+```text
+host: vps-ce2ba5e7.vps.ovh.ca
+ip: 144.217.82.149
+user: ubuntu
+key: ~/.ssh/ovh_vps_ce2ba5e7
+```
+
+Do not commit passwords or private keys. The SSH private key stays local.
+
 ## Safety
 
 These tools are for research and alerting only. Information only, not investment advice. Verify quotes, liquidity, bid/ask spreads, and risk manually before any trade.
