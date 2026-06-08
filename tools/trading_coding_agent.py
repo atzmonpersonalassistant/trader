@@ -30,7 +30,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "base_branch": "main",
     "workspace_root": "/agents/coding/workspaces",
     "token_cmd": DEFAULT_TOKEN_CMD,
-    "codex_model": "openai-codex/gpt-5.5",
+    "codex_model": "gpt-5.5",
 }
 
 
@@ -231,8 +231,19 @@ def push_branch(workspace: Path, config: dict[str, Any], token: str, branch: str
     if branch == str(config.get("base_branch") or "main"):
         raise RuntimeError("refusing to push base branch")
     auth_url = authenticated_url(repo_clone_url(config), token)
-    result = require_ok(run_cmd(["git", "push", auth_url, f"HEAD:refs/heads/{branch}", "--force-with-lease"], cwd=workspace, timeout=180))
-    return {"pushed": True, "branch": branch, "result": result}
+    # Populate remote-tracking ref when the branch already exists so --force-with-lease
+    # can protect against clobbering unseen remote work.
+    fetch_ref = f"refs/heads/{branch}:refs/remotes/origin/{branch}"
+    fetch_result = run_cmd(["git", "fetch", auth_url, fetch_ref], cwd=workspace, timeout=180)
+    if fetch_result["returncode"] not in {0, 128}:
+        raise RuntimeError(json.dumps(fetch_result, sort_keys=True))
+    expected = None
+    rev = run_cmd(["git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}"], cwd=workspace, timeout=30)
+    if rev["returncode"] == 0:
+        expected = rev["stdout"].strip()
+    lease = f"--force-with-lease=refs/heads/{branch}:{expected}" if expected else "--force-with-lease"
+    result = require_ok(run_cmd(["git", "push", auth_url, f"HEAD:refs/heads/{branch}", lease], cwd=workspace, timeout=180))
+    return {"pushed": True, "branch": branch, "fetch": fetch_result, "expected": expected, "result": result}
 
 
 def find_existing_pr(config: dict[str, Any], token: str, branch: str) -> dict[str, Any] | None:

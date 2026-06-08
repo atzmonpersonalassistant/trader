@@ -520,11 +520,11 @@ D11 inbox ack CLI is implemented and verified locally against PR #1: approve mar
 E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM under agent-coding. `trading-coding-agent run --issue 123` loads config, writes `/agents/coding/logs/coding-agent.jsonl`, and exits cleanly.
 E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
 E3 branch creation is implemented and verified on the VM. The Coding Agent creates `agent/issue-<n>-<slug>` from fresh `main`.
-E4 Codex execution wrapper is implemented and captures stdout/stderr/logs with `codex exec --sandbox workspace-write -c approval_policy="never"`, but real Codex execution is blocked on the VM because `agent-coding` lacks valid Codex/OpenAI auth and receives 401 Unauthorized.
-E5 minimal code/doc change flow is implemented behind the Codex wrapper and smoke-verified with `--skip-codex`; production execution remains blocked by E4 auth.
-E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `04a6cd5` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main.
-E7 PR creation is implemented and verified on the VM: the Coding App opened PR #4 targeting main.
-Next blocker: provide Codex/OpenAI auth for `agent-coding`, then rerun E4/E5 without `--skip-codex`.
+E4 Codex execution wrapper is implemented and production-verified on the VM after installing locked-down Codex auth for `agent-coding`. It runs `codex exec --sandbox workspace-write -c approval_policy="never"`, captures stdout/stderr/logs, and does not print secrets.
+E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `plans/mvp0-task-breakdown.md` with a small documentation change and `git diff --check` passed.
+E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `ce3ef11` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main. Existing branch update uses explicit `--force-with-lease=<ref>:<sha>`.
+E7 PR creation is implemented and verified on the VM: the Coding App opened/updated PR #4 targeting main.
+F1 Review Agent CLI skeleton remains next.
 ```
 
 
@@ -784,7 +784,7 @@ Branch is created from latest `main`.
 
 ---
 
-#### E4. Implement Codex execution wrapper — Blocked on auth ⚠️
+#### E4. Implement Codex execution wrapper — Completed ✅
 
 Goal: Run Codex CLI inside the issue workspace.
 
@@ -798,7 +798,7 @@ Acceptance criteria:
 
 ---
 
-#### E5. Implement minimal code/doc change flow — Implemented, production-blocked by E4 ⚠️
+#### E5. Implement minimal code/doc change flow — Completed ✅
 
 Goal: Let Coding Agent complete a safe small issue.
 
