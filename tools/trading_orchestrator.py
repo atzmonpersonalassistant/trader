@@ -941,7 +941,15 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             stored_labels = json.loads(row["labels"] or "[]")
             labels = sorted(set(live_labels) | set(stored_labels))
             branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
-            if "agent:needs-fix" in labels or "review-failed" in labels:
+            previous_success = conn.execute(
+                """
+                SELECT id FROM events
+                WHERE entity_external_id=? AND type='review_failure_routed' AND state='succeeded' AND payload_json LIKE ?
+                LIMIT 1
+                """,
+                (row["external_id"], f'%"head_sha": "{sha}"%'),
+            ).fetchone()
+            if previous_success:
                 results.append({"pr": pr_number, "routed": False, "reason": "already_routed_failed_review", "check": check})
                 continue
             if not branch.startswith("agent/issue-") or "agent:pr-opened" not in labels:
