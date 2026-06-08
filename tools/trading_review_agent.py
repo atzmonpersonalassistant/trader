@@ -225,6 +225,7 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
     if model and model.get("review_text"):
         body.extend(["", "## Model review", model["review_text"][:6000]])
     review_path = workspace / ".review-agent" / "review.md"
+    review_path.parent.mkdir(parents=True, exist_ok=True)
     review_text = "\n".join(body) + "\n"
     review_path.write_text(review_text, encoding="utf-8")
     return review_path, review_text, passed
