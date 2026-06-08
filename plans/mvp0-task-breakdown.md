@@ -301,7 +301,7 @@ trading-agent-token orchestrator
 
 ### Group C — VM Bootstrap
 
-Status: In progress
+Status: Completed ✅
 
 Current evidence:
 
@@ -319,11 +319,17 @@ Config: /etc/trading-agents/config.yaml
 OpenClaw runtime on VM: not installed
 ```
 
-Pending in Group C:
+C6 secrets implementation:
 
 ```text
-C6 secrets access is not complete yet.
-GitHub App private keys are still local under ~/.trading-agents/github-apps on the assistant Mac and have not yet been moved/wired to the VM or GCP Secret Manager.
+MVP-0 uses the approved locked-down VM files fallback, not GCP Secret Manager yet.
+Private keys are stored under /etc/trading-agents/secrets/<role>/private-key.pem.
+Each key directory is owned by its matching Linux user only.
+The root secrets directory is traverse-only for non-root users.
+/usr/local/bin/trading-agent-token mints short-lived GitHub App installation tokens.
+The helper refuses to mint a role token unless run as the matching agent user.
+Token minting was verified for orchestrator, coding, review, and validator.
+Cross-role minting was verified to fail.
 ```
 
 #### C1. Create initial MVP-0 VM — Completed ✅
@@ -466,7 +472,7 @@ merge:
 
 ---
 
-#### C6. Configure secrets access
+#### C6. Configure secrets access — Completed ✅
 
 Goal: Wire GCP Secret Manager or locked-down file fallback.
 
