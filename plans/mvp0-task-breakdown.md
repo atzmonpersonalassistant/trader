@@ -314,7 +314,7 @@ Admin user: ubuntu
 Access: SSH key ~/.ssh/ovh_vps_ce2ba5e7 on the assistant Mac
 Installed base packages: git, gh, sqlite3, python3, node/npm, Codex CLI, jq, curl, rsync
 Agent Linux users: created with no sudo
-/agents layout: created with role-specific ownership
+/agents layout: created with role-specific ownership; /agents is traverse-only so role users can enter their owned subtree
 Config: /etc/trading-agents/config.yaml
 OpenClaw runtime on VM: not installed
 ```
@@ -499,7 +499,21 @@ Acceptance criteria:
 
 ### Group D — Orchestrator Core
 
-#### D1. Create Orchestrator CLI skeleton
+Status: In progress
+
+Current implementation:
+
+```text
+D1-D3 implemented in tools/trading_orchestrator.py and tools/trading-orchestrator.
+CLI skeleton returns structured JSON.
+SQLite schema creates issues, pull_requests, events, locks, attempts, outbox, inbox, settings.
+Backup command uses sqlite3 Connection.backup(), not raw cp.
+DB and backup files are mode 600 and owned by agent-orchestrator.
+D4 GitHub issue scan remains next.
+```
+
+
+#### D1. Create Orchestrator CLI skeleton — Completed ✅
 
 Goal: Provide the main operator interface.
 
@@ -519,7 +533,7 @@ Commands may be stubbed initially but must return structured output.
 
 ---
 
-#### D2. Create SQLite schema
+#### D2. Create SQLite schema — Completed ✅
 
 Goal: Store durable orchestrator state.
 
@@ -552,7 +566,7 @@ retry_count
 
 ---
 
-#### D3. Implement SQLite backup command
+#### D3. Implement SQLite backup command — Completed ✅
 
 Goal: Back up Orchestrator DB safely.
 
