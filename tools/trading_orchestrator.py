@@ -723,6 +723,44 @@ def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | No
     return True, "ok"
 
 
+def create_blocked_outbox(
+    conn: sqlite3.Connection,
+    *,
+    pr_number: int,
+    title: str,
+    url: str,
+    reason: str,
+    retry_count: int,
+) -> tuple[str, bool]:
+    ts = now_iso()
+    external_id = f"blocked-pr-{pr_number}"
+    payload = {
+        "type": "blocked_pr",
+        "pr": pr_number,
+        "title": title,
+        "reason": reason,
+        "retry_count": retry_count,
+        "url": url,
+    }
+    message = (
+        f"PR #{pr_number} is blocked: {title}\n"
+        f"Reason: {reason}\n"
+        f"Retry count: {retry_count}\n"
+        f"URL: {url}"
+    )
+    existing = conn.execute("SELECT state FROM outbox WHERE external_id=?", (external_id,)).fetchone()
+    if existing:
+        return external_id, False
+    conn.execute(
+        """
+        INSERT INTO outbox(external_id, state, labels, channel, message, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)
+        """,
+        (external_id, json.dumps(["blocked", "review_failure"], sort_keys=True), message, json.dumps(payload, sort_keys=True), ts, ts, ts),
+    )
+    return external_id, True
+
+
 def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
     init_db(args.db)
     token = mint_github_token(args.token_cmd)
@@ -879,19 +917,36 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 continue
             current_retry = int(row["retry_count"] or 0) + 1
             if current_retry > args.max_review_fix_retries:
+                pr_payload = json.loads(row["payload_json"] or "{}")
+                try:
+                    add_issue_label(args.owner, args.repo, pr_number, "agent:blocked", token)
+                    github_label_updated = True
+                except urllib.error.HTTPError as exc:
+                    if exc.code not in {403, 404}:
+                        raise
+                    github_label_updated = False
+                outbox_id, outbox_created = create_blocked_outbox(
+                    conn,
+                    pr_number=pr_number,
+                    title=pr_payload.get("title") or f"PR #{pr_number}",
+                    url=pr_payload.get("html_url") or f"https://github.com/{args.owner}/{args.repo}/pull/{pr_number}",
+                    reason=f"Review failed more than {args.max_review_fix_retries} retry attempts",
+                    retry_count=current_retry,
+                )
+                labels = append_label_json(append_label_json(row["labels"], "agent:blocked"), "needs:human-approval")
                 event_id = record_event(
                     conn,
                     event_type="review_failure_retry_limit",
                     entity_type="pull_request",
                     entity_external_id=row["external_id"],
                     state="blocked",
-                    payload={"pr": pr_number, "retry_count": current_retry, "max_retries": args.max_review_fix_retries},
+                    payload={"pr": pr_number, "retry_count": current_retry, "max_retries": args.max_review_fix_retries, "outbox_id": outbox_id, "outbox_created": outbox_created, "github_label_updated": github_label_updated},
                 )
                 conn.execute(
                     "UPDATE pull_requests SET retry_count=?, labels=?, updated_at=?, last_seen_at=? WHERE external_id=?",
-                    (current_retry, append_label_json(row["labels"], "needs:human-approval"), now_iso(), now_iso(), row["external_id"]),
+                    (current_retry, labels, now_iso(), now_iso(), row["external_id"]),
                 )
-                results.append({"pr": pr_number, "routed": False, "reason": "retry_limit", "event": event_id})
+                results.append({"pr": pr_number, "routed": False, "reason": "retry_limit", "event": event_id, "outbox_id": outbox_id, "outbox_created": outbox_created, "github_label_updated": github_label_updated})
                 continue
             try:
                 add_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)

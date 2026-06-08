@@ -42,6 +42,21 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("review-agent/pass: failure", prompt)
         self.assertIn("Update the existing PR branch only", prompt)
 
+    def test_orchestrator_blocked_outbox_is_deduped(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        import sqlite3
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            with sqlite3.connect(db) as conn:
+                first = orch.create_blocked_outbox(conn, pr_number=11, title="T", url="https://example/pr/11", reason="retry limit", retry_count=51)
+                second = orch.create_blocked_outbox(conn, pr_number=11, title="T", url="https://example/pr/11", reason="retry limit", retry_count=51)
+                rows = conn.execute("SELECT external_id, payload_json FROM outbox").fetchall()
+        self.assertEqual(first, ("blocked-pr-11", True))
+        self.assertEqual(second, ("blocked-pr-11", False))
+        self.assertEqual(len(rows), 1)
+        self.assertIn("blocked_pr", rows[0][1])
+
     def test_coding_agent_enforces_docs_only_changes(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
