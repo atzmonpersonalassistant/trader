@@ -19,7 +19,10 @@ class MVP0AgentTests(unittest.TestCase):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success"}
         failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure"}
-        self.assertTrue(orch.is_trusted_agent_pr({"head": {"ref": "agent/issue-5-docs"}}))
+        same_repo_pr = {"head": {"ref": "agent/issue-5-docs", "repo": {"full_name": "atzmonpersonalassistant/trader"}}, "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}}}
+        fork_pr = {"head": {"ref": "agent/issue-5-docs", "repo": {"full_name": "evil/fork"}}, "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}}}
+        self.assertTrue(orch.is_trusted_agent_pr(same_repo_pr))
+        self.assertFalse(orch.is_trusted_agent_pr(fork_pr))
         self.assertFalse(orch.is_trusted_agent_pr({"head": {"ref": "docs/manual-pr"}}))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "agent/issue-5-docs"), (True, "ok"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "docs/manual-pr"), (False, "untrusted_branch"))
