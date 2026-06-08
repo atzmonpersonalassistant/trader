@@ -985,15 +985,70 @@ def cmd_outbox_next(args: argparse.Namespace) -> int:
 
 def cmd_inbox_ack(args: argparse.Namespace) -> int:
     init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    label = "human:approved" if args.decision == "approve" else "human:rejected"
+    comment = "/human-approved" if args.decision == "approve" else "/human-rejected"
     ts = now_iso()
     with connect(args.db) as conn:
-        cur = conn.execute(
-            "UPDATE inbox SET state='acknowledged', acknowledged_at=?, updated_at=? WHERE external_id=?",
-            (ts, ts, args.external_id),
+        outbox = conn.execute("SELECT * FROM outbox WHERE external_id=?", (args.outbox_id,)).fetchone()
+        if not outbox:
+            print(json.dumps({"ok": False, "reason": "outbox_not_found", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
+        payload = json.loads(outbox["payload_json"] or "{}")
+        target_number = payload.get("pr") or payload.get("issue")
+        if not target_number:
+            print(json.dumps({"ok": False, "reason": "missing_pr_or_issue", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
+        target_number = int(target_number)
+        labels_url = f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target_number}/labels"
+        comments_url = f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target_number}/comments"
+        github_api_post(labels_url, token, {"labels": [label]})
+        github_api_post(comments_url, token, {"body": comment})
+        conn.execute(
+            "UPDATE outbox SET state='acknowledged', updated_at=?, last_seen_at=? WHERE external_id=?",
+            (ts, ts, args.outbox_id),
         )
-        changed = cur.rowcount
-    print(json.dumps({"ok": changed == 1, "external_id": args.external_id, "updated": changed}, sort_keys=True))
-    return 0 if changed == 1 else 1
+        inbox_external_id = f"ack-{args.outbox_id}-{ts}"
+        inbox_payload = {
+            "outbox_id": args.outbox_id,
+            "decision": args.decision,
+            "label": label,
+            "comment": comment,
+            "target_number": target_number,
+            "target_type": "pr" if "pr" in payload else "issue",
+        }
+        conn.execute(
+            """
+            INSERT INTO inbox(external_id, state, labels, source, message, payload_json, created_at, updated_at, last_seen_at, retry_count, acknowledged_at)
+            VALUES (?, 'acknowledged', ?, 'openclaw', ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (
+                inbox_external_id,
+                json.dumps([label], sort_keys=True),
+                args.decision,
+                json.dumps(inbox_payload, sort_keys=True),
+                ts,
+                ts,
+                ts,
+                ts,
+            ),
+        )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "outbox_id": args.outbox_id,
+                "decision": args.decision,
+                "target_number": target_number,
+                "label": label,
+                "comment": comment,
+                "inbox_id": inbox_external_id,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 def cmd_db_init(args: argparse.Namespace) -> int:
@@ -1063,7 +1118,8 @@ def build_parser() -> argparse.ArgumentParser:
     inbox = sub.add_parser("inbox")
     inbox_sub = inbox.add_subparsers(dest="inbox_command", required=True)
     inbox_ack = inbox_sub.add_parser("ack")
-    inbox_ack.add_argument("external_id")
+    inbox_ack.add_argument("--outbox-id", required=True)
+    inbox_ack.add_argument("--decision", required=True, choices=["approve", "reject"])
     inbox_ack.set_defaults(func=cmd_inbox_ack)
 
     db = sub.add_parser("db")

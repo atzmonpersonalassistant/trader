@@ -516,7 +516,8 @@ D7 PR detection is implemented and verified on VM against PR #1. PR state is rec
 D8 auto-merge enablement is implemented and verified on PR #1. The Orchestrator App now has Contents: write, Pull requests: write, and Administration: read. GitHub native auto-merge was enabled by app/trading-orchestrator-agent with SQUASH.
 D9 review failure routing is implemented and verified on VM using a synthetic failing review-agent/pass check-run on PR #1. The Orchestrator labels PRs agent:needs-fix, increments retry_count, records review_failure_routed events, and dispatches the Coding Agent stub while retry_count <= 50.
 D10 outbox CLI is implemented and verified locally and on the VM. `trading-orchestrator outbox next` now returns `{"type":"none"}` when empty, or a structured pending message including type/id/body/channel and payload fields such as pr/title/url.
-D11 inbox ack CLI remains next.
+D11 inbox ack CLI is implemented and verified locally against PR #1: approve marks outbox acknowledged, inserts an acknowledged inbox record, adds human:approved, and comments /human-approved. The updated command is deployed on the VM.
+Group E Coding Agent MVP remains next.
 ```
 
 
@@ -703,7 +704,7 @@ or a structured message:
 
 ---
 
-#### D11. Implement inbox ack CLI
+#### D11. Implement inbox ack CLI — Completed ✅
 
 Goal: Allow OpenClaw to pass Uriel replies back.
 
