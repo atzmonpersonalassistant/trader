@@ -515,7 +515,8 @@ D6 Coding Agent dispatch stub is implemented and verified on VM issue #3; agent-
 D7 PR detection is implemented and verified on VM against PR #1. PR state is recorded in SQLite with agent:pr-opened; external GitHub PR label mutation returned 403 for the Orchestrator App and is reported as non-fatal.
 D8 auto-merge enablement is implemented and verified on PR #1. The Orchestrator App now has Contents: write, Pull requests: write, and Administration: read. GitHub native auto-merge was enabled by app/trading-orchestrator-agent with SQUASH.
 D9 review failure routing is implemented and verified on VM using a synthetic failing review-agent/pass check-run on PR #1. The Orchestrator labels PRs agent:needs-fix, increments retry_count, records review_failure_routed events, and dispatches the Coding Agent stub while retry_count <= 50.
-D10 scheduler wiring remains next.
+D10 outbox CLI is implemented and verified locally and on the VM. `trading-orchestrator outbox next` now returns `{"type":"none"}` when empty, or a structured pending message including type/id/body/channel and payload fields such as pr/title/url.
+D11 inbox ack CLI remains next.
 ```
 
 
@@ -672,7 +673,7 @@ Acceptance criteria:
 
 ---
 
-#### D10. Implement outbox CLI
+#### D10. Implement outbox CLI — Completed ✅
 
 Goal: Allow OpenClaw to fetch messages for WhatsApp relay.
 

@@ -964,7 +964,22 @@ def cmd_outbox_next(args: argparse.Namespace) -> int:
         row = conn.execute(
             "SELECT * FROM outbox WHERE state='pending' ORDER BY created_at, id LIMIT 1"
         ).fetchone()
-    print(json.dumps(dict(row) if row else None, indent=2, sort_keys=True))
+    if not row:
+        print(json.dumps({"type": "none"}, indent=2, sort_keys=True))
+        return 0
+    payload = json.loads(row["payload_json"] or "{}")
+    message_type = payload.get("type") or "message"
+    result: dict[str, Any] = {
+        "type": message_type,
+        "id": row["external_id"],
+        "body": row["message"],
+    }
+    if row["channel"]:
+        result["channel"] = row["channel"]
+    for key in ["pr", "issue", "title", "decision", "url", "labels"]:
+        if key in payload:
+            result[key] = payload[key]
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
