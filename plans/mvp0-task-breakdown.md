@@ -509,7 +509,8 @@ CLI skeleton returns structured JSON.
 SQLite schema creates issues, pull_requests, events, locks, attempts, outbox, inbox, settings.
 Backup command uses sqlite3 Connection.backup(), not raw cp.
 DB and backup files are mode 600 and owned by agent-orchestrator.
-D4 GitHub issue scan remains next.
+D4 GitHub issue scan is implemented and verified against GitHub on the VM; current repo has 0 open agent:ready issues.
+D5 claim issue remains next.
 ```
 
 
@@ -588,7 +589,7 @@ Creates files like:
 
 ---
 
-#### D4. Implement GitHub scan for ready issues
+#### D4. Implement GitHub scan for ready issues — Completed ✅
 
 Goal: Find work for Coding Agent.
 

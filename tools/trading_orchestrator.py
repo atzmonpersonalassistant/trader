@@ -11,13 +11,20 @@ import argparse
 import json
 import os
 import sqlite3
+import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_DB_PATH = Path(os.environ.get("TRADING_ORCHESTRATOR_DB", "/agents/orchestrator/state/orchestrator.db"))
 DEFAULT_BACKUP_DIR = Path(os.environ.get("TRADING_ORCHESTRATOR_BACKUP_DIR", "/agents/orchestrator/backups"))
+DEFAULT_GITHUB_OWNER = os.environ.get("TRADING_GITHUB_OWNER", "atzmonpersonalassistant")
+DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
+DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
+DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -166,6 +173,103 @@ def table_counts(conn: sqlite3.Connection) -> dict[str, int]:
     return {table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) for table in TABLES}
 
 
+def mint_github_token(token_cmd: str) -> str:
+    return subprocess.check_output([token_cmd, "orchestrator"], text=True).strip()
+
+
+def github_api_get(url: str, token: str) -> tuple[Any, dict[str, str]]:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "trading-orchestrator-mvp0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        headers = {k.lower(): v for k, v in resp.headers.items()}
+        return json.loads(resp.read().decode()), headers
+
+
+def parse_next_link(link_header: str | None) -> str | None:
+    if not link_header:
+        return None
+    for part in link_header.split(","):
+        section = part.strip()
+        if 'rel="next"' not in section:
+            continue
+        start = section.find("<")
+        end = section.find(">")
+        if start != -1 and end != -1 and end > start:
+            return section[start + 1 : end]
+    return None
+
+
+def fetch_ready_issues(owner: str, repo: str, label: str, token: str) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode(
+        {
+            "state": "open",
+            "labels": label,
+            "per_page": "100",
+            "sort": "created",
+            "direction": "asc",
+        }
+    )
+    url: str | None = f"https://api.github.com/repos/{owner}/{repo}/issues?{query}"
+    issues: list[dict[str, Any]] = []
+    while url:
+        page, headers = github_api_get(url, token)
+        # GitHub's issues endpoint includes PRs; exclude them.
+        issues.extend(item for item in page if "pull_request" not in item)
+        url = parse_next_link(headers.get("link"))
+    return issues
+
+
+def upsert_issue(conn: sqlite3.Connection, issue: dict[str, Any]) -> str:
+    ts = now_iso()
+    external_id = str(issue["id"])
+    labels = [label.get("name") for label in issue.get("labels", []) if label.get("name")]
+    existing = conn.execute("SELECT id FROM issues WHERE external_id=?", (external_id,)).fetchone()
+    if existing:
+        conn.execute(
+            """
+            UPDATE issues
+            SET number=?, title=?, state=?, labels=?, payload_json=?, updated_at=?, last_seen_at=?
+            WHERE external_id=?
+            """,
+            (
+                issue.get("number"),
+                issue.get("title") or "",
+                issue.get("state") or "unknown",
+                json.dumps(labels, sort_keys=True),
+                json.dumps(issue, sort_keys=True),
+                ts,
+                ts,
+                external_id,
+            ),
+        )
+        return "updated"
+    conn.execute(
+        """
+        INSERT INTO issues(external_id, number, title, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """,
+        (
+            external_id,
+            issue.get("number"),
+            issue.get("title") or "",
+            issue.get("state") or "unknown",
+            json.dumps(labels, sort_keys=True),
+            json.dumps(issue, sort_keys=True),
+            ts,
+            ts,
+            ts,
+        ),
+    )
+    return "inserted"
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -182,11 +286,38 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_scan(args: argparse.Namespace) -> int:
     init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    ready_issues = fetch_ready_issues(args.owner, args.repo, args.ready_label, token)
+    inserted = 0
+    updated = 0
+    with connect(args.db) as conn:
+        for issue in ready_issues:
+            action = upsert_issue(conn, issue)
+            if action == "inserted":
+                inserted += 1
+            else:
+                updated += 1
+        next_row = conn.execute(
+            """
+            SELECT external_id, number, title, state, labels, retry_count, last_seen_at
+            FROM issues
+            WHERE state='open' AND labels LIKE ?
+            ORDER BY number ASC
+            LIMIT 1
+            """,
+            (f'%"{args.ready_label}"%',),
+        ).fetchone()
     data = {
         "ok": True,
         "command": "scan",
-        "implemented": False,
-        "next_task": "D4 GitHub scan for ready issues",
+        "implemented": True,
+        "owner": args.owner,
+        "repo": args.repo,
+        "ready_label": args.ready_label,
+        "found": len(ready_issues),
+        "inserted": inserted,
+        "updated": updated,
+        "next_issue": dict(next_row) if next_row else None,
     }
     print(json.dumps(data, indent=2, sort_keys=True))
     return 0
@@ -237,6 +368,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading-orchestrator")
     p.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     p.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
+    p.add_argument("--owner", default=DEFAULT_GITHUB_OWNER)
+    p.add_argument("--repo", default=DEFAULT_GITHUB_REPO)
+    p.add_argument("--ready-label", default=DEFAULT_READY_LABEL)
+    p.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
     sub = p.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status")
