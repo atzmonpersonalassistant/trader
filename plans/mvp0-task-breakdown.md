@@ -519,7 +519,12 @@ D10 outbox CLI is implemented and verified locally and on the VM. `trading-orche
 D11 inbox ack CLI is implemented and verified locally against PR #1: approve marks outbox acknowledged, inserts an acknowledged inbox record, adds human:approved, and comments /human-approved. The updated command is deployed on the VM.
 E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM under agent-coding. `trading-coding-agent run --issue 123` loads config, writes `/agents/coding/logs/coding-agent.jsonl`, and exits cleanly.
 E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
-E3 branch creation remains next.
+E3 branch creation is implemented and verified on the VM. The Coding Agent creates `agent/issue-<n>-<slug>` from fresh `main`.
+E4 Codex execution wrapper is implemented and captures stdout/stderr/logs with `codex exec --sandbox workspace-write -c approval_policy="never"`, but real Codex execution is blocked on the VM because `agent-coding` lacks valid Codex/OpenAI auth and receives 401 Unauthorized.
+E5 minimal code/doc change flow is implemented behind the Codex wrapper and smoke-verified with `--skip-codex`; production execution remains blocked by E4 auth.
+E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `04a6cd5` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main.
+E7 PR creation is implemented and verified on the VM: the Coding App opened PR #4 targeting main.
+Next blocker: provide Codex/OpenAI auth for `agent-coding`, then rerun E4/E5 without `--skip-codex`.
 ```
 
 
@@ -763,7 +768,7 @@ Workspace contains a repo checkout or git worktree.
 
 ---
 
-#### E3. Implement branch creation
+#### E3. Implement branch creation — Completed ✅
 
 Goal: Create predictable agent branch.
 
@@ -779,7 +784,7 @@ Branch is created from latest `main`.
 
 ---
 
-#### E4. Implement Codex execution wrapper
+#### E4. Implement Codex execution wrapper — Blocked on auth ⚠️
 
 Goal: Run Codex CLI inside the issue workspace.
 
@@ -793,7 +798,7 @@ Acceptance criteria:
 
 ---
 
-#### E5. Implement minimal code/doc change flow
+#### E5. Implement minimal code/doc change flow — Implemented, production-blocked by E4 ⚠️
 
 Goal: Let Coding Agent complete a safe small issue.
 
@@ -806,7 +811,7 @@ Acceptance criteria:
 
 ---
 
-#### E6. Implement commit and push
+#### E6. Implement commit and push — Completed ✅
 
 Goal: Push Coding Agent work to GitHub.
 
@@ -819,7 +824,7 @@ Acceptance criteria:
 
 ---
 
-#### E7. Implement PR creation
+#### E7. Implement PR creation — Completed ✅
 
 Goal: Open PR for completed issue.
 
