@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -292,6 +293,91 @@ def upsert_issue(conn: sqlite3.Connection, issue: dict[str, Any]) -> str:
     return "inserted"
 
 
+def fetch_open_prs(owner: str, repo: str, token: str) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode(
+        {
+            "state": "open",
+            "per_page": "100",
+            "sort": "created",
+            "direction": "asc",
+        }
+    )
+    url: str | None = f"https://api.github.com/repos/{owner}/{repo}/pulls?{query}"
+    prs: list[dict[str, Any]] = []
+    while url:
+        page, headers = github_api_get(url, token)
+        prs.extend(page)
+        url = parse_next_link(headers.get("link"))
+    return prs
+
+
+def infer_issue_number_from_pr(pr: dict[str, Any]) -> int | None:
+    text = "\n".join(
+        str(value or "")
+        for value in [
+            pr.get("title"),
+            pr.get("body"),
+            (pr.get("head") or {}).get("ref"),
+        ]
+    )
+    patterns = [
+        r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)",
+        r"issue[-_/ ]+(\d+)",
+        r"#(\d+)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text, flags=re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def upsert_pr(conn: sqlite3.Connection, pr: dict[str, Any], issue_external_id: str | None) -> str:
+    ts = now_iso()
+    external_id = str(pr["id"])
+    existing = conn.execute("SELECT id FROM pull_requests WHERE external_id=?", (external_id,)).fetchone()
+    branch = ((pr.get("head") or {}).get("ref")) or ""
+    if existing:
+        conn.execute(
+            """
+            UPDATE pull_requests
+            SET number=?, issue_external_id=?, branch=?, state=?, labels=?, payload_json=?, updated_at=?, last_seen_at=?
+            WHERE external_id=?
+            """,
+            (
+                pr.get("number"),
+                issue_external_id,
+                branch,
+                pr.get("state") or "unknown",
+                json.dumps(["agent:pr-opened"], sort_keys=True),
+                json.dumps(pr, sort_keys=True),
+                ts,
+                ts,
+                external_id,
+            ),
+        )
+        return "updated"
+    conn.execute(
+        """
+        INSERT INTO pull_requests(external_id, number, issue_external_id, branch, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """,
+        (
+            external_id,
+            pr.get("number"),
+            issue_external_id,
+            branch,
+            pr.get("state") or "unknown",
+            json.dumps(["agent:pr-opened"], sort_keys=True),
+            json.dumps(pr, sort_keys=True),
+            ts,
+            ts,
+            ts,
+        ),
+    )
+    return "inserted"
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -342,6 +428,76 @@ def cmd_scan(args: argparse.Namespace) -> int:
         "next_issue": dict(next_row) if next_row else None,
     }
     print(json.dumps(data, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_scan_prs(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    prs = fetch_open_prs(args.owner, args.repo, token)
+    inserted = 0
+    updated = 0
+    matched = 0
+    label_updates = 0
+    label_update_errors: list[dict[str, Any]] = []
+    pr_summaries: list[dict[str, Any]] = []
+    with connect(args.db) as conn:
+        for pr in prs:
+            issue_external_id = None
+            pr_number = int(pr["number"])
+            pr_labels_url = f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{pr_number}/labels"
+            label_update_ok = True
+            try:
+                github_api_post(pr_labels_url, token, {"labels": ["agent:pr-opened"]})
+                label_updates += 1
+            except urllib.error.HTTPError as exc:
+                label_update_ok = False
+                # Some GitHub App contexts cannot mutate labels on certain PR resources.
+                # Keep PR state durable in SQLite and report the external-label failure.
+                if exc.code not in {403, 404}:
+                    raise
+                label_update_errors.append({"pr": pr_number, "status": exc.code, "reason": str(exc)})
+            issue_number = infer_issue_number_from_pr(pr)
+            if issue_number is not None:
+                issue_row = conn.execute("SELECT external_id FROM issues WHERE number=?", (issue_number,)).fetchone()
+                if issue_row:
+                    issue_external_id = str(issue_row["external_id"])
+                    matched += 1
+            action = upsert_pr(conn, pr, issue_external_id)
+            if action == "inserted":
+                inserted += 1
+            else:
+                updated += 1
+            pr_summaries.append(
+                {
+                    "number": pr_number,
+                    "title": pr.get("title"),
+                    "branch": ((pr.get("head") or {}).get("ref")) or "",
+                    "issue_number": issue_number,
+                    "issue_external_id": issue_external_id,
+                    "github_label_updated": label_update_ok,
+                }
+            )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "command": "scan-prs",
+                "implemented": True,
+                "owner": args.owner,
+                "repo": args.repo,
+                "found": len(prs),
+                "inserted": inserted,
+                "updated": updated,
+                "matched_to_issues": matched,
+                "github_label_updates": label_updates,
+                "github_label_update_errors": label_update_errors,
+                "pull_requests": pr_summaries,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -577,6 +733,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan")
     scan.set_defaults(func=cmd_scan)
+
+    scan_prs = sub.add_parser("scan-prs")
+    scan_prs.set_defaults(func=cmd_scan_prs)
 
     claim = sub.add_parser("claim")
     claim.add_argument("--max-claimed", type=int, default=2)

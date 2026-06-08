@@ -512,7 +512,8 @@ DB and backup files are mode 600 and owned by agent-orchestrator.
 D4 GitHub issue scan is implemented and verified against GitHub on the VM; current repo has 0 open agent:ready issues.
 D5 issue claim transition is implemented and verified on GitHub issue #3.
 D6 Coding Agent dispatch stub is implemented and verified on VM issue #3; agent-orchestrator can run the stub as agent-coding through a narrow sudoers rule.
-D7 PR detection remains next.
+D7 PR detection is implemented and verified on VM against PR #1. PR state is recorded in SQLite with agent:pr-opened; external GitHub PR label mutation returned 403 for the Orchestrator App and is reported as non-fatal.
+D8 auto-merge enablement remains next.
 ```
 
 
@@ -629,7 +630,7 @@ Acceptance criteria:
 
 ---
 
-#### D7. Implement PR detection
+#### D7. Implement PR detection — Completed ✅
 
 Goal: Detect PRs created by Coding Agent.
 
