@@ -29,6 +29,8 @@ DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
 DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-dispatch-stub")
+DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
+DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -613,6 +615,32 @@ def cmd_claim(args: argparse.Namespace) -> int:
     return 0
 
 
+def append_label_json(labels_json: str | None, label: str) -> str:
+    labels = json.loads(labels_json or "[]")
+    if label not in labels:
+        labels.append(label)
+    return json.dumps(sorted(labels), sort_keys=True)
+
+
+def fetch_check_runs(owner: str, repo: str, sha: str, token: str) -> list[dict[str, Any]]:
+    query = urllib.parse.urlencode({"per_page": "100"})
+    url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
+    data, _ = github_api_get(url, token)
+    return data.get("check_runs", [])
+
+
+def latest_named_check(check_runs: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+    matches = [check for check in check_runs if check.get("name") == name]
+    if not matches:
+        return None
+    return sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+
+
+def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token: str) -> None:
+    labels_url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/labels"
+    github_api_post(labels_url, token, {"labels": [label]})
+
+
 def record_event(
     conn: sqlite3.Connection,
     *,
@@ -707,6 +735,146 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                 )
                 results.append({"pr": pr_number, "enabled": False, "error": str(exc), "event": event_id})
     print(json.dumps({"ok": True, "command": "enable-auto-merge", "results": results}, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_route_review_failures(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    results: list[dict[str, Any]] = []
+    with connect(args.db) as conn:
+        rows = conn.execute(
+            """
+            SELECT external_id, number, branch, state, labels, payload_json, retry_count
+            FROM pull_requests
+            WHERE state='open'
+            ORDER BY number ASC
+            """
+        ).fetchall()
+        for row in rows:
+            pr_number = int(row["number"])
+            pr_payload = json.loads(row["payload_json"] or "{}")
+            sha = ((pr_payload.get("head") or {}).get("sha")) or ""
+            if not sha:
+                event_id = record_event(
+                    conn,
+                    event_type="review_failure_route_failed",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="failed",
+                    payload={"pr": pr_number, "reason": "missing_head_sha"},
+                )
+                results.append({"pr": pr_number, "routed": False, "reason": "missing_head_sha", "event": event_id})
+                continue
+            check = latest_named_check(fetch_check_runs(args.owner, args.repo, sha, token), args.review_check_name)
+            conclusion = (check or {}).get("conclusion")
+            status = (check or {}).get("status")
+            if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+                results.append(
+                    {
+                        "pr": pr_number,
+                        "routed": False,
+                        "reason": "no_failed_review_check",
+                        "check": {"name": args.review_check_name, "status": status, "conclusion": conclusion},
+                    }
+                )
+                continue
+            current_retry = int(row["retry_count"] or 0) + 1
+            if current_retry > args.max_review_fix_retries:
+                event_id = record_event(
+                    conn,
+                    event_type="review_failure_retry_limit",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="blocked",
+                    payload={"pr": pr_number, "retry_count": current_retry, "max_retries": args.max_review_fix_retries},
+                )
+                conn.execute(
+                    "UPDATE pull_requests SET retry_count=?, labels=?, updated_at=?, last_seen_at=? WHERE external_id=?",
+                    (current_retry, append_label_json(row["labels"], "needs:human-approval"), now_iso(), now_iso(), row["external_id"]),
+                )
+                results.append({"pr": pr_number, "routed": False, "reason": "retry_limit", "event": event_id})
+                continue
+            try:
+                add_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)
+                github_label_updated = True
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {403, 404}:
+                    raise
+                github_label_updated = False
+            ts = now_iso()
+            labels = append_label_json(append_label_json(row["labels"], "agent:needs-fix"), "review-failed")
+            conn.execute(
+                "UPDATE pull_requests SET retry_count=?, labels=?, updated_at=?, last_seen_at=? WHERE external_id=?",
+                (current_retry, labels, ts, ts, row["external_id"]),
+            )
+            attempt_external_id = f"pr-{pr_number}-review-fix-attempt-{ts}"
+            conn.execute(
+                """
+                INSERT INTO attempts(
+                  external_id, entity_type, entity_external_id, state, labels,
+                  created_at, updated_at, last_seen_at, retry_count, started_at
+                ) VALUES (?, 'pull_request', ?, 'started', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt_external_id,
+                    row["external_id"],
+                    json.dumps(["coding-stub", "review-fix"], sort_keys=True),
+                    ts,
+                    ts,
+                    ts,
+                    current_retry,
+                    ts,
+                ),
+            )
+            cmd = [
+                args.coding_stub_cmd,
+                "--issue-number",
+                str(pr_number),
+                "--issue-external-id",
+                str(row["external_id"]),
+                "--title",
+                f"Fix failed {args.review_check_name} for PR #{pr_number}",
+            ]
+            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+            finished = now_iso()
+            state = "succeeded" if proc.returncode == 0 else "failed"
+            result = {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr, "command": cmd, "check": check}
+            conn.execute(
+                """
+                UPDATE attempts
+                SET state=?, updated_at=?, last_seen_at=?, finished_at=?, result_json=?
+                WHERE external_id=?
+                """,
+                (state, finished, finished, finished, json.dumps(result, sort_keys=True), attempt_external_id),
+            )
+            event_id = record_event(
+                conn,
+                event_type="review_failure_routed",
+                entity_type="pull_request",
+                entity_external_id=row["external_id"],
+                state=state,
+                payload={
+                    "pr": pr_number,
+                    "head_sha": sha,
+                    "check": check,
+                    "attempt": attempt_external_id,
+                    "github_label_updated": github_label_updated,
+                    "retry_count": current_retry,
+                },
+            )
+            results.append(
+                {
+                    "pr": pr_number,
+                    "routed": proc.returncode == 0,
+                    "attempt": attempt_external_id,
+                    "event": event_id,
+                    "retry_count": current_retry,
+                    "github_label_updated": github_label_updated,
+                    "state": state,
+                }
+            )
+    print(json.dumps({"ok": True, "command": "route-review-failures", "results": results}, indent=2, sort_keys=True))
     return 0
 
 
@@ -859,6 +1027,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     auto_merge = sub.add_parser("enable-auto-merge")
     auto_merge.set_defaults(func=cmd_enable_auto_merge)
+
+    route_review = sub.add_parser("route-review-failures")
+    route_review.add_argument("--review-check-name", default=DEFAULT_REVIEW_CHECK_NAME)
+    route_review.add_argument("--max-review-fix-retries", type=int, default=DEFAULT_MAX_REVIEW_FIX_RETRIES)
+    route_review.add_argument("--timeout-seconds", type=int, default=60)
+    route_review.set_defaults(func=cmd_route_review_failures)
 
     dispatch = sub.add_parser("dispatch")
     dispatch_sub = dispatch.add_subparsers(dest="dispatch_command", required=True)
