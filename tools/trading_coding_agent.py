@@ -252,6 +252,8 @@ def changed_files(workspace: Path) -> list[str]:
         path = entry[3:]
         if status[0] in {"R", "C"} or status[1] in {"R", "C"}:
             files.append(path)
+            if i + 1 < len(entries):
+                files.append(entries[i + 1])
             i += 2  # porcelain -z stores the old path in the following entry.
         else:
             files.append(path)
