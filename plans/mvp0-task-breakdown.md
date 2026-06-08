@@ -301,21 +301,57 @@ trading-agent-token orchestrator
 
 ### Group C — VM Bootstrap
 
-#### C1. Create VM in GCP project
+Status: In progress
+
+Current evidence:
+
+```text
+Provider: OVHcloud VPS
+Host: vps-ce2ba5e7.vps.ovh.ca
+IPv4: 144.217.82.149
+OS: Ubuntu 26.04 LTS
+Admin user: ubuntu
+Access: SSH key ~/.ssh/ovh_vps_ce2ba5e7 on the assistant Mac
+Installed base packages: git, gh, sqlite3, python3, node/npm, Codex CLI, jq, curl, rsync
+Agent Linux users: created with no sudo
+/agents layout: created with role-specific ownership
+Config: /etc/trading-agents/config.yaml
+OpenClaw runtime on VM: not installed
+```
+
+Pending in Group C:
+
+```text
+C6 secrets access is not complete yet.
+GitHub App private keys are still local under ~/.trading-agents/github-apps on the assistant Mac and have not yet been moved/wired to the VM or GCP Secret Manager.
+```
+
+#### C1. Create initial MVP-0 VM — Completed ✅
 
 Goal: Create initial MVP-0 VM.
 
 Acceptance criteria:
 
-- Project: `atzmon-trading-project`
-- VM name: `agent-hub-1`
-- Initial machine type: `e2-standard-2`
+- Provider and host are recorded.
 - SSH/admin access works.
+- Machine has enough RAM/disk for MVP-0 agent loop.
 - No OpenClaw runtime installed as part of the trading execution plane.
+
+Actual MVP-0 VM:
+
+```yaml
+vm:
+  provider: ovhcloud
+  host: vps-ce2ba5e7.vps.ovh.ca
+  ipv4: 144.217.82.149
+  os: Ubuntu 26.04 LTS
+  admin_user: ubuntu
+  ssh_key: ~/.ssh/ovh_vps_ce2ba5e7
+```
 
 ---
 
-#### C2. Install base packages
+#### C2. Install base packages — Completed ✅
 
 Goal: Install runtime dependencies.
 
@@ -344,7 +380,7 @@ codex --version
 
 ---
 
-#### C3. Create Linux users
+#### C3. Create Linux users — Completed ✅
 
 Goal: Create separate OS users for process isolation.
 
@@ -363,7 +399,7 @@ Each user has a home directory and no unnecessary sudo permissions.
 
 ---
 
-#### C4. Create `/agents` directory layout
+#### C4. Create `/agents` directory layout — Completed ✅
 
 Goal: Create role-specific directories.
 
@@ -396,7 +432,7 @@ Ownership:
 
 ---
 
-#### C5. Create `/etc/trading-agents/config.yaml`
+#### C5. Create `/etc/trading-agents/config.yaml` — Completed ✅
 
 Goal: Store non-secret configuration.
 
@@ -443,7 +479,7 @@ Acceptance criteria:
 
 ---
 
-#### C7. Verify no OpenClaw runtime dependency
+#### C7. Verify no OpenClaw runtime dependency — Completed ✅
 
 Goal: Ensure VM is independent from OpenClaw.
 
