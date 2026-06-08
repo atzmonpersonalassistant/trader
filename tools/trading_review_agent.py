@@ -101,7 +101,9 @@ def authenticated_url(url: str, token: str) -> str:
 
 
 def redact_text(text: str) -> str:
-    return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+    text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
+    return text
 
 
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180) -> dict[str, Any]:
@@ -209,9 +211,10 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     # Do not persist the full review prompt/diff in JSON logs. The prompt can
     # contain PR content, including the very secrets this agent is meant to flag.
     result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
+    result["stdout"] = "<codex-stdout-redacted>"
     result["stderr"] = "<codex-stderr-redacted>"
     if result["returncode"] == 0 and output.exists():
-        result["review_text"] = output.read_text(encoding="utf-8")
+        result["review_text"] = redact_text(output.read_text(encoding="utf-8"))
     return result
 
 
@@ -226,10 +229,14 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
         model_findings.append("Model review failed or returned no review text; required check cannot pass.")
     else:
         text = model["review_text"]
-        if text.strip().upper().startswith("FAIL"):
+        normalized = text.strip().upper()
+        if normalized.startswith("FAIL"):
             passed = False
-        elif text.strip().upper().startswith("PASS") and passed:
+        elif normalized.startswith("PASS") and passed:
             passed = True
+        else:
+            passed = False
+            model_findings.append("Model review did not start with PASS or FAIL; required check cannot pass.")
     body = [f"# Review Agent result for PR #{pr_number}", "", f"Result: {'PASS' if passed else 'FAIL'}", "", "## Checklist"]
     body.extend(f"- {item}" for item in CHECKLIST)
     body.append("\n## Findings")

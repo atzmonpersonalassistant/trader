@@ -79,10 +79,18 @@ class MVP0AgentTests(unittest.TestCase):
                 {"pass": True, "findings": [], "checklist": []},
                 None,
             )
+            _, malformed_text, malformed_passed = review.write_review(
+                Path(tmp),
+                11,
+                {"pass": True, "findings": [], "checklist": []},
+                {"returncode": 0, "review_text": "Looks okay but missing prefix"},
+            )
         self.assertFalse(passed)
         self.assertIn("Model review failed", text)
         self.assertFalse(skipped_passed)
         self.assertIn("Model review was skipped", skipped_text)
+        self.assertFalse(malformed_passed)
+        self.assertIn("did not start with PASS or FAIL", malformed_text)
 
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
@@ -102,6 +110,7 @@ class MVP0AgentTests(unittest.TestCase):
         })
         self.assertTrue(safe["pass"])
 
+        self.assertEqual(review.redact_text("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"), "<private-key-redacted>")
         private_key_marker = "-----BEGIN " + "PRIVATE KEY-----"
         unsafe = review.deterministic_review({
             "diff": "+" + private_key_marker + "\n+abc\n+-----END PRIVATE KEY-----\n",
