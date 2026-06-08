@@ -795,9 +795,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
         ).fetchall()
         for row in rows:
             pr_number = int(row["number"])
-            live_labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
-            stored_labels = json.loads(row["labels"] or "[]")
-            labels = sorted(set(live_labels) | set(stored_labels))
+            labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
             if "human:rejected" in labels:
                 payload = {"pr": pr_number, "labels": labels, "reason": "human_rejected"}
                 event_id = record_event(
