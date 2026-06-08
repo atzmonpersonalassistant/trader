@@ -546,7 +546,7 @@ def cmd_claim(args: argparse.Namespace) -> int:
         active_count = conn.execute(
             """
             SELECT COUNT(*) FROM issues
-            WHERE labels LIKE ? OR labels LIKE ?
+            WHERE state='open' AND (labels LIKE ? OR labels LIKE ?)
             """,
             (f'%"{args.claimed_label}"%', '%"agent:in-progress"%'),
         ).fetchone()[0]
@@ -1184,7 +1184,7 @@ def cmd_finalize_merged(args: argparse.Namespace) -> int:
     token = mint_github_token(args.token_cmd)
     finalized: list[dict[str, Any]] = []
     with connect(args.db) as conn:
-        rows = conn.execute("SELECT external_id, number, issue_external_id, state FROM pull_requests ORDER BY number ASC").fetchall()
+        rows = conn.execute("SELECT external_id, number, issue_external_id, state FROM pull_requests WHERE state != 'merged' ORDER BY number ASC").fetchall()
         for row in rows:
             pr_number = int(row["number"])
             pr, _ = github_api_get(f"https://api.github.com/repos/{args.owner}/{args.repo}/pulls/{pr_number}", token)
