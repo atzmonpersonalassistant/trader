@@ -1133,13 +1133,21 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
         "--title",
         row["title"],
     ]
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+        returncode = proc.returncode
+        stdout = proc.stdout
+        stderr = proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        returncode = 124
+        stdout = exc.stdout or ""
+        stderr = (exc.stderr or "") + "\nCommand timed out"
     finished = now_iso()
-    state = "succeeded" if proc.returncode == 0 else "failed"
+    state = "succeeded" if returncode == 0 else "failed"
     result = {
-        "returncode": proc.returncode,
-        "stdout": redact_text(proc.stdout),
-        "stderr": redact_text(proc.stderr),
+        "returncode": returncode,
+        "stdout": redact_text(stdout),
+        "stderr": redact_text(stderr),
         "command": cmd,
     }
     with connect(args.db) as conn:
