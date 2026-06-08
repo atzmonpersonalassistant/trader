@@ -114,7 +114,10 @@ def slugify(text: str, max_len: int = 40) -> str:
 
 
 def redact_text(text: str) -> str:
-    return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+    text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
+    text = re.sub(r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*[^\s]+", r"\1=<redacted>", text)
+    return text
 
 
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -231,7 +234,11 @@ def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], ar
     model = config.get("codex_model")
     if model:
         cmd[2:2] = ["--model", str(model)]
-    return run_cmd(cmd, cwd=workspace, timeout=args.codex_timeout_seconds)
+    result = run_cmd(cmd, cwd=workspace, timeout=args.codex_timeout_seconds)
+    result["command"] = redact_command(cmd[:-1] + ["<coding-prompt-redacted>"])
+    result["stdout"] = "<codex-stdout-redacted>"
+    result["stderr"] = redact_text(result.get("stderr", ""))
+    return result
 
 
 def changed_files(workspace: Path) -> list[str]:
