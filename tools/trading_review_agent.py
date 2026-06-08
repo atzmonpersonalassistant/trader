@@ -107,8 +107,16 @@ def redact_text(text: str) -> str:
 
 
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180) -> dict[str, Any]:
-    proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
     redacted = [redact_text(part) for part in cmd]
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": redacted,
+            "returncode": 124,
+            "stdout": redact_text(exc.stdout or ""),
+            "stderr": redact_text(exc.stderr or "") + "\nCommand timed out",
+        }
     return {"command": redacted, "returncode": proc.returncode, "stdout": redact_text(proc.stdout), "stderr": redact_text(proc.stderr)}
 
 

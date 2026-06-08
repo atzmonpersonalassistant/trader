@@ -929,6 +929,19 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                     }
                 )
                 continue
+            labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
+            branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            if not branch.startswith("agent/issue-") or "agent:pr-opened" not in labels:
+                event_id = record_event(
+                    conn,
+                    event_type="review_failure_route_skipped",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="skipped",
+                    payload={"pr": pr_number, "reason": "untrusted_pr", "branch": branch, "labels": labels},
+                )
+                results.append({"pr": pr_number, "routed": False, "reason": "untrusted_pr", "event": event_id})
+                continue
             current_retry = int(row["retry_count"] or 0) + 1
             if current_retry > args.max_review_fix_retries:
                 pr_payload = json.loads(row["payload_json"] or "{}")
