@@ -107,7 +107,7 @@ class MVP0AgentTests(unittest.TestCase):
         secret_url = "https://x-access-token:ghs_ABC123SECRET@github.com/owner/repo.git"
         result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", secret_url])
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
-        self.assertIn("x-access-token:***@github.com", rendered)
+        self.assertIn("<redacted>", rendered)
         self.assertNotIn("ghs_ABC123SECRET", rendered)
         self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([secret_url])) + coding.redact_text(secret_url))
 
