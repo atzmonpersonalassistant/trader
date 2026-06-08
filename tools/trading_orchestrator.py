@@ -13,6 +13,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ DEFAULT_BACKUP_DIR = Path(os.environ.get("TRADING_ORCHESTRATOR_BACKUP_DIR", "/ag
 DEFAULT_GITHUB_OWNER = os.environ.get("TRADING_GITHUB_OWNER", "atzmonpersonalassistant")
 DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
+DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 
 SCHEMA = """
@@ -177,19 +179,38 @@ def mint_github_token(token_cmd: str) -> str:
     return subprocess.check_output([token_cmd, "orchestrator"], text=True).strip()
 
 
-def github_api_get(url: str, token: str) -> tuple[Any, dict[str, str]]:
+def github_request(method: str, url: str, token: str, payload: Any | None = None) -> tuple[Any, dict[str, str]]:
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url,
+        method=method,
+        data=data,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "trading-orchestrator-mvp0",
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         headers = {k.lower(): v for k, v in resp.headers.items()}
-        return json.loads(resp.read().decode()), headers
+        body = resp.read().decode()
+        return (json.loads(body) if body else None), headers
+
+
+def github_api_get(url: str, token: str) -> tuple[Any, dict[str, str]]:
+    return github_request("GET", url, token)
+
+
+def github_api_post(url: str, token: str, payload: Any) -> tuple[Any, dict[str, str]]:
+    return github_request("POST", url, token, payload)
+
+
+def github_api_delete(url: str, token: str) -> tuple[Any, dict[str, str]]:
+    return github_request("DELETE", url, token)
 
 
 def parse_next_link(link_header: str | None) -> str | None:
@@ -323,6 +344,100 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_claim(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    # Refresh before claiming so SQLite reflects current GitHub state.
+    ready_issues = fetch_ready_issues(args.owner, args.repo, args.ready_label, token)
+    with connect(args.db) as conn:
+        for issue in ready_issues:
+            upsert_issue(conn, issue)
+        active_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM issues
+            WHERE labels LIKE ? OR labels LIKE ?
+            """,
+            (f'%"{args.claimed_label}"%', '%"agent:in-progress"%'),
+        ).fetchone()[0]
+        if active_count >= args.max_claimed:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "claimed": False,
+                        "reason": "max_claimed_reached",
+                        "active_count": active_count,
+                        "max_claimed": args.max_claimed,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+        row = conn.execute(
+            """
+            SELECT external_id, number, title, labels, retry_count
+            FROM issues
+            WHERE state='open'
+              AND labels LIKE ?
+              AND labels NOT LIKE ?
+              AND labels NOT LIKE ?
+              AND labels NOT LIKE ?
+            ORDER BY number ASC
+            LIMIT 1
+            """,
+            (
+                f'%"{args.ready_label}"%',
+                f'%"{args.claimed_label}"%',
+                '%"agent:in-progress"%',
+                '%"agent:blocked"%',
+            ),
+        ).fetchone()
+        if not row:
+            print(json.dumps({"ok": True, "claimed": False, "reason": "no_ready_issue"}, indent=2, sort_keys=True))
+            return 0
+        issue_number = int(row["number"])
+        issue_url = f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{issue_number}"
+        labels_url = f"{issue_url}/labels"
+        github_api_post(labels_url, token, {"labels": [args.claimed_label]})
+        if args.remove_ready_label:
+            encoded_label = urllib.parse.quote(args.ready_label, safe="")
+            try:
+                github_api_delete(f"{labels_url}/{encoded_label}", token)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 404:
+                    raise
+        refreshed, _ = github_api_get(issue_url, token)
+        upsert_issue(conn, refreshed)
+        ts = now_iso()
+        lock_id = f"issue-{issue_number}"
+        conn.execute(
+            """
+            INSERT INTO locks(external_id, state, owner, labels, created_at, updated_at, last_seen_at, retry_count)
+            VALUES (?, 'held', 'agent-orchestrator', ?, ?, ?, ?, 0)
+            ON CONFLICT(external_id) DO UPDATE SET
+              state='held', owner='agent-orchestrator', labels=excluded.labels,
+              updated_at=excluded.updated_at, last_seen_at=excluded.last_seen_at
+            """,
+            (lock_id, json.dumps([args.claimed_label], sort_keys=True), ts, ts, ts),
+        )
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "claimed": True,
+                "issue": {"number": issue_number, "external_id": row["external_id"], "title": row["title"]},
+                "added_label": args.claimed_label,
+                "removed_ready_label": bool(args.remove_ready_label),
+                "lock": lock_id,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def cmd_outbox_next(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -371,6 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--owner", default=DEFAULT_GITHUB_OWNER)
     p.add_argument("--repo", default=DEFAULT_GITHUB_REPO)
     p.add_argument("--ready-label", default=DEFAULT_READY_LABEL)
+    p.add_argument("--claimed-label", default=DEFAULT_CLAIMED_LABEL)
     p.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -379,6 +495,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan")
     scan.set_defaults(func=cmd_scan)
+
+    claim = sub.add_parser("claim")
+    claim.add_argument("--max-claimed", type=int, default=2)
+    claim.add_argument("--keep-ready-label", dest="remove_ready_label", action="store_false", default=True)
+    claim.set_defaults(func=cmd_claim)
 
     outbox = sub.add_parser("outbox")
     outbox_sub = outbox.add_subparsers(dest="outbox_command", required=True)
