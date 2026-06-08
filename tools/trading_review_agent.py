@@ -102,8 +102,7 @@ def authenticated_url(url: str, token: str) -> str:
 
 def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180) -> dict[str, Any]:
     proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout)
-    redacted = [part.replace(authenticated_url(repo_clone_url(DEFAULT_CONFIG), "dummy"), "***") for part in cmd]
-    redacted = [part.replace("x-access-token:", "x-access-token:***") if "x-access-token:" in part else part for part in redacted]
+    redacted = [re.sub(r"x-access-token:[^@]+@", "x-access-token:***@", part) for part in cmd]
     return {"command": redacted, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
 
 

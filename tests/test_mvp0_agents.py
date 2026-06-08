@@ -28,6 +28,18 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("review-agent/pass: failure", prompt)
         self.assertIn("Update the existing PR branch only", prompt)
 
+    def test_review_agent_redacts_github_installation_tokens(self):
+        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        result = review.run_cmd([
+            "python3",
+            "-c",
+            "print('ok')",
+            "https://x-access-token:ghs_ABC123SECRET@github.com/owner/repo.git",
+        ])
+        rendered = " ".join(result["command"])
+        self.assertIn("x-access-token:***@github.com", rendered)
+        self.assertNotIn("ghs_ABC123SECRET", rendered)
+
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         safe = review.deterministic_review({
