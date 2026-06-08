@@ -981,6 +981,8 @@ comment /human-rejected
 
 ### Group I — MVP-0 End-to-End Test
 
+Operator runbook pointer: use G2 for manual commands, G3 for log locations/rotation, and I1-I6 below as the MVP-0 end-to-end execution checklist.
+
 #### I1. Create safe test issue
 
 Goal: Provide first real task.
