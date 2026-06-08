@@ -218,16 +218,18 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
 def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any], model: dict[str, Any] | None) -> tuple[Path, str, bool]:
     passed = bool(deterministic["pass"])
     model_findings: list[str] = []
-    if model:
-        if model.get("returncode") != 0 or not model.get("review_text"):
+    if not model:
+        passed = False
+        model_findings.append("Model review was skipped; required check cannot pass.")
+    elif model.get("returncode") != 0 or not model.get("review_text"):
+        passed = False
+        model_findings.append("Model review failed or returned no review text; required check cannot pass.")
+    else:
+        text = model["review_text"]
+        if text.strip().upper().startswith("FAIL"):
             passed = False
-            model_findings.append("Model review failed or returned no review text; required check cannot pass.")
-        else:
-            text = model["review_text"]
-            if text.strip().upper().startswith("FAIL"):
-                passed = False
-            elif text.strip().upper().startswith("PASS") and passed:
-                passed = True
+        elif text.strip().upper().startswith("PASS") and passed:
+            passed = True
     body = [f"# Review Agent result for PR #{pr_number}", "", f"Result: {'PASS' if passed else 'FAIL'}", "", "## Checklist"]
     body.extend(f"- {item}" for item in CHECKLIST)
     body.append("\n## Findings")

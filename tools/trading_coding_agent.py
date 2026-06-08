@@ -241,10 +241,17 @@ def verify(workspace: Path) -> dict[str, Any]:
     return {"checks": checks, "ok": all(c["returncode"] == 0 for c in checks)}
 
 
+def is_allowed_mvp0_change(path: str) -> bool:
+    return path == "README.md" or path.startswith("plans/") or path.endswith(".md")
+
+
 def commit_changes(workspace: Path, issue: int, title: str) -> dict[str, Any]:
     files = changed_files(workspace)
     if not files:
         return {"committed": False, "reason": "no_changes", "files": []}
+    disallowed = [path for path in files if not is_allowed_mvp0_change(path)]
+    if disallowed:
+        raise RuntimeError(json.dumps({"refusing_disallowed_mvp0_changes": disallowed}, sort_keys=True))
     require_ok(run_cmd(["git", "config", "user.name", "trading-coding-agent[bot]"], cwd=workspace))
     require_ok(run_cmd(["git", "config", "user.email", "trading-coding-agent[bot]@users.noreply.github.com"], cwd=workspace))
     require_ok(run_cmd(["git", "add", "--"] + files, cwd=workspace))

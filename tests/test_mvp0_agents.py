@@ -42,6 +42,13 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("review-agent/pass: failure", prompt)
         self.assertIn("Update the existing PR branch only", prompt)
 
+    def test_coding_agent_enforces_docs_only_changes(self):
+        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0-task-breakdown.md"))
+        self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
+        self.assertFalse(agent.is_allowed_mvp0_change(".env"))
+
     def test_review_required_check_fails_when_model_review_missing(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
@@ -51,8 +58,16 @@ class MVP0AgentTests(unittest.TestCase):
                 {"pass": True, "findings": [], "checklist": []},
                 {"returncode": 1, "stdout": "", "stderr": "redacted"},
             )
+            _, skipped_text, skipped_passed = review.write_review(
+                Path(tmp),
+                10,
+                {"pass": True, "findings": [], "checklist": []},
+                None,
+            )
         self.assertFalse(passed)
         self.assertIn("Model review failed", text)
+        self.assertFalse(skipped_passed)
+        self.assertIn("Model review was skipped", skipped_text)
 
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
