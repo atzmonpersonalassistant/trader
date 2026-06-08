@@ -511,7 +511,8 @@ Backup command uses sqlite3 Connection.backup(), not raw cp.
 DB and backup files are mode 600 and owned by agent-orchestrator.
 D4 GitHub issue scan is implemented and verified against GitHub on the VM; current repo has 0 open agent:ready issues.
 D5 issue claim transition is implemented and verified on GitHub issue #3.
-D6 Coding Agent dispatch stub remains next.
+D6 Coding Agent dispatch stub is implemented and verified on VM issue #3; agent-orchestrator can run the stub as agent-coding through a narrow sudoers rule.
+D7 PR detection remains next.
 ```
 
 
@@ -616,7 +617,7 @@ Acceptance criteria:
 
 ---
 
-#### D6. Implement Coding Agent dispatch stub
+#### D6. Implement Coding Agent dispatch stub — Completed ✅
 
 Goal: Prove Orchestrator can call Coding Agent.
 

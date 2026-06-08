@@ -27,6 +27,7 @@ DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
 DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
+DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-dispatch-stub")
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -438,6 +439,86 @@ def cmd_claim(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    with connect(args.db) as conn:
+        row = conn.execute(
+            """
+            SELECT external_id, number, title, retry_count
+            FROM issues
+            WHERE state='open' AND labels LIKE ?
+            ORDER BY number ASC
+            LIMIT 1
+            """,
+            (f'%"{args.claimed_label}"%',),
+        ).fetchone()
+        if not row:
+            print(json.dumps({"ok": True, "dispatched": False, "reason": "no_claimed_issue"}, indent=2, sort_keys=True))
+            return 0
+        ts = now_iso()
+        attempt_external_id = f"issue-{row['number']}-coding-attempt-{ts}"
+        conn.execute(
+            """
+            INSERT INTO attempts(
+              external_id, entity_type, entity_external_id, state, labels,
+              created_at, updated_at, last_seen_at, retry_count, started_at
+            ) VALUES (?, 'issue', ?, 'started', ?, ?, ?, ?, 0, ?)
+            """,
+            (
+                attempt_external_id,
+                row["external_id"],
+                json.dumps(["coding-stub"], sort_keys=True),
+                ts,
+                ts,
+                ts,
+                ts,
+            ),
+        )
+    cmd = [
+        args.coding_stub_cmd,
+        "--issue-number",
+        str(row["number"]),
+        "--issue-external-id",
+        str(row["external_id"]),
+        "--title",
+        row["title"],
+    ]
+    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+    finished = now_iso()
+    state = "succeeded" if proc.returncode == 0 else "failed"
+    result = {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "command": cmd,
+    }
+    with connect(args.db) as conn:
+        conn.execute(
+            """
+            UPDATE attempts
+            SET state=?, updated_at=?, last_seen_at=?, finished_at=?, result_json=?
+            WHERE external_id=?
+            """,
+            (state, finished, finished, finished, json.dumps(result, sort_keys=True), attempt_external_id),
+        )
+    print(
+        json.dumps(
+            {
+                "ok": proc.returncode == 0,
+                "dispatched": True,
+                "attempt": attempt_external_id,
+                "state": state,
+                "issue": {"number": row["number"], "external_id": row["external_id"], "title": row["title"]},
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if proc.returncode == 0 else proc.returncode
+
+
 def cmd_outbox_next(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -488,6 +569,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ready-label", default=DEFAULT_READY_LABEL)
     p.add_argument("--claimed-label", default=DEFAULT_CLAIMED_LABEL)
     p.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
+    p.add_argument("--coding-stub-cmd", default=DEFAULT_CODING_STUB_CMD)
     sub = p.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status")
@@ -500,6 +582,12 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--max-claimed", type=int, default=2)
     claim.add_argument("--keep-ready-label", dest="remove_ready_label", action="store_false", default=True)
     claim.set_defaults(func=cmd_claim)
+
+    dispatch = sub.add_parser("dispatch")
+    dispatch_sub = dispatch.add_subparsers(dest="dispatch_command", required=True)
+    dispatch_coding_stub = dispatch_sub.add_parser("coding-stub")
+    dispatch_coding_stub.add_argument("--timeout-seconds", type=int, default=60)
+    dispatch_coding_stub.set_defaults(func=cmd_dispatch_coding_stub)
 
     outbox = sub.add_parser("outbox")
     outbox_sub = outbox.add_subparsers(dest="outbox_command", required=True)
