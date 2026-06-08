@@ -361,7 +361,9 @@ def infer_issue_number_from_pr(pr: dict[str, Any]) -> int | None:
 
 def is_trusted_agent_pr(pr: dict[str, Any]) -> bool:
     branch = ((pr.get("head") or {}).get("ref")) or ""
-    return branch.startswith("agent/issue-")
+    head_repo = (((pr.get("head") or {}).get("repo") or {}).get("full_name"))
+    base_repo = (((pr.get("base") or {}).get("repo") or {}).get("full_name"))
+    return branch.startswith("agent/issue-") and bool(head_repo) and head_repo == base_repo
 
 
 def upsert_pr(conn: sqlite3.Connection, pr: dict[str, Any], issue_external_id: str | None) -> str:
