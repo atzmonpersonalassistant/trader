@@ -513,8 +513,8 @@ D4 GitHub issue scan is implemented and verified against GitHub on the VM; curre
 D5 issue claim transition is implemented and verified on GitHub issue #3.
 D6 Coding Agent dispatch stub is implemented and verified on VM issue #3; agent-orchestrator can run the stub as agent-coding through a narrow sudoers rule.
 D7 PR detection is implemented and verified on VM against PR #1. PR state is recorded in SQLite with agent:pr-opened; external GitHub PR label mutation returned 403 for the Orchestrator App and is reported as non-fatal.
-D8 auto-merge command is implemented and deployed, but real enablement is blocked by GitHub App permissions: enablePullRequestAutoMerge returns 403 Resource not accessible by integration for the Orchestrator App. The command records the failure in SQLite events.
-D8 remains blocked until the Orchestrator App is granted sufficient permissions, likely Contents: Read/Write and Pull requests: Read/Write, then the App installation permissions are accepted.
+D8 auto-merge enablement is implemented and verified on PR #1. The Orchestrator App now has Contents: write, Pull requests: write, and Administration: read. GitHub native auto-merge was enabled by app/trading-orchestrator-agent with SQUASH.
+D9 Review failure routing remains next.
 ```
 
 
@@ -644,7 +644,7 @@ Acceptance criteria:
 
 ---
 
-#### D8. Implement auto-merge enablement — Blocked ⚠️
+#### D8. Implement auto-merge enablement — Completed ✅
 
 Goal: Orchestrator enables GitHub native auto-merge.
 
