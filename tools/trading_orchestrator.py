@@ -215,6 +215,24 @@ def github_api_delete(url: str, token: str) -> tuple[Any, dict[str, str]]:
     return github_request("DELETE", url, token)
 
 
+def github_graphql(token: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    data, _ = github_request(
+        "POST",
+        "https://api.github.com/graphql",
+        token,
+        {"query": query, "variables": variables},
+    )
+    if data.get("errors"):
+        raise RuntimeError(json.dumps(data["errors"], sort_keys=True))
+    return data["data"]
+
+
+def fetch_issue_labels(owner: str, repo: str, number: int, token: str) -> list[str]:
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{number}"
+    issue, _ = github_api_get(url, token)
+    return [label.get("name") for label in issue.get("labels", []) if label.get("name")]
+
+
 def parse_next_link(link_header: str | None) -> str | None:
     if not link_header:
         return None
@@ -595,6 +613,103 @@ def cmd_claim(args: argparse.Namespace) -> int:
     return 0
 
 
+def record_event(
+    conn: sqlite3.Connection,
+    *,
+    event_type: str,
+    entity_type: str,
+    entity_external_id: str | None,
+    state: str,
+    payload: dict[str, Any],
+) -> str:
+    ts = now_iso()
+    external_id = f"{event_type}-{entity_type}-{entity_external_id or 'none'}-{ts}"
+    conn.execute(
+        """
+        INSERT INTO events(external_id, entity_type, entity_external_id, event_type, state, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """,
+        (external_id, entity_type, entity_external_id, event_type, state, json.dumps(payload, sort_keys=True), ts, ts, ts),
+    )
+    return external_id
+
+
+def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    token = mint_github_token(args.token_cmd)
+    mutation = """
+    mutation EnableAutoMerge($pullRequestId: ID!) {
+      enablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId, mergeMethod: SQUASH}) {
+        pullRequest { number autoMergeRequest { enabledAt mergeMethod } }
+      }
+    }
+    """
+    results: list[dict[str, Any]] = []
+    with connect(args.db) as conn:
+        rows = conn.execute(
+            """
+            SELECT external_id, number, state, labels, payload_json
+            FROM pull_requests
+            WHERE state='open'
+            ORDER BY number ASC
+            """
+        ).fetchall()
+        for row in rows:
+            pr_number = int(row["number"])
+            labels = fetch_issue_labels(args.owner, args.repo, pr_number, token)
+            if "needs:human-approval" in labels or "human:rejected" in labels:
+                payload = {"pr": pr_number, "labels": labels, "reason": "human_gate"}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_skipped",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="skipped",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "human_gate", "event": event_id})
+                continue
+            pr_payload = json.loads(row["payload_json"] or "{}")
+            node_id = pr_payload.get("node_id")
+            if not node_id:
+                payload = {"pr": pr_number, "reason": "missing_node_id"}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_failed",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="failed",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "error": "missing_node_id", "event": event_id})
+                continue
+            try:
+                data = github_graphql(token, mutation, {"pullRequestId": node_id})
+                payload = {"pr": pr_number, "result": data}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_enabled",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="succeeded",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": True, "event": event_id})
+            except Exception as exc:  # GitHub can reject when checks are missing or permissions are insufficient.
+                payload = {"pr": pr_number, "error": str(exc), "node_id": node_id}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_failed",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="failed",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "error": str(exc), "event": event_id})
+    print(json.dumps({"ok": True, "command": "enable-auto-merge", "results": results}, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -741,6 +856,9 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--max-claimed", type=int, default=2)
     claim.add_argument("--keep-ready-label", dest="remove_ready_label", action="store_false", default=True)
     claim.set_defaults(func=cmd_claim)
+
+    auto_merge = sub.add_parser("enable-auto-merge")
+    auto_merge.set_defaults(func=cmd_enable_auto_merge)
 
     dispatch = sub.add_parser("dispatch")
     dispatch_sub = dispatch.add_subparsers(dest="dispatch_command", required=True)
