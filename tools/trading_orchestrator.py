@@ -1038,10 +1038,18 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 "--fix-pr",
                 str(pr_number),
             ]
-            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+            try:
+                proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+                returncode = proc.returncode
+                stdout = proc.stdout
+                stderr = proc.stderr
+            except subprocess.TimeoutExpired as exc:
+                returncode = 124
+                stdout = exc.stdout or ""
+                stderr = (exc.stderr or "") + "\nCommand timed out"
             finished = now_iso()
-            state = "succeeded" if proc.returncode == 0 else "failed"
-            result = {"returncode": proc.returncode, "stdout": redact_text(proc.stdout), "stderr": redact_text(proc.stderr), "command": cmd, "check": check}
+            state = "succeeded" if returncode == 0 else "failed"
+            result = {"returncode": returncode, "stdout": redact_text(stdout), "stderr": redact_text(stderr), "command": cmd, "check": check}
             conn.execute(
                 """
                 UPDATE attempts
@@ -1069,7 +1077,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             results.append(
                 {
                     "pr": pr_number,
-                    "routed": proc.returncode == 0,
+                    "routed": returncode == 0,
                     "attempt": attempt_external_id,
                     "event": event_id,
                     "retry_count": current_retry,
@@ -1146,19 +1154,19 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
     print(
         json.dumps(
             {
-                "ok": proc.returncode == 0,
+                "ok": returncode == 0,
                 "dispatched": True,
                 "attempt": attempt_external_id,
                 "state": state,
                 "issue": {"number": row["number"], "external_id": row["external_id"], "title": row["title"]},
-                "stdout": redact_text(proc.stdout),
-                "stderr": redact_text(proc.stderr),
+                "stdout": redact_text(stdout),
+                "stderr": redact_text(stderr),
             },
             indent=2,
             sort_keys=True,
         )
     )
-    return 0 if proc.returncode == 0 else proc.returncode
+    return 0 if returncode == 0 else returncode
 
 
 def cmd_finalize_merged(args: argparse.Namespace) -> int:

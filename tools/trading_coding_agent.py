@@ -263,7 +263,7 @@ def verify(workspace: Path) -> dict[str, Any]:
 
 
 def is_allowed_mvp0_change(path: str) -> bool:
-    return path == "README.md" or path.startswith("plans/") or path.endswith(".md")
+    return path == "README.md" or (path.startswith("plans/") and path.endswith(".md"))
 
 
 def commit_changes(workspace: Path, issue: int, title: str) -> dict[str, Any]:
