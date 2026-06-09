@@ -4,6 +4,17 @@ Trading research, agent infrastructure, and options-system experiments.
 
 ## Current Structure
 
+### `agent-platform/`
+
+Reusable agentic development platform extracted from this repo.
+
+- Agent tools: `agent-platform/tools/`
+- Tests: `agent-platform/tests/`
+- Docs/runbooks/setup: `agent-platform/docs/`
+- Non-secret config examples: `agent-platform/config-examples/`
+
+This is the part to copy or share if someone wants inspiration from the agent architecture.
+
 ### `options-trade-lab/`
 
 Main project area for options research, strategy design, scanner planning, validation, and future implementation.
@@ -13,7 +24,6 @@ Main project area for options research, strategy design, scanner planning, valid
 - Project plan: `options-trade-lab/PROJECT_PLAN.md`
 - Strategy/platform docs: `options-trade-lab/docs/`
 - Context notes: `options-trade-lab/context/`
-- Historical MVP-0/platform notes: `options-trade-lab/archive/`
 
 Future scanner work should be implemented under this coherent project structure, not as separate top-level radar folders.
 
@@ -36,36 +46,14 @@ The old standalone radar/planning folders were removed from the active repo layo
 
 They should not be used as source-of-truth going forward.
 
-## VPS access
+## Secrets and VPS Runtime
 
-OVHcloud VPS used for simple always-on agent/trader infrastructure experiments:
+Do not commit or share runtime secrets. The repo contains code/docs/examples only.
 
-```bash
-# SSH with the dedicated key created on the assistant Mac
-ssh -i ~/.ssh/ovh_vps_ce2ba5e7 ubuntu@144.217.82.149
+Current deploys use `.github/workflows/vps-deploy.yml`, with target server details stored as GitHub Actions secrets. See:
 
-# Optional: add a local SSH alias
-cat >> ~/.ssh/config <<'EOF'
-Host trader-ovh
-  HostName 144.217.82.149
-  User ubuntu
-  IdentityFile ~/.ssh/ovh_vps_ce2ba5e7
-EOF
-
-# Then connect with:
-ssh trader-ovh
-```
-
-Host details:
-
-```text
-host: vps-ce2ba5e7.vps.ovh.ca
-ip: 144.217.82.149
-user: ubuntu
-key: ~/.ssh/ovh_vps_ce2ba5e7
-```
-
-Do not commit passwords or private keys. The SSH private key stays local.
+- `agent-platform/docs/security-and-secrets.md`
+- `agent-platform/docs/setup/server-migration.md`
 
 ## Safety
 

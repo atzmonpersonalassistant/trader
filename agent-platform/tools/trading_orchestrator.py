@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -31,8 +32,8 @@ DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
 DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
-DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-agent-stub")
-DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "trading-coding-agent")
+DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "sudo -n -u agent-coding trading-coding-agent-stub")
+DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "sudo -n -u agent-coding trading-coding-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
 DEFAULT_REVIEW_APP_SLUG = os.environ.get("TRADING_REVIEW_APP_SLUG", "trading-review-agent")
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
@@ -1141,8 +1142,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 results.append({"pr": pr_number, "routed": False, "reason": "missing_linked_issue", "event": event_id})
                 continue
             issue_number = int(issue_row["number"])
-            cmd = [
-                args.coding_agent_cmd,
+            cmd = command_parts(args.coding_agent_cmd) + [
                 "run",
                 "--issue",
                 str(issue_number),
@@ -1280,9 +1280,12 @@ def dispatch_claimed_issue(args: argparse.Namespace, *, command_label: str, cmd:
     return 0 if returncode == 0 else returncode
 
 
+def command_parts(command: str) -> list[str]:
+    return shlex.split(command)
+
+
 def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
-    cmd = [
-        args.coding_stub_cmd,
+    cmd = command_parts(args.coding_stub_cmd) + [
         "--issue-number",
         "{issue}",
         "--issue-external-id",
@@ -1294,7 +1297,7 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
 
 
 def cmd_dispatch_coding(args: argparse.Namespace) -> int:
-    cmd = [args.coding_agent_cmd, "run", "--issue", "{issue}"]
+    cmd = command_parts(args.coding_agent_cmd) + ["run", "--issue", "{issue}"]
     return dispatch_claimed_issue(args, command_label="coding-agent", cmd=cmd)
 
 

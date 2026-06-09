@@ -182,14 +182,14 @@ Status: Completed ✅
 Completed evidence:
 
 ```text
-GitHub App setup guide: options-trade-lab/archive/mvp0/github-apps-setup.md
-Manifest helper: tools/github_app_manifest_flow.py
-Token helper: tools/trading_agent_token.py
+GitHub App setup guide: agent-platform/docs/mvp0/github-apps-setup.md
+Manifest helper: agent-platform/tools/github_app_manifest_flow.py
+Token helper: agent-platform/tools/trading_agent_token.py
 
-trading-orchestrator-agent app_id=3988813 installation_id=138640121
-trading-coding-agent       app_id=3988816 installation_id=138640143
-trading-review-agent       app_id=3988836 installation_id=138640182
-trading-validator-agent    app_id=3988837 installation_id=138640218
+trading-orchestrator-agent app_id=<orchestrator-app-id> installation_id=<orchestrator-installation-id>
+trading-coding-agent       app_id=<coding-app-id> installation_id=<coding-installation-id>
+trading-review-agent       app_id=<review-app-id> installation_id=<review-installation-id>
+trading-validator-agent    app_id=<validator-app-id> installation_id=<validator-installation-id>
 
 Private keys saved outside git under ~/.trading-agents/github-apps/*.private-key.pem
 Installation tokens successfully minted for all four Apps.
@@ -310,8 +310,8 @@ Current evidence:
 
 ```text
 Provider: OVHcloud VPS
-Host: vps-ce2ba5e7.vps.ovh.ca
-IPv4: 144.217.82.149
+Host: <vps-hostname>
+IPv4: <vps-ip>
 OS: Ubuntu 26.04 LTS
 Admin user: ubuntu
 Access: SSH key ~/.ssh/ovh_vps_ce2ba5e7 on the assistant Mac
@@ -351,8 +351,8 @@ Actual MVP-0 VM:
 ```yaml
 vm:
   provider: ovhcloud
-  host: vps-ce2ba5e7.vps.ovh.ca
-  ipv4: 144.217.82.149
+  host: <vps-hostname>
+  ipv4: <vps-ip>
   os: Ubuntu 26.04 LTS
   admin_user: ubuntu
   ssh_key: ~/.ssh/ovh_vps_ce2ba5e7
@@ -507,7 +507,7 @@ Status: In progress
 Current implementation:
 
 ```text
-D1-D3 implemented in tools/trading_orchestrator.py and tools/trading-orchestrator.
+D1-D3 implemented in agent-platform/tools/trading_orchestrator.py and agent-platform/tools/trading-orchestrator.
 CLI skeleton returns structured JSON.
 SQLite schema creates issues, pull_requests, events, locks, attempts, outbox, inbox, settings.
 Backup command uses sqlite3 Connection.backup(), not raw cp.
@@ -524,13 +524,13 @@ E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM u
 E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
 E3 branch creation is implemented and verified on the VM. The Coding Agent creates `agent/issue-<n>-<slug>` from fresh `main`.
 E4 Codex execution wrapper is implemented and production-verified on the VM after installing locked-down Codex auth for `agent-coding`. It runs `codex exec --sandbox workspace-write -c approval_policy="never"`, captures stdout/stderr/logs, and does not print secrets.
-E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `options-trade-lab/archive/mvp0/task-breakdown.md` with a small documentation change and `git diff --check` passed.
+E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `agent-platform/docs/mvp0/task-breakdown.md` with a small documentation change and `git diff --check` passed.
 E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `ce3ef11` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main. Existing branch update uses explicit `--force-with-lease=<ref>:<sha>`.
 E7 PR creation is implemented and verified on the VM: the Coding App opened/updated PR #4 targeting main.
 E8 fix retry mode is implemented and verified on PR #4: `trading-coding-agent run --issue 3 --fix-pr 4` read review context, checked out the existing PR branch, updated it, and pushed with explicit force-with-lease.
 F1-F6 Review Agent MVP is implemented and verified on PR #4. `trading-review-agent review --pr 4` creates `/agents/review/workspaces/pr-4/`, fetches PR metadata/files/diff, uses the standard checklist, runs Codex review, writes `.review-agent/review.md`, posts a PR comment, and publishes the required `review-agent/pass` check. A first review failed with actionable feedback; after E8 retry, review passed and published a success check.
 G1 Orchestrator systemd service/timer is implemented on the VM. `trading-orchestrator.timer` is enabled and active, runs every 10 minutes as `agent-orchestrator`, uses a flock lock, and logs to `/agents/orchestrator/logs/tick.log`.
-G2 manual operator commands are documented in `options-trade-lab/archive/mvp0/operator-runbook.md`.
+G2 manual operator commands are documented in `agent-platform/docs/mvp0/operator-runbook.md`.
 G3 log locations and rotation are documented in the runbook and deployed on the VM as `/etc/logrotate.d/trading-agents`; `logrotate -d` validates the config.
 H1 approval request payload is defined in the runbook and implemented in Orchestrator outbox payloads.
 H2 approval request creation is implemented in `enable-auto-merge`: PRs labeled `needs:human-approval` without `human:approved` are skipped and deduped into `approval-pr-<n>` outbox messages.

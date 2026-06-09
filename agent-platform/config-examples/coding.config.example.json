@@ -1,0 +1,8 @@
+{
+  "agent": "coding",
+  "repo": "OWNER/REPO",
+  "base_branch": "main",
+  "workspace_root": "/agents/coding/workspaces",
+  "token_cmd": "trading-agent-token",
+  "codex_model": "gpt-5.5"
+}
