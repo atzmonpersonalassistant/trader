@@ -49,7 +49,8 @@ jobs:
             agent-platform/tools/trading_orchestrator.py \
             agent-platform/tools/trading_coding_agent.py \
             agent-platform/tools/trading_review_agent.py \
-            agent-platform/tools/trading_coding_agent_stub.py
+            agent-platform/tools/trading_coding_agent_stub.py \
+            agent-platform/tools/trading_agent_token.py
 
       - name: Install SSH key
         env:
@@ -81,6 +82,7 @@ jobs:
             agent-platform/tools/trading-orchestrator \
             agent-platform/tools/trading-coding-agent \
             agent-platform/tools/trading-review-agent \
+            agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
             agent-platform/tools/trading_coding_agent.py \
             agent-platform/tools/trading_review_agent.py \
@@ -100,6 +102,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -123,6 +126,7 @@ jobs:
               Path('/usr/local/lib/trading_coding_agent.py'),
               Path('/usr/local/lib/trading_review_agent.py'),
               Path('/usr/local/lib/trading_coding_agent_stub.py'),
+              Path('/usr/local/bin/trading-agent-token'),
           ]:
               compile(file.read_text(), str(file), 'exec')
           PY
