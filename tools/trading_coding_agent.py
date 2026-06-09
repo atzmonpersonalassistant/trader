@@ -107,6 +107,45 @@ def fetch_pr_review_context(config: dict[str, Any], pr_number: int, token: str) 
     return {"comments": comments, "check_runs": check_runs.get("check_runs", [])}
 
 
+def label_names(item: dict[str, Any] | None) -> set[str]:
+    labels = (item or {}).get("labels") or []
+    names: set[str] = set()
+    for label in labels:
+        if isinstance(label, dict):
+            name = label.get("name")
+        else:
+            name = str(label)
+        if name:
+            names.add(str(name))
+    return names
+
+
+def validate_fix_pr(config: dict[str, Any], fix_pr: dict[str, Any], pr_issue: dict[str, Any] | None = None) -> str:
+    """Return a trusted PR branch or raise before fix mode can checkout/push it."""
+    repo = str(config["repo"])
+    base_branch = str(config.get("base_branch") or "main")
+    head = fix_pr.get("head") or {}
+    base = fix_pr.get("base") or {}
+    branch = str(head.get("ref") or "")
+    labels = label_names(pr_issue or fix_pr)
+    failures: list[str] = []
+    if not branch.startswith("agent/issue-"):
+        failures.append("untrusted_branch")
+    if (head.get("repo") or {}).get("full_name") != repo:
+        failures.append("head_repo_mismatch")
+    if (base.get("repo") or {}).get("full_name") != repo:
+        failures.append("base_repo_mismatch")
+    if base.get("ref") != base_branch:
+        failures.append("base_branch_mismatch")
+    if "agent:pr-opened" not in labels:
+        failures.append("missing_agent_pr_opened_label")
+    if "agent:blocked" in labels or "human:rejected" in labels:
+        failures.append("blocked_or_rejected")
+    if failures:
+        raise RuntimeError(json.dumps({"refusing_untrusted_fix_pr": failures, "pr": fix_pr.get("number"), "branch": branch}, sort_keys=True))
+    return branch
+
+
 def slugify(text: str, max_len: int = 40) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.lower()).strip("-")
     slug = re.sub(r"-+", "-", slug)
@@ -354,8 +393,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     workspace_info = ensure_issue_workspace(args.issue, config, token)
     workspace = Path(workspace_info["workspace"])
     fix_pr = fetch_pr(config, args.fix_pr, token) if args.fix_pr else None
+    fix_issue = fetch_issue(config, args.fix_pr, token) if args.fix_pr else None
     fix_context = fetch_pr_review_context(config, args.fix_pr, token) if args.fix_pr else None
-    existing_branch = (fix_pr or {}).get("head", {}).get("ref")
+    existing_branch = validate_fix_pr(config, fix_pr, fix_issue) if fix_pr else None
     if existing_branch:
         checkout_existing_pr_branch(workspace, config, token, existing_branch)
         branch_info = {"branch": existing_branch, "mode": "fix-pr"}

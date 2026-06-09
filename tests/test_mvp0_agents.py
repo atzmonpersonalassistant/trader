@@ -45,6 +45,33 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("review-agent/pass: failure", prompt)
         self.assertIn("Update the existing PR branch only", prompt)
 
+    def test_coding_agent_fix_pr_requires_trusted_same_repo_agent_branch(self):
+        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        config = {"repo": "atzmonpersonalassistant/trader", "base_branch": "main"}
+        trusted = {
+            "number": 12,
+            "head": {"ref": "agent/issue-12-docs", "repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            "base": {"ref": "main", "repo": {"full_name": "atzmonpersonalassistant/trader"}},
+        }
+        labels = {"labels": [{"name": "agent:pr-opened"}]}
+        self.assertEqual(agent.validate_fix_pr(config, trusted, labels), "agent/issue-12-docs")
+
+        fork = dict(trusted)
+        fork["head"] = {"ref": "agent/issue-12-docs", "repo": {"full_name": "evil/trader"}}
+        with self.assertRaisesRegex(RuntimeError, "head_repo_mismatch"):
+            agent.validate_fix_pr(config, fork, labels)
+
+        manual = dict(trusted)
+        manual["head"] = {"ref": "docs/manual", "repo": {"full_name": "atzmonpersonalassistant/trader"}}
+        with self.assertRaisesRegex(RuntimeError, "untrusted_branch"):
+            agent.validate_fix_pr(config, manual, labels)
+
+        with self.assertRaisesRegex(RuntimeError, "missing_agent_pr_opened_label"):
+            agent.validate_fix_pr(config, trusted, {"labels": []})
+
+        with self.assertRaisesRegex(RuntimeError, "blocked_or_rejected"):
+            agent.validate_fix_pr(config, trusted, {"labels": [{"name": "agent:pr-opened"}, {"name": "agent:blocked"}]})
+
     def test_orchestrator_blocked_outbox_is_deduped(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import sqlite3
