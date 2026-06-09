@@ -16,12 +16,14 @@ Build a modular research pipeline for:
 
 This is **not** a live-trading system. Live execution is explicitly out of scope until approved.
 
+Current MVP direction: MVP1 should use the paid QuantConnect Quant Researcher tier if the goal is real agentic infrastructure; MVP2 can then focus on paper-trading readiness and scale. See `docs/options-research-mvp-roadmap.md`.
+
 ## Project Files
 
 - `PROJECT_PLAN.md` — task list and approval workflow.
 - `ARCHITECTURE.md` — proposed modular architecture.
 - `context/` — conversation-derived context, preferences, lessons, and source-of-truth notes.
-- `docs/` — strategy/system design docs.
+- `docs/` — strategy/system design docs, including `docs/options-research-mvp-roadmap.md`.
 
 ## Legacy Radar Cleanup
 
