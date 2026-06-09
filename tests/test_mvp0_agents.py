@@ -274,7 +274,7 @@ class MVP0AgentTests(unittest.TestCase):
     def test_coding_agent_enforces_docs_only_changes(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0-task-breakdown.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0/task-breakdown.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
 

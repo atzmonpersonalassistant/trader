@@ -1,3 +1,0 @@
-ticker,earnings_date,expected_move_pct,actual_move_pct,front_iv,back_iv,result
-PANW,2026-02-13,7.2,4.8,0.62,0.45,SHORT_VOL_WOULD_WIN
-AVGO,2026-03-06,6.1,8.4,0.55,0.41,LONG_VOL_WOULD_WIN

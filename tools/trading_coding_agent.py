@@ -233,7 +233,7 @@ Issue body:
 
 Task:
 - Make one safe, minimal documentation-only change that addresses or records this issue.
-- Prefer updating plans/mvp0-task-breakdown.md or README.md.
+- Prefer updating plans/mvp0/task-breakdown.md or README.md.
 - Do not touch secrets, credentials, deployment files, or generated caches.
 - Keep the diff small.
 - Run a minimal verification command if appropriate.
