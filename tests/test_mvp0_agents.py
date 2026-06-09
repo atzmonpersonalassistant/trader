@@ -91,7 +91,7 @@ class MVP0AgentTests(unittest.TestCase):
                 raise AssertionError((method, url, payload))
 
             orch.github_request = fake_github_request
-            merge = orch.merge_pull_request("atzmonpersonalassistant", "trader", 8, "token")
+            merge = orch.merge_pull_request("atzmonpersonalassistant", "trader", 8, "token", "reviewed-head-sha")
             deleted = orch.delete_branch_ref("atzmonpersonalassistant", "trader", "agent/issue-7-docs", "token")
         finally:
             orch.github_request = original_github_request
@@ -99,6 +99,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(merge, {"merged": True, "sha": "abc"})
         self.assertTrue(deleted)
         self.assertEqual(calls[0][0], "PUT")
+        self.assertEqual(calls[0][2]["sha"], "reviewed-head-sha")
         self.assertEqual(calls[1][0], "DELETE")
 
     def test_orchestrator_blocked_outbox_is_deduped(self):

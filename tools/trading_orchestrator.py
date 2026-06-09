@@ -225,9 +225,9 @@ def github_api_delete(url: str, token: str) -> tuple[Any, dict[str, str]]:
     return github_request("DELETE", url, token)
 
 
-def merge_pull_request(owner: str, repo: str, pr_number: int, token: str) -> dict[str, Any]:
+def merge_pull_request(owner: str, repo: str, pr_number: int, token: str, head_sha: str) -> dict[str, Any]:
     url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
-    data, _ = github_request("PUT", url, token, {"merge_method": "squash"})
+    data, _ = github_request("PUT", url, token, {"merge_method": "squash", "sha": head_sha})
     return data
 
 
@@ -927,7 +927,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
             except Exception as exc:  # GitHub can reject when already mergeable/clean, checks are missing, or permissions are insufficient.
                 error = str(exc)
                 if "Pull request is in clean status" in error:
-                    merge_data = merge_pull_request(args.owner, args.repo, pr_number, token)
+                    merge_data = merge_pull_request(args.owner, args.repo, pr_number, token, head_sha)
                     branch_deleted = delete_branch_ref(args.owner, args.repo, branch, token)
                     payload = {"pr": pr_number, "reason": "clean_status_direct_merge", "merge": merge_data, "branch": branch, "branch_deleted": branch_deleted}
                     event_id = record_event(
