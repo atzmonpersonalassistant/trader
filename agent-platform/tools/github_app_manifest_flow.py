@@ -3,7 +3,7 @@
 GitHub App Manifest flow helper for MVP-0 trading agents.
 
 Usage:
-  python3 tools/github_app_manifest_flow.py serve
+  python3 agent-platform/tools/github_app_manifest_flow.py serve
 
 Then open:
   http://127.0.0.1:8787/

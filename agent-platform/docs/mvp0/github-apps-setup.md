@@ -302,7 +302,7 @@ Group B is complete when:
 A helper script is available:
 
 ```bash
-python3 tools/github_app_manifest_flow.py serve
+python3 agent-platform/tools/github_app_manifest_flow.py serve
 ```
 
 Then open:
@@ -343,26 +343,26 @@ Created on 2026-06-07.
 apps:
   orchestrator:
     app_slug: trading-orchestrator-agent
-    app_id: 3988813
-    installation_id: 138640121
+    app_id: <orchestrator-app-id>
+    installation_id: <orchestrator-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/orchestrator.private-key.pem
 
   coding:
     app_slug: trading-coding-agent
-    app_id: 3988816
-    installation_id: 138640143
+    app_id: <coding-app-id>
+    installation_id: <coding-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/coding.private-key.pem
 
   review:
     app_slug: trading-review-agent
-    app_id: 3988836
-    installation_id: 138640182
+    app_id: <review-app-id>
+    installation_id: <review-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/review.private-key.pem
 
   validator:
     app_slug: trading-validator-agent
-    app_id: 3988837
-    installation_id: 138640218
+    app_id: <validator-app-id>
+    installation_id: <validator-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/validator.private-key.pem
 ```
 
@@ -371,10 +371,10 @@ Private keys are intentionally stored outside git and must later be moved to GCP
 Installation token helper:
 
 ```bash
-python3 tools/trading_agent_token.py orchestrator
-python3 tools/trading_agent_token.py coding
-python3 tools/trading_agent_token.py review
-python3 tools/trading_agent_token.py validator
+python3 agent-platform/tools/trading_agent_token.py orchestrator
+python3 agent-platform/tools/trading_agent_token.py coding
+python3 agent-platform/tools/trading_agent_token.py review
+python3 agent-platform/tools/trading_agent_token.py validator
 ```
 
 Token minting has been verified for all four Apps.

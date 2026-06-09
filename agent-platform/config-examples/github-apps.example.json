@@ -1,0 +1,30 @@
+{
+  "orchestrator": {
+    "app_slug": "trading-orchestrator-agent",
+    "app_id": 123456,
+    "installation_id": 987654,
+    "private_key_path": "/etc/trading-agents/secrets/orchestrator/private-key.pem",
+    "linux_user": "agent-orchestrator"
+  },
+  "coding": {
+    "app_slug": "trading-coding-agent",
+    "app_id": 123457,
+    "installation_id": 987655,
+    "private_key_path": "/etc/trading-agents/secrets/coding/private-key.pem",
+    "linux_user": "agent-coding"
+  },
+  "review": {
+    "app_slug": "trading-review-agent",
+    "app_id": 123458,
+    "installation_id": 987656,
+    "private_key_path": "/etc/trading-agents/secrets/review/private-key.pem",
+    "linux_user": "agent-review"
+  },
+  "validator": {
+    "app_slug": "trading-validator-agent",
+    "app_id": 123459,
+    "installation_id": 987657,
+    "private_key_path": "/etc/trading-agents/secrets/validator/private-key.pem",
+    "linux_user": "agent-validator"
+  }
+}
