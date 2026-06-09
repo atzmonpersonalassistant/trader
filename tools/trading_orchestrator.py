@@ -1462,9 +1462,14 @@ def cmd_outbox_ack_sent(args: argparse.Namespace) -> int:
     init_db(args.db)
     ts = now_iso()
     with connect(args.db) as conn:
-        row = conn.execute("SELECT state FROM outbox WHERE external_id=?", (args.outbox_id,)).fetchone()
+        row = conn.execute("SELECT state, payload_json FROM outbox WHERE external_id=?", (args.outbox_id,)).fetchone()
         if not row:
             print(json.dumps({"ok": False, "reason": "outbox_not_found", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
+        payload = json.loads(row["payload_json"] or "{}")
+        message_type = payload.get("type") or "message"
+        if message_type in {"approval_request", "blocked_pr"}:
+            print(json.dumps({"ok": False, "reason": "not_notification", "type": message_type, "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
             return 1
         conn.execute(
             "UPDATE outbox SET state='sent', updated_at=?, last_seen_at=? WHERE external_id=?",
