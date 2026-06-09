@@ -233,7 +233,7 @@ Issue body:
 
 Task:
 - Make one safe, minimal documentation-only change that addresses or records this issue.
-- Prefer updating options-planning-lab/PROJECT_PLAN.md, options-planning-lab/README.md, or README.md.
+- Prefer updating options-planning/PROJECT_PLAN.md, options-planning/README.md, or README.md.
 - Do not touch secrets, credentials, deployment files, or generated caches.
 - Keep the diff small.
 - Run a minimal verification command if appropriate.
@@ -253,7 +253,7 @@ def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], ar
     last_message = logs_dir / f"codex-issue-{issue['number']}-{ts}.txt"
     if args.skip_codex:
         # Deterministic fallback for local smoke tests; production runs should not use this.
-        target = workspace / "options-planning-lab" / "PROJECT_PLAN.md"
+        target = workspace / "options-planning" / "PROJECT_PLAN.md"
         with target.open("a", encoding="utf-8") as f:
             f.write(f"\n<!-- coding-agent smoke issue #{issue['number']} at {now_iso()} -->\n")
         return {"skipped": True, "last_message": str(last_message), "returncode": 0, "stdout": "", "stderr": ""}
@@ -313,11 +313,11 @@ def verify(workspace: Path) -> dict[str, Any]:
 def is_allowed_mvp0_change(path: str) -> bool:
     allowed_exact = {
         "README.md",
-        "options-planning-lab/README.md",
-        "options-planning-lab/PROJECT_PLAN.md",
-        "options-planning-lab/ARCHITECTURE.md",
+        "options-planning/README.md",
+        "options-planning/PROJECT_PLAN.md",
+        "options-planning/ARCHITECTURE.md",
     }
-    return path in allowed_exact or (path.startswith("options-planning-lab/docs/") and path.endswith(".md"))
+    return path in allowed_exact or (path.startswith("options-planning/docs/") and path.endswith(".md"))
 
 
 def commit_changes(workspace: Path, issue: int, title: str) -> dict[str, Any]:

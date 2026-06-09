@@ -1,4 +1,4 @@
-# Options Trade Lab Docs
+# Options Planning Docs
 
 Design and research documents for the options research/trading workstream.
 

@@ -1,4 +1,4 @@
-# Options Trade Lab — Architecture
+# Options Planning — Architecture
 
 ## Status
 
@@ -38,7 +38,7 @@ Data Providers
 ## Proposed Project Structure
 
 ```text
-options-planning-lab/
+options-planning/
 ├── PROJECT_PLAN.md
 ├── ARCHITECTURE.md
 ├── README.md                         # later: usage and project overview
@@ -60,7 +60,7 @@ options-planning-lab/
 ├── scripts/
 │   └── cli.py                        # later: command entrypoint
 ├── src/
-│   └── options_trade_lab/
+│   └── options_planning/
 │       ├── __init__.py
 │       ├── config/                   # config loading and validation
 │       ├── data/                     # provider adapters and canonical schemas
