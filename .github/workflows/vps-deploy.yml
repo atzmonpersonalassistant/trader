@@ -1,0 +1,110 @@
+name: Deploy agent tools to VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/trading-*"
+      - "tools/trading_*.py"
+      - ".github/workflows/vps-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Install orchestrator/coding/review tools on VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets are present
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_PRIVATE_KEY"
+
+      - name: Compile tools before deploy
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/trading_orchestrator.py \
+            tools/trading_coding_agent.py \
+            tools/trading_review_agent.py \
+            tools/trading_coding_agent_stub.py
+
+      - name: Install SSH key
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+
+      - name: Trust VPS host key
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload deploy bundle
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_DIR: /tmp/trader-agent-tools-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
+            "rm -rf '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR'"
+          scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            tools/trading-orchestrator \
+            tools/trading-coding-agent \
+            tools/trading-review-agent \
+            tools/trading_orchestrator.py \
+            tools/trading_coding_agent.py \
+            tools/trading_review_agent.py \
+            tools/trading_coding_agent_stub.py \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/"
+
+      - name: Install tools and verify
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_DIR: /tmp/trader-agent-tools-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_orchestrator.py" /usr/local/lib/trading_orchestrator.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator" /usr/local/bin/trading-orchestrator
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-coding-agent" /usr/local/bin/trading-coding-agent
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-review-agent" /usr/local/bin/trading-review-agent
+          python3 -m py_compile \
+            /usr/local/lib/trading_orchestrator.py \
+            /usr/local/lib/trading_coding_agent.py \
+            /usr/local/lib/trading_review_agent.py \
+            /usr/local/lib/trading_coding_agent_stub.py
+          sudo -n -u agent-orchestrator trading-orchestrator status >/tmp/trader-orchestrator-status.json
+          sudo -n -u agent-orchestrator trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
+          rm -rf "$DEPLOY_DIR"
+          echo DEPLOY_OK
+          REMOTE
