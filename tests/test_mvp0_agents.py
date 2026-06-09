@@ -150,8 +150,8 @@ class MVP0AgentTests(unittest.TestCase):
 
     def test_agent_command_timeout_redacts_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
-        secret_url = "https://x-access-token:" + "ghs_TIMEOUTSECRET" + "@github.com/owner/repo.git"
-        result = review.run_cmd(["python3", "-c", "import time,sys; print(sys.argv[1]); time.sleep(2)", secret_url], timeout=0.1)
+        token_url_fixture = "https://x-access-token:" + "ghs_TIMEOUTSECRET" + "@github.com/owner/repo.git"
+        result = review.run_cmd(["python3", "-c", "import time,sys; print(sys.argv[1]); time.sleep(2)", token_url_fixture], timeout=0.1)
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
         self.assertEqual(result["returncode"], 124)
         self.assertNotIn("ghs_TIMEOUTSECRET", rendered)
@@ -160,12 +160,12 @@ class MVP0AgentTests(unittest.TestCase):
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         coding = load("trading_coding_agent", "tools/trading_coding_agent.py")
-        secret_url = "https://x-access-token:" + "ghs_ABC123SECRET" + "@github.com/owner/repo.git"
-        result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", secret_url])
+        token_url_fixture = "https://x-access-token:" + "ghs_ABC123SECRET" + "@github.com/owner/repo.git"
+        result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", token_url_fixture])
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
         self.assertIn("<redacted>", rendered)
         self.assertNotIn("ghs_ABC123SECRET", rendered)
-        self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([secret_url])) + coding.redact_text(secret_url))
+        self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([token_url_fixture])) + coding.redact_text(token_url_fixture))
 
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
