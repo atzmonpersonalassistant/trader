@@ -30,6 +30,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "workspace_root": "/agents/review/workspaces",
     "token_cmd": DEFAULT_TOKEN_CMD,
     "review_model": "gpt-5.5",
+    "autoreview_enabled": False,
+    "autoreview_cmd": "autoreview",
+    "autoreview_timeout_seconds": 1800,
+    "autoreview_required": False,
+    "autoreview_max_changed_files": 12,
 }
 
 CHECKLIST = [
@@ -258,6 +263,35 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     return result
 
 
+def should_run_autoreview(context: dict[str, Any], config: dict[str, Any], deterministic: dict[str, Any], model: dict[str, Any] | None, skip_autoreview: bool) -> bool:
+    if skip_autoreview or not config.get("autoreview_enabled"):
+        return False
+    if not deterministic.get("pass"):
+        return False
+    if not model or model.get("returncode") != 0 or not str(model.get("review_text") or "").strip().upper().startswith("PASS"):
+        return False
+    files = [f.get("filename", "") for f in context.get("files", [])]
+    labels = {label.get("name") for label in context.get("pr", {}).get("labels", [])}
+    if len(files) > int(config.get("autoreview_max_changed_files") or 12):
+        return True
+    sensitive_terms = ("auth", "secret", "deploy", "workflow", "risk", "trading", "ibkr", "orchestrator", "coding_agent", "review_agent")
+    if any(any(term in filename.lower() for term in sensitive_terms) for filename in files):
+        return True
+    if "needs:human-approval" in labels or "human:approved" in labels:
+        return True
+    return False
+
+
+def run_autoreview(workspace: Path, workspace_info: dict[str, Any], config: dict[str, Any], timeout: int) -> dict[str, Any]:
+    base_ref = workspace_info.get("base_ref") or config.get("base_branch") or "main"
+    cmd = [str(config.get("autoreview_cmd") or "autoreview"), "--mode", "branch", "--base", f"origin/{base_ref}"]
+    result = run_cmd(cmd, cwd=workspace, timeout=timeout)
+    # Keep logs bounded; autoreview can be verbose.
+    result["stdout"] = redact_text(str(result.get("stdout") or ""))[:12000]
+    result["stderr"] = redact_text(str(result.get("stderr") or ""))[:6000]
+    return result
+
+
 def deterministic_secret_blocked(deterministic: dict[str, Any]) -> bool:
     return any("secret" in str(finding).lower() for finding in deterministic.get("findings") or [])
 
@@ -270,7 +304,7 @@ def should_run_model_review(deterministic: dict[str, Any], skip_model: bool) -> 
     return not deterministic_secret_blocked(deterministic)
 
 
-def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any], model: dict[str, Any] | None) -> tuple[Path, str, bool]:
+def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any], model: dict[str, Any] | None, autoreview: dict[str, Any] | None = None, autoreview_required: bool = False) -> tuple[Path, str, bool]:
     passed = bool(deterministic["pass"])
     model_findings: list[str] = []
     if not model:
@@ -298,6 +332,15 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
     body.append("\n## Findings")
     findings = list(deterministic["findings"] or []) + model_findings
     body.extend(f"- {f}" for f in findings or ["No blocking findings."])
+    if autoreview:
+        if autoreview.get("skipped"):
+            body.extend(["", "## Autoreview", "Skipped: " + str(autoreview.get("reason") or "not required")])
+        elif autoreview.get("returncode") == 0:
+            body.extend(["", "## Autoreview", "PASS", str(autoreview.get("stdout") or "")[:3000]])
+        else:
+            if autoreview_required:
+                passed = False
+            body.extend(["", "## Autoreview", "FAIL" if autoreview_required else "Non-blocking failure", str(autoreview.get("stdout") or "")[:3000], str(autoreview.get("stderr") or "")[:3000]])
     if model and model.get("review_text"):
         body.extend(["", "## Model review", model["review_text"][:6000]])
     review_path = workspace / ".review-agent" / "review.md"
@@ -339,9 +382,14 @@ def cmd_review(args: argparse.Namespace) -> int:
     workspace = Path(workspace_info["workspace"])
     deterministic = deterministic_review(context)
     model = run_model_review(workspace, context, config, args.model_timeout_seconds) if should_run_model_review(deterministic, args.skip_model) else None
-    review_path, review_text, passed = write_review(workspace, args.pr, deterministic, model)
+    autoreview: dict[str, Any] | None
+    if should_run_autoreview(context, config, deterministic, model, args.skip_autoreview):
+        autoreview = run_autoreview(workspace, workspace_info, config, int(config.get("autoreview_timeout_seconds") or args.autoreview_timeout_seconds))
+    else:
+        autoreview = {"skipped": True, "reason": "not_required_or_disabled"}
+    review_path, review_text, passed = write_review(workspace, args.pr, deterministic, model, autoreview, bool(config.get("autoreview_required")))
     published = publish(config, token, context, review_text, passed)
-    event = {"ok": True, "type": "review_agent_review", "pr": args.pr, "config_found": config_found, "workspace": workspace_info, "review_path": str(review_path), "passed": passed, "deterministic": deterministic, "model": model, "published": published, "user": os.environ.get("USER") or os.environ.get("LOGNAME"), "timestamp": now_iso()}
+    event = {"ok": True, "type": "review_agent_review", "pr": args.pr, "config_found": config_found, "workspace": workspace_info, "review_path": str(review_path), "passed": passed, "deterministic": deterministic, "model": model, "autoreview": autoreview, "published": published, "user": os.environ.get("USER") or os.environ.get("LOGNAME"), "timestamp": now_iso()}
     log_path = write_log(args.log_dir, event)
     print(json.dumps({**event, "log_path": str(log_path)}, indent=2, sort_keys=True))
     return 0 if passed else 2
@@ -356,6 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--pr", required=True, type=int)
     review.add_argument("--skip-model", action="store_true")
     review.add_argument("--model-timeout-seconds", type=int, default=900)
+    review.add_argument("--skip-autoreview", action="store_true")
+    review.add_argument("--autoreview-timeout-seconds", type=int, default=1800)
     review.set_defaults(func=cmd_review)
     return parser
 

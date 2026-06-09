@@ -234,6 +234,30 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual([label["name"] for label in context["pr"]["labels"]], ["human:approved"])
         self.assertTrue(any("/issues/7" in url for _, url, _ in calls))
 
+    def test_review_autoreview_selection_and_required_failure(self):
+        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        context = {
+            "files": [{"filename": ".github/workflows/vps-deploy.yml"}],
+            "pr": {"labels": [], "base": {"ref": "main"}},
+        }
+        deterministic = {"pass": True, "findings": [], "checklist": []}
+        model = {"returncode": 0, "review_text": "PASS\nLooks good"}
+        self.assertTrue(review.should_run_autoreview(context, {"autoreview_enabled": True, "autoreview_max_changed_files": 12}, deterministic, model, False))
+        self.assertFalse(review.should_run_autoreview(context, {"autoreview_enabled": False}, deterministic, model, False))
+        self.assertFalse(review.should_run_autoreview(context, {"autoreview_enabled": True}, {"pass": False}, model, False))
+        with TemporaryDirectory() as tmp:
+            _, text, passed = review.write_review(
+                Path(tmp),
+                22,
+                deterministic,
+                model,
+                {"returncode": 1, "stdout": "finding", "stderr": "", "command": ["autoreview"]},
+                True,
+            )
+        self.assertFalse(passed)
+        self.assertIn("## Autoreview", text)
+        self.assertIn("FAIL", text)
+
     def test_review_required_check_fails_when_model_review_missing(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
