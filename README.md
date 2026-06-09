@@ -15,15 +15,15 @@ Reusable agentic development platform extracted from this repo.
 
 This is the part to copy or share if someone wants inspiration from the agent architecture.
 
-### `options-trade-lab/`
+### `options-planning-lab/`
 
 Main project area for options research, strategy design, scanner planning, validation, and future implementation.
 
-- Main docs: `options-trade-lab/README.md`
-- Architecture: `options-trade-lab/ARCHITECTURE.md`
-- Project plan: `options-trade-lab/PROJECT_PLAN.md`
-- Strategy/platform docs: `options-trade-lab/docs/`
-- Context notes: `options-trade-lab/context/`
+- Main docs: `options-planning-lab/README.md`
+- Architecture: `options-planning-lab/ARCHITECTURE.md`
+- Project plan: `options-planning-lab/PROJECT_PLAN.md`
+- Strategy/platform docs: `options-planning-lab/docs/`
+- Context notes: `options-planning-lab/context/`
 
 Future scanner work should be implemented under this coherent project structure, not as separate top-level radar folders.
 
