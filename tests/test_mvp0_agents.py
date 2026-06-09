@@ -95,6 +95,31 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
 
+    def test_review_fetch_pr_context_uses_issue_labels(self):
+        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        calls = []
+
+        def fake_request(method, url, token, payload=None, accept="application/vnd.github+json"):
+            calls.append((method, url, accept))
+            if accept == "application/vnd.github.v3.diff":
+                return ""
+            if url.endswith("/pulls/7"):
+                return {"number": 7, "title": "PR", "body": "", "labels": [], "head": {"sha": "abc"}}
+            if url.endswith("/issues/7"):
+                return {"labels": [{"name": "human:approved"}]}
+            if "/files" in url:
+                return []
+            raise AssertionError(url)
+
+        original = review.github_request
+        review.github_request = fake_request
+        try:
+            context = review.fetch_pr_context({"repo": "atzmonpersonalassistant/trader"}, 7, "token")
+        finally:
+            review.github_request = original
+        self.assertEqual([label["name"] for label in context["pr"]["labels"]], ["human:approved"])
+        self.assertTrue(any("/issues/7" in url for _, url, _ in calls))
+
     def test_review_required_check_fails_when_model_review_missing(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:

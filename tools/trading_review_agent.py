@@ -133,6 +133,8 @@ def require_ok(result: dict[str, Any]) -> dict[str, Any]:
 def fetch_pr_context(config: dict[str, Any], pr_number: int, token: str) -> dict[str, Any]:
     owner, repo = repo_parts(config)
     pr = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}", token)
+    issue = github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/issues/{pr_number}", token)
+    pr["labels"] = issue.get("labels", [])
     files: list[dict[str, Any]] = []
     page = 1
     while True:
