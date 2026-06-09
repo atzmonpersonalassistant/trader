@@ -17,10 +17,13 @@ def load(name, rel):
 class MVP0AgentTests(unittest.TestCase):
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
-        passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success"}
-        failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure"}
+        passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}
+        spoofed = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "other-app"}}
+        failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure", "app": {"slug": "trading-review-agent"}}
         same_repo_pr = {"head": {"ref": "agent/issue-5-docs", "repo": {"full_name": "atzmonpersonalassistant/trader"}}, "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}}}
         fork_pr = {"head": {"ref": "agent/issue-5-docs", "repo": {"full_name": "evil/fork"}}, "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}}}
+        self.assertEqual(orch.latest_named_check([spoofed, passing], "review-agent/pass", "trading-review-agent"), passing)
+        self.assertIsNone(orch.latest_named_check([spoofed], "review-agent/pass", "trading-review-agent"))
         self.assertTrue(orch.is_trusted_agent_pr(same_repo_pr))
         self.assertFalse(orch.is_trusted_agent_pr(fork_pr))
         self.assertFalse(orch.is_trusted_agent_pr({"head": {"ref": "docs/manual-pr"}}))

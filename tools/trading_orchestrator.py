@@ -31,6 +31,7 @@ DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-tok
 DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "trading-coding-agent-stub")
 DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "trading-coding-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
+DEFAULT_REVIEW_APP_SLUG = os.environ.get("TRADING_REVIEW_APP_SLUG", "trading-review-agent")
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
 
 SCHEMA = """
@@ -650,8 +651,10 @@ def fetch_check_runs(owner: str, repo: str, sha: str, token: str) -> list[dict[s
     return data.get("check_runs", [])
 
 
-def latest_named_check(check_runs: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
+def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: str | None = None) -> dict[str, Any] | None:
     matches = [check for check in check_runs if check.get("name") == name]
+    if app_slug:
+        matches = [check for check in matches if ((check.get("app") or {}).get("slug") == app_slug)]
     if not matches:
         return None
     return sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
@@ -841,7 +844,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
             current_pr = fetch_pr(args.owner, args.repo, pr_number, token)
             pr_payload = current_pr
             head_sha = ((current_pr.get("head") or {}).get("sha") or "")
-            review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name) if head_sha else None
+            review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name, args.review_app_slug) if head_sha else None
             branch = ((current_pr.get("head") or {}).get("ref")) or str(row["branch"] or "")
             if not is_trusted_agent_pr(current_pr):
                 payload = {"pr": pr_number, "reason": "untrusted_pr", "branch": branch, "head_sha": head_sha}
@@ -947,7 +950,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 )
                 results.append({"pr": pr_number, "routed": False, "reason": "missing_head_sha", "event": event_id})
                 continue
-            check = latest_named_check(fetch_check_runs(args.owner, args.repo, sha, token), args.review_check_name)
+            check = latest_named_check(fetch_check_runs(args.owner, args.repo, sha, token), args.review_check_name, args.review_app_slug)
             conclusion = (check or {}).get("conclusion")
             status = (check or {}).get("status")
             if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
@@ -1408,10 +1411,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     auto_merge = sub.add_parser("enable-auto-merge")
     auto_merge.add_argument("--review-check-name", default=DEFAULT_REVIEW_CHECK_NAME)
+    auto_merge.add_argument("--review-app-slug", default=DEFAULT_REVIEW_APP_SLUG)
     auto_merge.set_defaults(func=cmd_enable_auto_merge)
 
     route_review = sub.add_parser("route-review-failures")
     route_review.add_argument("--review-check-name", default=DEFAULT_REVIEW_CHECK_NAME)
+    route_review.add_argument("--review-app-slug", default=DEFAULT_REVIEW_APP_SLUG)
     route_review.add_argument("--max-review-fix-retries", type=int, default=DEFAULT_MAX_REVIEW_FIX_RETRIES)
     route_review.add_argument("--timeout-seconds", type=int, default=60)
     route_review.set_defaults(func=cmd_route_review_failures)
