@@ -15,15 +15,15 @@ Reusable agentic development platform extracted from this repo.
 
 This is the part to copy or share if someone wants inspiration from the agent architecture.
 
-### `options-planning/`
+### `planning/`
 
 Main project area for options research, strategy design, scanner planning, validation, and future implementation.
 
-- Main docs: `options-planning/README.md`
-- Architecture: `options-planning/ARCHITECTURE.md`
-- Project plan: `options-planning/PROJECT_PLAN.md`
-- Strategy/platform docs: `options-planning/docs/`
-- Context notes: `options-planning/context/`
+- Main docs: `planning/README.md`
+- Architecture: `planning/ARCHITECTURE.md`
+- Project plan: `planning/PROJECT_PLAN.md`
+- Strategy/platform docs: `planning/docs/`
+- Context notes: `planning/context/`
 
 Future scanner work should be implemented under this coherent project structure, not as separate top-level radar folders.
 
