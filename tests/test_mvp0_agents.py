@@ -184,8 +184,10 @@ class MVP0AgentTests(unittest.TestCase):
         })
         self.assertFalse(unsafe["pass"])
 
+        fake_github_token = "ghp_" + "abcdefghijklmnopqrstuvwxyz123456"
+        fake_openai_token = "sk-" + "abcdefghijklmnopqrstuvwxyz123456"
         token_unsafe = review.deterministic_review({
-            "diff": "+GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456\n+OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456\n",
+            "diff": f"+GITHUB_TOKEN={fake_github_token}\n+OPENAI_API_KEY={fake_openai_token}\n",
             "pr": {"labels": []},
         })
         self.assertFalse(token_unsafe["pass"])
