@@ -48,3 +48,13 @@ These are not necessarily secrets, but they can contain repo context, issue text
 The repo should contain only architecture, code, docs, and non-secret examples.
 
 Every server must be provisioned with its own secrets. For a server migration, either securely copy secrets from the old VPS or regenerate/re-auth them on the new one.
+
+## Token helper config
+
+`trading-agent-token` should read role-to-App mapping from server-local config, normally:
+
+```text
+/etc/trading-agents/github-apps.json
+```
+
+The repo includes only `agent-platform/config-examples/github-apps.example.json` with placeholder IDs. Do not hard-code real App IDs or private-key paths that are specific to a private deployment into reusable docs/code unless they are intentionally public examples.

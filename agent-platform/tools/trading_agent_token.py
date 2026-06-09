@@ -1,51 +1,43 @@
 #!/usr/bin/env python3
-"""Mint short-lived GitHub installation tokens for trading-agent GitHub Apps.
+"""Mint short-lived GitHub installation tokens for agent GitHub Apps.
 
-This local MVP helper reads private keys from ~/.trading-agents/github-apps.
-The future VM version should read keys from GCP Secret Manager or locked-down
-role-specific files.
+This helper intentionally does not hard-code app IDs, installation IDs, or
+private-key paths. Configure them with a JSON file, typically:
+
+    /etc/trading-agents/github-apps.json
+
+Override with TRADING_AGENT_APPS_CONFIG when needed.
 """
 from __future__ import annotations
 
 import argparse
 import base64
 import json
+import os
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path
+from typing import Any
 
-CONFIG = {
-    "orchestrator": {
-        "app_slug": "trading-orchestrator-agent",
-        "app_id": 3988813,
-        "installation_id": 138640121,
-        "private_key_path": "~/.trading-agents/github-apps/orchestrator.private-key.pem",
-    },
-    "coding": {
-        "app_slug": "trading-coding-agent",
-        "app_id": 3988816,
-        "installation_id": 138640143,
-        "private_key_path": "~/.trading-agents/github-apps/coding.private-key.pem",
-    },
-    "review": {
-        "app_slug": "trading-review-agent",
-        "app_id": 3988836,
-        "installation_id": 138640182,
-        "private_key_path": "~/.trading-agents/github-apps/review.private-key.pem",
-    },
-    "validator": {
-        "app_slug": "trading-validator-agent",
-        "app_id": 3988837,
-        "installation_id": 138640218,
-        "private_key_path": "~/.trading-agents/github-apps/validator.private-key.pem",
-    },
-}
+DEFAULT_CONFIG_PATH = Path(os.environ.get("TRADING_AGENT_APPS_CONFIG", "/etc/trading-agents/github-apps.json"))
 
 
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        raise SystemExit(
+            f"Missing GitHub App config: {path}. "
+            "Create it from agent-platform/config-examples/github-apps.example.json."
+        )
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or not data:
+        raise SystemExit(f"Invalid GitHub App config: {path}")
+    return data
 
 
 def sign_jwt(app_id: int, private_key_path: Path) -> str:
@@ -57,13 +49,20 @@ def sign_jwt(app_id: int, private_key_path: Path) -> str:
     return f"{header}.{payload}.{b64url(sig)}"
 
 
-def mint_token(role: str) -> dict:
-    cfg = CONFIG[role]
-    key_path = Path(cfg["private_key_path"]).expanduser()
+def mint_token(role: str, config: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    cfgs = config or load_config()
+    if role not in cfgs:
+        raise SystemExit(f"Unknown role {role!r}. Available roles: {', '.join(sorted(cfgs))}")
+    cfg = cfgs[role]
+    required = ["app_id", "installation_id", "private_key_path"]
+    missing = [key for key in required if key not in cfg]
+    if missing:
+        raise SystemExit(f"Role {role!r} is missing required config keys: {', '.join(missing)}")
+    key_path = Path(str(cfg["private_key_path"])).expanduser()
     if not key_path.exists():
         raise SystemExit(f"Missing private key for {role}: {key_path}")
-    jwt = sign_jwt(cfg["app_id"], key_path)
-    url = f"https://api.github.com/app/installations/{cfg['installation_id']}/access_tokens"
+    jwt = sign_jwt(int(cfg["app_id"]), key_path)
+    url = f"https://api.github.com/app/installations/{int(cfg['installation_id'])}/access_tokens"
     req = urllib.request.Request(
         url,
         method="POST",
@@ -80,10 +79,11 @@ def mint_token(role: str) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("role", choices=sorted(CONFIG))
+    p.add_argument("role", help="agent role from the GitHub App config, e.g. orchestrator/coding/review")
+    p.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="GitHub App config JSON path")
     p.add_argument("--json", action="store_true", help="print full token response JSON")
     args = p.parse_args()
-    data = mint_token(args.role)
+    data = mint_token(args.role, load_config(args.config))
     if args.json:
         print(json.dumps(data, indent=2, sort_keys=True))
     else:

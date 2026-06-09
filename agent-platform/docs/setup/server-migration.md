@@ -89,3 +89,15 @@ sudo -n -u agent-coding trading-coding-agent run --issue <safe-test-issue> --ski
 ```
 
 Then trigger `vps-deploy.yml` from GitHub Actions and confirm it deploys successfully to the new server.
+
+## GitHub App token helper config
+
+The reusable token helper reads app IDs, installation IDs, and private-key paths from:
+
+```text
+/etc/trading-agents/github-apps.json
+```
+
+or from the path in `TRADING_AGENT_APPS_CONFIG`.
+
+Use `agent-platform/config-examples/github-apps.example.json` as the template. The config file contains IDs and paths, not private-key contents, but it should still be treated as server-local operational config.

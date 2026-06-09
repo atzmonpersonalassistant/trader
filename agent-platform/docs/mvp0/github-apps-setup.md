@@ -343,26 +343,26 @@ Created on 2026-06-07.
 apps:
   orchestrator:
     app_slug: trading-orchestrator-agent
-    app_id: 3988813
-    installation_id: 138640121
+    app_id: <orchestrator-app-id>
+    installation_id: <orchestrator-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/orchestrator.private-key.pem
 
   coding:
     app_slug: trading-coding-agent
-    app_id: 3988816
-    installation_id: 138640143
+    app_id: <coding-app-id>
+    installation_id: <coding-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/coding.private-key.pem
 
   review:
     app_slug: trading-review-agent
-    app_id: 3988836
-    installation_id: 138640182
+    app_id: <review-app-id>
+    installation_id: <review-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/review.private-key.pem
 
   validator:
     app_slug: trading-validator-agent
-    app_id: 3988837
-    installation_id: 138640218
+    app_id: <validator-app-id>
+    installation_id: <validator-installation-id>
     private_key_local_path: ~/.trading-agents/github-apps/validator.private-key.pem
 ```
 
