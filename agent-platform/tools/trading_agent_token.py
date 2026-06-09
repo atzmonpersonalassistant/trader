@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import getpass
 import os
 import subprocess
 import time
@@ -49,11 +50,23 @@ def sign_jwt(app_id: int, private_key_path: Path) -> str:
     return f"{header}.{payload}.{b64url(sig)}"
 
 
+def expected_linux_user(role: str, cfg: dict[str, Any]) -> str:
+    return str(cfg.get("linux_user") or f"agent-{role}")
+
+
+def enforce_role_user(role: str, cfg: dict[str, Any]) -> None:
+    expected = expected_linux_user(role, cfg)
+    actual = getpass.getuser()
+    if actual != expected:
+        raise SystemExit(f"Refusing to mint {role!r} token as OS user {actual!r}; expected {expected!r}")
+
+
 def mint_token(role: str, config: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     cfgs = config or load_config()
     if role not in cfgs:
         raise SystemExit(f"Unknown role {role!r}. Available roles: {', '.join(sorted(cfgs))}")
     cfg = cfgs[role]
+    enforce_role_user(role, cfg)
     required = ["app_id", "installation_id", "private_key_path"]
     missing = [key for key in required if key not in cfg]
     if missing:

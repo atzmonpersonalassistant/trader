@@ -385,6 +385,19 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("ghs_TIMEOUTSECRET", rendered)
         self.assertIn("Command timed out", rendered)
 
+    def test_token_helper_enforces_role_linux_user(self):
+        token = load("trading_agent_token", "agent-platform/tools/trading_agent_token.py")
+        self.assertEqual(token.expected_linux_user("coding", {}), "agent-coding")
+        self.assertEqual(token.expected_linux_user("coding", {"linux_user": "custom-coder"}), "custom-coder")
+        original = token.getpass.getuser
+        token.getpass.getuser = lambda: "agent-review"
+        try:
+            with self.assertRaises(SystemExit):
+                token.enforce_role_user("coding", {})
+            token.enforce_role_user("review", {})
+        finally:
+            token.getpass.getuser = original
+
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         coding = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")

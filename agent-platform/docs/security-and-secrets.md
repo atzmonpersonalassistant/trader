@@ -58,3 +58,5 @@ Every server must be provisioned with its own secrets. For a server migration, e
 ```
 
 The repo includes only `agent-platform/config-examples/github-apps.example.json` with placeholder IDs. Do not hard-code real App IDs or private-key paths that are specific to a private deployment into reusable docs/code unless they are intentionally public examples.
+
+The token helper also enforces the Linux user boundary: by default role `coding` may only be minted by OS user `agent-coding`, `review` by `agent-review`, and so on. Override with `linux_user` in `/etc/trading-agents/github-apps.json` only if the server uses different account names.

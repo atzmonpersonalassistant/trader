@@ -101,3 +101,5 @@ The reusable token helper reads app IDs, installation IDs, and private-key paths
 or from the path in `TRADING_AGENT_APPS_CONFIG`.
 
 Use `agent-platform/config-examples/github-apps.example.json` as the template. The config file contains IDs and paths, not private-key contents, but it should still be treated as server-local operational config.
+
+Each role entry may include `linux_user`. If omitted, the token helper expects `agent-<role>`; for example `coding` must run as `agent-coding`.
