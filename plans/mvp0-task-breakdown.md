@@ -10,6 +10,8 @@ Scope: MVP-0 only
 
 Prove the agentic development loop on a real GitHub repo without QuantConnect and without a Quant Validator.
 
+Smoke-check note: dummy agent-loop issue #7 was processed as a documentation-only MVP-0 loop verification task.
+
 Target flow:
 
 ```text
