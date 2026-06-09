@@ -338,6 +338,11 @@ def fetch_open_prs(owner: str, repo: str, token: str) -> list[dict[str, Any]]:
     return prs
 
 
+def fetch_pr(owner: str, repo: str, pr_number: int, token: str) -> dict[str, Any]:
+    pr, _ = github_api_get(f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}", token)
+    return pr
+
+
 def infer_issue_number_from_pr(pr: dict[str, Any]) -> int | None:
     text = "\n".join(
         str(value or "")
@@ -730,6 +735,8 @@ def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | No
         return False, "missing_agent_pr_opened"
     if "agent:needs-fix" in labels or "review-failed" in labels:
         return False, "needs_fix"
+    if "agent:blocked" in labels:
+        return False, "blocked"
     if not review_check:
         return False, "missing_review_check"
     if review_check.get("status") != "completed" or review_check.get("conclusion") != "success":
@@ -831,10 +838,23 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                 )
                 results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "needs_human_approval", "outbox_id": outbox_id, "outbox_created": created, "event": event_id})
                 continue
-            pr_payload = json.loads(row["payload_json"] or "{}")
-            head_sha = ((pr_payload.get("head") or {}).get("sha") or "")
+            current_pr = fetch_pr(args.owner, args.repo, pr_number, token)
+            pr_payload = current_pr
+            head_sha = ((current_pr.get("head") or {}).get("sha") or "")
             review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, token), args.review_check_name) if head_sha else None
-            branch = ((pr_payload.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            branch = ((current_pr.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            if not is_trusted_agent_pr(current_pr):
+                payload = {"pr": pr_number, "reason": "untrusted_pr", "branch": branch, "head_sha": head_sha}
+                event_id = record_event(
+                    conn,
+                    event_type="auto_merge_skipped",
+                    entity_type="pull_request",
+                    entity_external_id=row["external_id"],
+                    state="skipped",
+                    payload=payload,
+                )
+                results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "untrusted_pr", "event": event_id})
+                continue
             if (review_check or {}).get("status") == "completed" and (review_check or {}).get("conclusion") == "success" and "agent:needs-fix" in labels:
                 try:
                     remove_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)
@@ -842,7 +862,10 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                     if exc.code not in {403, 404}:
                         raise
                 labels = [label for label in labels if label not in {"agent:needs-fix", "review-failed"}]
-                conn.execute("UPDATE pull_requests SET labels=?, updated_at=?, last_seen_at=? WHERE external_id=?", (json.dumps(labels, sort_keys=True), now_iso(), now_iso(), row["external_id"]))
+            conn.execute(
+                "UPDATE pull_requests SET branch=?, labels=?, payload_json=?, updated_at=?, last_seen_at=? WHERE external_id=?",
+                (branch, json.dumps(labels, sort_keys=True), json.dumps(current_pr, sort_keys=True), now_iso(), now_iso(), row["external_id"]),
+            )
             candidate, reason = is_auto_merge_candidate(labels, review_check, branch)
             if not candidate:
                 payload = {"pr": pr_number, "labels": labels, "reason": reason, "review_check": review_check}

@@ -191,7 +191,10 @@ def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
     findings: list[str] = []
     secret_patterns = [
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
-        r"(?i)(api[_-]?key|password|secret)\s*=\s*['\"]?[^\s'\"]{8,}",
+        r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*['\"]?[^\s'\"]{8,}",
+        r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b",
+        r"\bgithub_pat_[A-Za-z0-9_]{20,}\b",
+        r"\bsk-[A-Za-z0-9_-]{20,}\b",
     ]
     if any(re.search(pattern, diff) for pattern in secret_patterns):
         findings.append("Potential secret-like text found in diff.")

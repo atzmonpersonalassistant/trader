@@ -28,6 +28,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "docs/manual-pr"), (False, "untrusted_branch"))
         self.assertEqual(orch.is_auto_merge_candidate([], passing, "agent/issue-5-docs"), (False, "missing_agent_pr_opened"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:needs-fix"], passing, "agent/issue-5-docs"), (False, "needs_fix"))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:blocked"], passing, "agent/issue-5-docs"), (False, "blocked"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], failing, "agent/issue-5-docs"), (False, "review_not_successful"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None, "agent/issue-5-docs"), (False, "missing_review_check"))
 
@@ -157,6 +158,12 @@ class MVP0AgentTests(unittest.TestCase):
             "pr": {"labels": []},
         })
         self.assertFalse(unsafe["pass"])
+
+        token_unsafe = review.deterministic_review({
+            "diff": "+GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456\n+OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456\n",
+            "pr": {"labels": []},
+        })
+        self.assertFalse(token_unsafe["pass"])
 
 
 if __name__ == "__main__":

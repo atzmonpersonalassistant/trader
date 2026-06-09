@@ -2,12 +2,6 @@ name: VPS SSH smoke test
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/vps-ssh-smoke.yml"
-      - "plans/mvp0-operator-runbook.md"
-      - "plans/mvp0-task-breakdown.md"
-      - "README.md"
 
 permissions:
   contents: read
