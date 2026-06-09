@@ -164,6 +164,11 @@ class MVP0AgentTests(unittest.TestCase):
             "pr": {"labels": []},
         })
         self.assertFalse(token_unsafe["pass"])
+        self.assertFalse(review.should_run_model_review(token_unsafe, skip_model=False))
+        with TemporaryDirectory() as tmp:
+            _, review_text, passed = review.write_review(Path(tmp), 13, token_unsafe, None)
+        self.assertFalse(passed)
+        self.assertIn("raw diff was not sent to the model", review_text)
 
 
 if __name__ == "__main__":

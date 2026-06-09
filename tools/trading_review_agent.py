@@ -234,12 +234,27 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     return result
 
 
+def deterministic_secret_blocked(deterministic: dict[str, Any]) -> bool:
+    return any("secret" in str(finding).lower() for finding in deterministic.get("findings") or [])
+
+
+def should_run_model_review(deterministic: dict[str, Any], skip_model: bool) -> bool:
+    if skip_model:
+        return False
+    # If deterministic checks already found secret-like content, fail closed
+    # before sending any PR diff to an external/model review process.
+    return not deterministic_secret_blocked(deterministic)
+
+
 def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any], model: dict[str, Any] | None) -> tuple[Path, str, bool]:
     passed = bool(deterministic["pass"])
     model_findings: list[str] = []
     if not model:
         passed = False
-        model_findings.append("Model review was skipped; required check cannot pass.")
+        if deterministic_secret_blocked(deterministic):
+            model_findings.append("Model review skipped because deterministic secret checks failed; raw diff was not sent to the model.")
+        else:
+            model_findings.append("Model review was skipped; required check cannot pass.")
     elif model.get("returncode") != 0 or not model.get("review_text"):
         passed = False
         model_findings.append("Model review failed or returned no review text; required check cannot pass.")
@@ -299,7 +314,7 @@ def cmd_review(args: argparse.Namespace) -> int:
     workspace_info = ensure_review_workspace(config, args.pr, token, context)
     workspace = Path(workspace_info["workspace"])
     deterministic = deterministic_review(context)
-    model = None if args.skip_model else run_model_review(workspace, context, config, args.model_timeout_seconds)
+    model = run_model_review(workspace, context, config, args.model_timeout_seconds) if should_run_model_review(deterministic, args.skip_model) else None
     review_path, review_text, passed = write_review(workspace, args.pr, deterministic, model)
     published = publish(config, token, context, review_text, passed)
     event = {"ok": True, "type": "review_agent_review", "pr": args.pr, "config_found": config_found, "workspace": workspace_info, "review_path": str(review_path), "passed": passed, "deterministic": deterministic, "model": model, "published": published, "user": os.environ.get("USER") or os.environ.get("LOGNAME"), "timestamp": now_iso()}
