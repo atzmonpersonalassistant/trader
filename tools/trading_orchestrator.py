@@ -1468,7 +1468,7 @@ def cmd_outbox_ack_sent(args: argparse.Namespace) -> int:
             return 1
         payload = json.loads(row["payload_json"] or "{}")
         message_type = payload.get("type") or "message"
-        if message_type in {"approval_request", "blocked_pr"}:
+        if message_type == "approval_request":
             print(json.dumps({"ok": False, "reason": "not_notification", "type": message_type, "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
             return 1
         conn.execute(

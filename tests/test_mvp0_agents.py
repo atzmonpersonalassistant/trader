@@ -246,6 +246,16 @@ class MVP0AgentTests(unittest.TestCase):
                 state = conn.execute("SELECT state FROM outbox WHERE external_id='approval-pr-43'").fetchone()[0]
             self.assertEqual(state, "pending")
 
+            with sqlite3.connect(db) as conn:
+                orch.create_blocked_outbox(conn, pr_number=44, title="Blocked", url="https://example/pr/44", reason="retry limit", retry_count=51)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = orch.cmd_outbox_ack_sent(argparse.Namespace(db=db, outbox_id="blocked-pr-44"))
+            self.assertEqual(rc, 0)
+            with sqlite3.connect(db) as conn:
+                state = conn.execute("SELECT state FROM outbox WHERE external_id='blocked-pr-44'").fetchone()[0]
+            self.assertEqual(state, "sent")
+
     def test_orchestrator_blocked_outbox_is_deduped(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import sqlite3
