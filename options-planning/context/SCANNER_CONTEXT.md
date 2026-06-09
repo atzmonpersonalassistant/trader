@@ -1,6 +1,6 @@
 # Existing Scanner Context
 
-This document preserves what was built before `options-planning-lab` became the main project container.
+This document preserves what was built before `options-planning` became the main project container.
 
 ## Previous Local Project
 
