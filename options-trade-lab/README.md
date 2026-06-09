@@ -21,7 +21,7 @@ This is **not** a live-trading system. Live execution is explicitly out of scope
 - `PROJECT_PLAN.md` — task list and approval workflow.
 - `ARCHITECTURE.md` — proposed modular architecture.
 - `context/` — conversation-derived context, preferences, lessons, and source-of-truth notes.
-- `docs/` — strategy/system design docs moved out of repo-level `plans/`.
+- `docs/` — strategy/system design docs.
 
 ## Legacy Radar Cleanup
 

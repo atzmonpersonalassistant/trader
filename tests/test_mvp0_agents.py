@@ -275,7 +275,7 @@ class MVP0AgentTests(unittest.TestCase):
     def test_coding_agent_enforces_docs_only_changes(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0/task-breakdown.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("options-trade-lab/archive/mvp0/task-breakdown.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
 
@@ -283,7 +283,7 @@ class MVP0AgentTests(unittest.TestCase):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            target = workspace / "plans" / "mvp0" / "task-breakdown.md"
+            target = workspace / "options-trade-lab" / "archive" / "mvp0" / "task-breakdown.md"
             target.parent.mkdir(parents=True)
             target.write_text("# Task Breakdown\n", encoding="utf-8")
             result = agent.run_codex(
