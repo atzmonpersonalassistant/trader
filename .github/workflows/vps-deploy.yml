@@ -130,6 +130,10 @@ jobs:
           ]:
               compile(file.read_text(), str(file), 'exec')
           PY
+          test -s /etc/trading-agents/github-apps.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-agent-token orchestrator >/tmp/trader-orchestrator-token.txt
+          test -s /tmp/trader-orchestrator-token.txt
+          rm -f /tmp/trader-orchestrator-token.txt
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           rm -rf "$DEPLOY_DIR"
