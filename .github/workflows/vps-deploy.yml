@@ -118,7 +118,12 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_review_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent
+          sudo tee /usr/local/bin/trading-coding-agent-stub >/dev/null <<'EOF_BIN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec python3 /usr/local/lib/trading_coding_agent_stub.py "$@"
+          EOF_BIN
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub
           python3 - <<'PY'
           from pathlib import Path
           for file in [
