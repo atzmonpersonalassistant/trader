@@ -38,7 +38,7 @@ Data Providers
 ## Proposed Project Structure
 
 ```text
-options-planning/
+planning/
 ├── PROJECT_PLAN.md
 ├── ARCHITECTURE.md
 ├── README.md                         # later: usage and project overview
