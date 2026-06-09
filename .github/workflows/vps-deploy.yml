@@ -126,8 +126,8 @@ jobs:
           ]:
               compile(file.read_text(), str(file), 'exec')
           PY
-          sudo -n -u agent-orchestrator trading-orchestrator status >/tmp/trader-orchestrator-status.json
-          sudo -n -u agent-orchestrator trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
