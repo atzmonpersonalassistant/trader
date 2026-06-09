@@ -102,6 +102,46 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["sha"], "reviewed-head-sha")
         self.assertEqual(calls[1][0], "DELETE")
 
+    def test_orchestrator_dispatch_coding_uses_real_agent_command(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import json
+        import sqlite3
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            now = orch.now_iso()
+            with sqlite3.connect(db) as conn:
+                conn.execute("INSERT INTO issues(external_id, number, title, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count) VALUES ('i21', 21, 'real coding', 'open', ?, '{}', ?, ?, ?, 0)", (json.dumps(["agent:claimed"]), now, now, now))
+            calls = []
+            class FakeProc:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+            original = orch.subprocess.run
+            def fake_run(cmd, **kwargs):
+                calls.append((cmd, kwargs))
+                return FakeProc()
+            orch.subprocess.run = fake_run
+            args = argparse.Namespace(db=db, claimed_label="agent:claimed", coding_agent_cmd="trading-coding-agent", timeout_seconds=123)
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = orch.cmd_dispatch_coding(args)
+            finally:
+                orch.subprocess.run = original
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls[0][0], ["trading-coding-agent", "run", "--issue", "21"])
+            self.assertEqual(calls[0][1]["timeout"], 123)
+            result = json.loads(out.getvalue())
+            self.assertTrue(result["ok"])
+            with sqlite3.connect(db) as conn:
+                row = conn.execute("SELECT labels, result_json FROM attempts").fetchone()
+            self.assertEqual(json.loads(row[0]), ["coding-agent"])
+            self.assertEqual(json.loads(row[1])["command"], ["trading-coding-agent", "run", "--issue", "21"])
+
     def test_orchestrator_cleanup_workspaces_respects_state_and_dry_run(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import argparse
