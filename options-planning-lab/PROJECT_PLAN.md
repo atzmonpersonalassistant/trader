@@ -10,7 +10,7 @@ Build a modular research pipeline for challenging and evaluating options trades.
 
 ## Task Breakdown
 
-1. **Create project folder** — create `code/options-trade-lab`. ✅ Completed
+1. **Create project folder** — create `code/options-planning-lab`. ✅ Completed
 2. **Define modular architecture** — structure modules for data, features, scanners, backtests, options, reports, config, and tests. 🔄 In review / not yet approved
 3. **Move project workflow to GitHub** — manage all project tasks, approvals, code changes, and progress through GitHub issues/branches/PRs.
 4. **Create config layer** — central config for universe, thresholds, data sources, risk rules, and backtest assumptions.
