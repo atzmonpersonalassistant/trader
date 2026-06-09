@@ -1164,7 +1164,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
+def dispatch_claimed_issue(args: argparse.Namespace, *, command_label: str, cmd: list[str]) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
         row = conn.execute(
@@ -1192,24 +1192,16 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
             (
                 attempt_external_id,
                 row["external_id"],
-                json.dumps(["coding-stub"], sort_keys=True),
+                json.dumps([command_label], sort_keys=True),
                 ts,
                 ts,
                 ts,
                 ts,
             ),
         )
-    cmd = [
-        args.coding_stub_cmd,
-        "--issue-number",
-        str(row["number"]),
-        "--issue-external-id",
-        str(row["external_id"]),
-        "--title",
-        row["title"],
-    ]
+    rendered_cmd = [part.format(issue=row["number"], issue_external_id=row["external_id"], title=row["title"]) for part in cmd]
     try:
-        proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+        proc = subprocess.run(rendered_cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
         returncode = proc.returncode
         stdout = proc.stdout
         stderr = proc.stderr
@@ -1223,7 +1215,7 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
         "returncode": returncode,
         "stdout": redact_text(stdout),
         "stderr": redact_text(stderr),
-        "command": cmd,
+        "command": [redact_text(part) for part in rendered_cmd],
     }
     with connect(args.db) as conn:
         conn.execute(
@@ -1250,6 +1242,24 @@ def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
         )
     )
     return 0 if returncode == 0 else returncode
+
+
+def cmd_dispatch_coding_stub(args: argparse.Namespace) -> int:
+    cmd = [
+        args.coding_stub_cmd,
+        "--issue-number",
+        "{issue}",
+        "--issue-external-id",
+        "{issue_external_id}",
+        "--title",
+        "{title}",
+    ]
+    return dispatch_claimed_issue(args, command_label="coding-stub", cmd=cmd)
+
+
+def cmd_dispatch_coding(args: argparse.Namespace) -> int:
+    cmd = [args.coding_agent_cmd, "run", "--issue", "{issue}"]
+    return dispatch_claimed_issue(args, command_label="coding-agent", cmd=cmd)
 
 
 def cmd_finalize_merged(args: argparse.Namespace) -> int:
@@ -1546,6 +1556,9 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_coding_stub = dispatch_sub.add_parser("coding-stub")
     dispatch_coding_stub.add_argument("--timeout-seconds", type=int, default=60)
     dispatch_coding_stub.set_defaults(func=cmd_dispatch_coding_stub)
+    dispatch_coding = dispatch_sub.add_parser("coding")
+    dispatch_coding.add_argument("--timeout-seconds", type=int, default=900)
+    dispatch_coding.set_defaults(func=cmd_dispatch_coding)
 
     outbox = sub.add_parser("outbox")
     outbox_sub = outbox.add_subparsers(dest="outbox_command", required=True)
