@@ -302,7 +302,7 @@ def changed_files(workspace: Path) -> list[str]:
 
 def verify(workspace: Path) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
-    agent_file = workspace / "tools" / "trading_coding_agent.py"
+    agent_file = workspace / "agent-platform" / "tools" / "trading_coding_agent.py"
     if agent_file.exists():
         checks.append(run_cmd(["python3", "-m", "py_compile", "agent-platform/tools/trading_coding_agent.py"], cwd=workspace, timeout=60))
     else:
