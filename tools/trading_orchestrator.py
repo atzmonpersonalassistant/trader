@@ -225,6 +225,23 @@ def github_api_delete(url: str, token: str) -> tuple[Any, dict[str, str]]:
     return github_request("DELETE", url, token)
 
 
+def merge_pull_request(owner: str, repo: str, pr_number: int, token: str, head_sha: str) -> dict[str, Any]:
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/merge"
+    data, _ = github_request("PUT", url, token, {"merge_method": "squash", "sha": head_sha})
+    return data
+
+
+def delete_branch_ref(owner: str, repo: str, branch: str, token: str) -> bool:
+    encoded = urllib.parse.quote(f"heads/{branch}", safe="")
+    try:
+        github_api_delete(f"https://api.github.com/repos/{owner}/{repo}/git/refs/{encoded}", token)
+        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 422:
+            return False
+        raise
+
+
 def github_graphql(token: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
     data, _ = github_request(
         "POST",
@@ -907,8 +924,23 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                     payload=payload,
                 )
                 results.append({"pr": pr_number, "enabled": True, "event": event_id})
-            except Exception as exc:  # GitHub can reject when checks are missing or permissions are insufficient.
-                payload = {"pr": pr_number, "error": str(exc), "node_id": node_id}
+            except Exception as exc:  # GitHub can reject when already mergeable/clean, checks are missing, or permissions are insufficient.
+                error = str(exc)
+                if "Pull request is in clean status" in error:
+                    merge_data = merge_pull_request(args.owner, args.repo, pr_number, token, head_sha)
+                    branch_deleted = delete_branch_ref(args.owner, args.repo, branch, token)
+                    payload = {"pr": pr_number, "reason": "clean_status_direct_merge", "merge": merge_data, "branch": branch, "branch_deleted": branch_deleted}
+                    event_id = record_event(
+                        conn,
+                        event_type="auto_merge_direct_merged",
+                        entity_type="pull_request",
+                        entity_external_id=row["external_id"],
+                        state="succeeded",
+                        payload=payload,
+                    )
+                    results.append({"pr": pr_number, "enabled": False, "merged": True, "reason": "clean_status_direct_merge", "branch_deleted": branch_deleted, "event": event_id})
+                    continue
+                payload = {"pr": pr_number, "error": error, "node_id": node_id}
                 event_id = record_event(
                     conn,
                     event_type="auto_merge_failed",
@@ -917,7 +949,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                     state="failed",
                     payload=payload,
                 )
-                results.append({"pr": pr_number, "enabled": False, "error": str(exc), "event": event_id})
+                results.append({"pr": pr_number, "enabled": False, "error": error, "event": event_id})
     print(json.dumps({"ok": True, "command": "enable-auto-merge", "results": results}, indent=2, sort_keys=True))
     return 0
 
