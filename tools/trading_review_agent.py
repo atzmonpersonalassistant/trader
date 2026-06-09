@@ -327,20 +327,22 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
         else:
             passed = False
             model_findings.append("Model review did not start with PASS or FAIL; required check cannot pass.")
+    autoreview_body: list[str] = []
+    if autoreview:
+        if autoreview.get("skipped"):
+            autoreview_body.extend(["", "## Autoreview", "Skipped: " + str(autoreview.get("reason") or "not required")])
+        elif autoreview.get("returncode") == 0:
+            autoreview_body.extend(["", "## Autoreview", "PASS", str(autoreview.get("stdout") or "")[:3000]])
+        else:
+            if autoreview_required:
+                passed = False
+            autoreview_body.extend(["", "## Autoreview", "FAIL" if autoreview_required else "Non-blocking failure", str(autoreview.get("stdout") or "")[:3000], str(autoreview.get("stderr") or "")[:3000]])
     body = [f"# Review Agent result for PR #{pr_number}", "", f"Result: {'PASS' if passed else 'FAIL'}", "", "## Checklist"]
     body.extend(f"- {item}" for item in CHECKLIST)
     body.append("\n## Findings")
     findings = list(deterministic["findings"] or []) + model_findings
     body.extend(f"- {f}" for f in findings or ["No blocking findings."])
-    if autoreview:
-        if autoreview.get("skipped"):
-            body.extend(["", "## Autoreview", "Skipped: " + str(autoreview.get("reason") or "not required")])
-        elif autoreview.get("returncode") == 0:
-            body.extend(["", "## Autoreview", "PASS", str(autoreview.get("stdout") or "")[:3000]])
-        else:
-            if autoreview_required:
-                passed = False
-            body.extend(["", "## Autoreview", "FAIL" if autoreview_required else "Non-blocking failure", str(autoreview.get("stdout") or "")[:3000], str(autoreview.get("stderr") or "")[:3000]])
+    body.extend(autoreview_body)
     if model and model.get("review_text"):
         body.extend(["", "## Model review", model["review_text"][:6000]])
     review_path = workspace / ".review-agent" / "review.md"
@@ -384,7 +386,8 @@ def cmd_review(args: argparse.Namespace) -> int:
     model = run_model_review(workspace, context, config, args.model_timeout_seconds) if should_run_model_review(deterministic, args.skip_model) else None
     autoreview: dict[str, Any] | None
     if should_run_autoreview(context, config, deterministic, model, args.skip_autoreview):
-        autoreview = run_autoreview(workspace, workspace_info, config, int(config.get("autoreview_timeout_seconds") or args.autoreview_timeout_seconds))
+        autoreview_timeout = args.autoreview_timeout_seconds if args.autoreview_timeout_seconds is not None else int(config.get("autoreview_timeout_seconds") or 1800)
+        autoreview = run_autoreview(workspace, workspace_info, config, autoreview_timeout)
     else:
         autoreview = {"skipped": True, "reason": "not_required_or_disabled"}
     review_path, review_text, passed = write_review(workspace, args.pr, deterministic, model, autoreview, bool(config.get("autoreview_required")))
@@ -405,7 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--skip-model", action="store_true")
     review.add_argument("--model-timeout-seconds", type=int, default=900)
     review.add_argument("--skip-autoreview", action="store_true")
-    review.add_argument("--autoreview-timeout-seconds", type=int, default=1800)
+    review.add_argument("--autoreview-timeout-seconds", type=int, default=None)
     review.set_defaults(func=cmd_review)
     return parser
 

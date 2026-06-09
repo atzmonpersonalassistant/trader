@@ -255,6 +255,7 @@ class MVP0AgentTests(unittest.TestCase):
                 True,
             )
         self.assertFalse(passed)
+        self.assertIn("Result: FAIL", text)
         self.assertIn("## Autoreview", text)
         self.assertIn("FAIL", text)
 
