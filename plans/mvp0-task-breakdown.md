@@ -1191,3 +1191,5 @@ MVP-0 is complete when:
 - No OpenClaw runtime dependency on the VM.
 - No HTTP API between OpenClaw and Orchestrator.
 - No webhooks from GitHub to the VM.
+
+<!-- autoreview integration smoke 2026-06-09T09:39:57Z -->
