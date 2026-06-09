@@ -95,9 +95,22 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
-          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator" /usr/local/bin/trading-orchestrator
-          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-coding-agent" /usr/local/bin/trading-coding-agent
-          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-review-agent" /usr/local/bin/trading-review-agent
+          sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec python3 /usr/local/lib/trading_orchestrator.py "$@"
+          EOF_BIN
+          sudo tee /usr/local/bin/trading-coding-agent >/dev/null <<'EOF_BIN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec python3 /usr/local/lib/trading_coding_agent.py "$@"
+          EOF_BIN
+          sudo tee /usr/local/bin/trading-review-agent >/dev/null <<'EOF_BIN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec python3 /usr/local/lib/trading_review_agent.py "$@"
+          EOF_BIN
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent
           python3 -m py_compile \
             /usr/local/lib/trading_orchestrator.py \
             /usr/local/lib/trading_coding_agent.py \
