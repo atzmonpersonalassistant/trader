@@ -8,6 +8,8 @@ No new task starts until Uriel explicitly approves continuing from the latest co
 
 Build a modular research pipeline for challenging and evaluating options trades.
 
+MVP direction is documented in `docs/options-research-mvp-roadmap.md`: MVP1 should use the paid QuantConnect Quant Researcher tier to build a real agentic research infrastructure; MVP2 can focus on paper-trading readiness and scaling the strategy/research workflow; MVP3 remains intentionally open.
+
 ## Task Breakdown
 
 1. **Create project folder** — create `code/planning`. ✅ Completed
