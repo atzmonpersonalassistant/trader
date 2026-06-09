@@ -301,21 +301,63 @@ trading-agent-token orchestrator
 
 ### Group C — VM Bootstrap
 
-#### C1. Create VM in GCP project
+Status: Completed ✅
+
+Current evidence:
+
+```text
+Provider: <vps-provider> VPS
+Host: vps-ce2ba5e7.vps.ovh.ca
+IPv4: <vps-ip>
+OS: Ubuntu 26.04 LTS
+Admin user: <vps-admin-user>
+Access: SSH key <private-ssh-key-path> on the assistant Mac
+Installed base packages: git, gh, sqlite3, python3, node/npm, Codex CLI, jq, curl, rsync
+Agent Linux users: created with no sudo
+/agents layout: created with role-specific ownership; /agents is traverse-only so role users can enter their owned subtree
+Config: /etc/trading-agents/config.yaml
+OpenClaw runtime on VM: not installed
+```
+
+C6 secrets implementation:
+
+```text
+MVP-0 uses the approved locked-down VM files fallback, not GCP Secret Manager yet.
+Private keys are stored under /etc/trading-agents/secrets/<role>/private-key.pem.
+Each key directory is owned by its matching Linux user only.
+The root secrets directory is traverse-only for non-root users.
+/usr/local/bin/trading-agent-token mints short-lived GitHub App installation tokens.
+The helper refuses to mint a role token unless run as the matching agent user.
+Token minting was verified for orchestrator, coding, review, and validator.
+Cross-role minting was verified to fail.
+```
+
+#### C1. Create initial MVP-0 VM — Completed ✅
 
 Goal: Create initial MVP-0 VM.
 
 Acceptance criteria:
 
-- Project: `atzmon-trading-project`
-- VM name: `agent-hub-1`
-- Initial machine type: `e2-standard-2`
+- Provider and host are recorded.
 - SSH/admin access works.
+- Machine has enough RAM/disk for MVP-0 agent loop.
 - No OpenClaw runtime installed as part of the trading execution plane.
+
+Actual MVP-0 VM:
+
+```yaml
+vm:
+  provider: <vps-provider>
+  host: vps-ce2ba5e7.vps.ovh.ca
+  ipv4: <vps-ip>
+  os: Ubuntu 26.04 LTS
+  admin_user: <vps-admin-user>
+  ssh_key: <private-ssh-key-path>
+```
 
 ---
 
-#### C2. Install base packages
+#### C2. Install base packages — Completed ✅
 
 Goal: Install runtime dependencies.
 
@@ -344,7 +386,7 @@ codex --version
 
 ---
 
-#### C3. Create Linux users
+#### C3. Create Linux users — Completed ✅
 
 Goal: Create separate OS users for process isolation.
 
@@ -363,7 +405,7 @@ Each user has a home directory and no unnecessary sudo permissions.
 
 ---
 
-#### C4. Create `/agents` directory layout
+#### C4. Create `/agents` directory layout — Completed ✅
 
 Goal: Create role-specific directories.
 
@@ -396,7 +438,7 @@ Ownership:
 
 ---
 
-#### C5. Create `/etc/trading-agents/config.yaml`
+#### C5. Create `/etc/trading-agents/config.yaml` — Completed ✅
 
 Goal: Store non-secret configuration.
 
@@ -430,7 +472,7 @@ merge:
 
 ---
 
-#### C6. Configure secrets access
+#### C6. Configure secrets access — Completed ✅
 
 Goal: Wire GCP Secret Manager or locked-down file fallback.
 
@@ -443,7 +485,7 @@ Acceptance criteria:
 
 ---
 
-#### C7. Verify no OpenClaw runtime dependency
+#### C7. Verify no OpenClaw runtime dependency — Completed ✅
 
 Goal: Ensure VM is independent from OpenClaw.
 
@@ -457,7 +499,45 @@ Acceptance criteria:
 
 ### Group D — Orchestrator Core
 
-#### D1. Create Orchestrator CLI skeleton
+Status: In progress
+
+Current implementation:
+
+```text
+D1-D3 implemented in tools/trading_orchestrator.py and tools/trading-orchestrator.
+CLI skeleton returns structured JSON.
+SQLite schema creates issues, pull_requests, events, locks, attempts, outbox, inbox, settings.
+Backup command uses sqlite3 Connection.backup(), not raw cp.
+DB and backup files are mode 600 and owned by agent-orchestrator.
+D4 GitHub issue scan is implemented and verified against GitHub on the VM; current repo has 0 open agent:ready issues.
+D5 issue claim transition is implemented and verified on GitHub issue #3.
+D6 Coding Agent dispatch stub is implemented and verified on VM issue #3; agent-orchestrator can run the stub as agent-coding through a narrow sudoers rule.
+D7 PR detection is implemented and verified on VM against PR #1. PR state is recorded in SQLite with agent:pr-opened; external GitHub PR label mutation returned 403 for the Orchestrator App and is reported as non-fatal.
+D8 auto-merge enablement is implemented and verified on PR #1. The Orchestrator App now has Contents: write, Pull requests: write, and Administration: read. GitHub native auto-merge was enabled by app/trading-orchestrator-agent with SQUASH.
+D9 review failure routing is implemented and verified on VM using a synthetic failing review-agent/pass check-run on PR #1. The Orchestrator labels PRs agent:needs-fix, increments retry_count, records review_failure_routed events, and dispatches the Coding Agent stub while retry_count <= 50.
+D10 outbox CLI is implemented and verified locally and on the VM. `trading-orchestrator outbox next` now returns `{"type":"none"}` when empty, or a structured pending message including type/id/body/channel and payload fields such as pr/title/url.
+D11 inbox ack CLI is implemented and verified locally against PR #1: approve marks outbox acknowledged, inserts an acknowledged inbox record, adds human:approved, and comments /human-approved. The updated command is deployed on the VM.
+E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM under agent-coding. `trading-coding-agent run --issue 123` loads config, writes `/agents/coding/logs/coding-agent.jsonl`, and exits cleanly.
+E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
+E3 branch creation is implemented and verified on the VM. The Coding Agent creates `agent/issue-<n>-<slug>` from fresh `main`.
+E4 Codex execution wrapper is implemented and production-verified on the VM after installing locked-down Codex auth for `agent-coding`. It runs `codex exec --sandbox workspace-write -c approval_policy="never"`, captures stdout/stderr/logs, and does not print secrets.
+E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `plans/mvp0-task-breakdown.md` with a small documentation change and `git diff --check` passed.
+E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `ce3ef11` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main. Existing branch update uses explicit `--force-with-lease=<ref>:<sha>`.
+E7 PR creation is implemented and verified on the VM: the Coding App opened/updated PR #4 targeting main.
+E8 fix retry mode is implemented and verified on PR #4: `trading-coding-agent run --issue 3 --fix-pr 4` read review context, checked out the existing PR branch, updated it, and pushed with explicit force-with-lease.
+F1-F6 Review Agent MVP is implemented and verified on PR #4. `trading-review-agent review --pr 4` creates `/agents/review/workspaces/pr-4/`, fetches PR metadata/files/diff, uses the standard checklist, runs Codex review, writes `.review-agent/review.md`, posts a PR comment, and publishes the required `review-agent/pass` check. A first review failed with actionable feedback; after E8 retry, review passed and published a success check.
+G1 Orchestrator systemd service/timer is implemented on the VM. `trading-orchestrator.timer` is enabled and active, runs every 10 minutes as `agent-orchestrator`, uses a flock lock, and logs to `/agents/orchestrator/logs/tick.log`.
+G2 manual operator commands are documented in `plans/mvp0-operator-runbook.md`.
+G3 log locations and rotation are documented in the runbook and deployed on the VM as `/etc/logrotate.d/trading-agents`; `logrotate -d` validates the config.
+H1 approval request payload is defined in the runbook and implemented in Orchestrator outbox payloads.
+H2 approval request creation is implemented in `enable-auto-merge`: PRs labeled `needs:human-approval` without `human:approved` are skipped and deduped into `approval-pr-<n>` outbox messages.
+H3 approval response handling is implemented in `inbox ack`, adding human approval/rejection labels and comments.
+I1-I6 E2E test completed with issue #5 and PR #6: issue was created with `agent:ready,mvp0`, scan/claim found it, Coding Agent opened PR #6, Review Agent published passing `review-agent/pass`, GitHub squash-merged PR #6, and `finalize-merged` marked PR #6 merged and issue #5 closed in SQLite/GitHub. Edge case: when checks were already clean, GitHub rejected auto-merge enablement as `Pull request is in clean status`, so the final merge was executed with GitHub squash merge to complete the E2E validation.
+MVP-0 completion validation is complete except PR #1 still contains accumulated implementation work and remains open/behind for review/merge hygiene.
+```
+
+
+#### D1. Create Orchestrator CLI skeleton — Completed ✅
 
 Goal: Provide the main operator interface.
 
@@ -477,7 +557,7 @@ Commands may be stubbed initially but must return structured output.
 
 ---
 
-#### D2. Create SQLite schema
+#### D2. Create SQLite schema — Completed ✅
 
 Goal: Store durable orchestrator state.
 
@@ -510,7 +590,7 @@ retry_count
 
 ---
 
-#### D3. Implement SQLite backup command
+#### D3. Implement SQLite backup command — Completed ✅
 
 Goal: Back up Orchestrator DB safely.
 
@@ -532,7 +612,7 @@ Creates files like:
 
 ---
 
-#### D4. Implement GitHub scan for ready issues
+#### D4. Implement GitHub scan for ready issues — Completed ✅
 
 Goal: Find work for Coding Agent.
 
@@ -545,7 +625,7 @@ Acceptance criteria:
 
 ---
 
-#### D5. Implement issue claim transition
+#### D5. Implement issue claim transition — Completed ✅
 
 Goal: Safely claim one issue.
 
@@ -561,7 +641,7 @@ MVP-0 test record: use this transition as the D5 acceptance check before dispatc
 
 ---
 
-#### D6. Implement Coding Agent dispatch stub
+#### D6. Implement Coding Agent dispatch stub — Completed ✅
 
 Goal: Prove Orchestrator can call Coding Agent.
 
@@ -573,7 +653,7 @@ Acceptance criteria:
 
 ---
 
-#### D7. Implement PR detection
+#### D7. Implement PR detection — Completed ✅
 
 Goal: Detect PRs created by Coding Agent.
 
@@ -586,7 +666,7 @@ Acceptance criteria:
 
 ---
 
-#### D8. Implement auto-merge enablement
+#### D8. Implement auto-merge enablement — Completed ✅
 
 Goal: Orchestrator enables GitHub native auto-merge.
 
@@ -599,7 +679,7 @@ Acceptance criteria:
 
 ---
 
-#### D9. Implement Review failure routing
+#### D9. Implement Review failure routing — Completed ✅
 
 Goal: Route failed reviews back to Coding Agent.
 
@@ -613,7 +693,7 @@ Acceptance criteria:
 
 ---
 
-#### D10. Implement outbox CLI
+#### D10. Implement outbox CLI — Completed ✅
 
 Goal: Allow OpenClaw to fetch messages for WhatsApp relay.
 
@@ -643,7 +723,7 @@ or a structured message:
 
 ---
 
-#### D11. Implement inbox ack CLI
+#### D11. Implement inbox ack CLI — Completed ✅
 
 Goal: Allow OpenClaw to pass Uriel replies back.
 
@@ -668,7 +748,7 @@ For rejections:
 
 ### Group E — Coding Agent MVP
 
-#### E1. Create Coding Agent CLI skeleton
+#### E1. Create Coding Agent CLI skeleton — Completed ✅
 
 Goal: Provide basic Coding Agent entry point.
 
@@ -684,7 +764,7 @@ It logs issue number, loads config, and exits cleanly.
 
 ---
 
-#### E2. Implement issue workspace creation
+#### E2. Implement issue workspace creation — Completed ✅
 
 Goal: Create isolated workspace per issue.
 
@@ -700,7 +780,7 @@ Workspace contains a repo checkout or git worktree.
 
 ---
 
-#### E3. Implement branch creation
+#### E3. Implement branch creation — Completed ✅
 
 Goal: Create predictable agent branch.
 
@@ -716,7 +796,7 @@ Branch is created from latest `main`.
 
 ---
 
-#### E4. Implement Codex execution wrapper
+#### E4. Implement Codex execution wrapper — Completed ✅
 
 Goal: Run Codex CLI inside the issue workspace.
 
@@ -730,7 +810,7 @@ Acceptance criteria:
 
 ---
 
-#### E5. Implement minimal code/doc change flow
+#### E5. Implement minimal code/doc change flow — Completed ✅
 
 Goal: Let Coding Agent complete a safe small issue.
 
@@ -743,7 +823,7 @@ Acceptance criteria:
 
 ---
 
-#### E6. Implement commit and push
+#### E6. Implement commit and push — Completed ✅
 
 Goal: Push Coding Agent work to GitHub.
 
@@ -756,7 +836,7 @@ Acceptance criteria:
 
 ---
 
-#### E7. Implement PR creation
+#### E7. Implement PR creation — Completed ✅
 
 Goal: Open PR for completed issue.
 
@@ -770,7 +850,7 @@ Acceptance criteria:
 
 ---
 
-#### E8. Implement fix retry mode
+#### E8. Implement fix retry mode — Completed ✅
 
 Goal: Allow Coding Agent to respond to Review Agent failures.
 
@@ -788,7 +868,7 @@ It reads review comments/check output and updates the existing branch.
 
 ### Group F — Review Agent MVP
 
-#### F1. Create Review Agent CLI skeleton
+#### F1. Create Review Agent CLI skeleton — Completed ✅
 
 Goal: Provide basic Review Agent entry point.
 
@@ -804,7 +884,7 @@ It logs PR number, loads config, and exits cleanly.
 
 ---
 
-#### F2. Create PR review workspace
+#### F2. Create PR review workspace — Completed ✅
 
 Goal: Create isolated workspace per PR.
 
@@ -820,7 +900,7 @@ Workspace contains base/PR checkout or enough diff context.
 
 ---
 
-#### F3. Fetch PR diff and metadata
+#### F3. Fetch PR diff and metadata — Completed ✅
 
 Goal: Give reviewer the necessary context.
 
@@ -833,7 +913,7 @@ Acceptance criteria:
 
 ---
 
-#### F4. Implement review checklist prompt
+#### F4. Implement review checklist prompt — Completed ✅
 
 Goal: Standardize Review Agent behavior.
 
@@ -853,7 +933,7 @@ Checklist includes:
 
 ---
 
-#### F5. Run Review Agent analysis
+#### F5. Run Review Agent analysis — Completed ✅
 
 Goal: Produce pass/fail review result.
 
@@ -865,7 +945,7 @@ Acceptance criteria:
 
 ---
 
-#### F6. Publish GitHub review/check
+#### F6. Publish GitHub review/check — Completed ✅
 
 Goal: Make Review Agent blocking in GitHub.
 
@@ -880,7 +960,7 @@ Acceptance criteria:
 
 ### Group G — Systemd and Scheduling
 
-#### G1. Create Orchestrator systemd service/timer
+#### G1. Create Orchestrator systemd service/timer — Completed ✅
 
 Goal: Run Orchestrator polling every 10 minutes.
 
@@ -893,7 +973,7 @@ Acceptance criteria:
 
 ---
 
-#### G2. Add manual operator commands
+#### G2. Add manual operator commands — Completed ✅
 
 Goal: Allow manual debugging.
 
@@ -911,7 +991,7 @@ trading-review-agent review --pr <number>
 
 ---
 
-#### G3. Add log locations and rotation
+#### G3. Add log locations and rotation — Completed ✅
 
 Goal: Prevent unbounded logs.
 
@@ -925,7 +1005,7 @@ Acceptance criteria:
 
 ### Group H — Human Approval Relay
 
-#### H1. Define approval request payload
+#### H1. Define approval request payload — Completed ✅
 
 Goal: Standardize messages from Orchestrator to OpenClaw.
 
@@ -945,7 +1025,7 @@ allowed replies: approve/reject
 
 ---
 
-#### H2. Implement approval request creation
+#### H2. Implement approval request creation — Completed ✅
 
 Goal: Queue human approval request when a PR is gated.
 
@@ -957,7 +1037,7 @@ Acceptance criteria:
 
 ---
 
-#### H3. Implement approval response handling
+#### H3. Implement approval response handling — Completed ✅
 
 Goal: Convert Uriel's WhatsApp response into GitHub state.
 
@@ -983,7 +1063,7 @@ comment /human-rejected
 
 Operator runbook pointer: use G2 for manual commands, G3 for log locations/rotation, and I1-I6 below as the MVP-0 end-to-end execution checklist.
 
-#### I1. Create safe test issue
+#### I1. Create safe test issue — Completed ✅
 
 Goal: Provide first real task.
 
@@ -995,7 +1075,7 @@ Acceptance criteria:
 
 ---
 
-#### I2. Run Orchestrator scan manually
+#### I2. Run Orchestrator scan manually — Completed ✅
 
 Goal: Confirm issue discovery.
 
@@ -1011,7 +1091,7 @@ trading-orchestrator scan
 
 ---
 
-#### I3. Verify Coding Agent PR creation
+#### I3. Verify Coding Agent PR creation — Completed ✅
 
 Goal: Confirm Coding Agent can produce a PR.
 
@@ -1024,7 +1104,7 @@ Acceptance criteria:
 
 ---
 
-#### I4. Verify Review Agent required check
+#### I4. Verify Review Agent required check — Completed ✅
 
 Goal: Confirm review gates merge.
 
@@ -1036,7 +1116,7 @@ Acceptance criteria:
 
 ---
 
-#### I5. Verify GitHub native auto-merge
+#### I5. Verify GitHub native auto-merge — Completed ✅
 
 Goal: Confirm GitHub performs final merge.
 
@@ -1049,7 +1129,7 @@ Acceptance criteria:
 
 ---
 
-#### I6. Verify cleanup
+#### I6. Verify cleanup — Completed ✅
 
 Goal: Confirm no resource leak after merge.
 
