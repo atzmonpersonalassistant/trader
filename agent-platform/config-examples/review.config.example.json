@@ -1,0 +1,12 @@
+{
+  "agent": "review",
+  "repo": "OWNER/REPO",
+  "base_branch": "main",
+  "workspace_root": "/agents/review/workspaces",
+  "token_cmd": "trading-agent-token",
+  "review_model": "gpt-5.5",
+  "autoreview_enabled": true,
+  "autoreview_required": true,
+  "autoreview_cmd": "/home/agent-review/agent-skills/skills/autoreview/scripts/autoreview",
+  "autoreview_timeout_seconds": 1800
+}

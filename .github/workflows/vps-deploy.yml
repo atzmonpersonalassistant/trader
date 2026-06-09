@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "tools/trading-*"
-      - "tools/trading_*.py"
+      - "agent-platform/tools/trading-*"
+      - "agent-platform/tools/trading_*.py"
       - ".github/workflows/vps-deploy.yml"
   workflow_dispatch:
 
@@ -46,10 +46,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile \
-            tools/trading_orchestrator.py \
-            tools/trading_coding_agent.py \
-            tools/trading_review_agent.py \
-            tools/trading_coding_agent_stub.py
+            agent-platform/tools/trading_orchestrator.py \
+            agent-platform/tools/trading_coding_agent.py \
+            agent-platform/tools/trading_review_agent.py \
+            agent-platform/tools/trading_coding_agent_stub.py
 
       - name: Install SSH key
         env:
@@ -78,13 +78,13 @@ jobs:
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
             "rm -rf '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR'"
           scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            tools/trading-orchestrator \
-            tools/trading-coding-agent \
-            tools/trading-review-agent \
-            tools/trading_orchestrator.py \
-            tools/trading_coding_agent.py \
-            tools/trading_review_agent.py \
-            tools/trading_coding_agent_stub.py \
+            agent-platform/tools/trading-orchestrator \
+            agent-platform/tools/trading-coding-agent \
+            agent-platform/tools/trading-review-agent \
+            agent-platform/tools/trading_orchestrator.py \
+            agent-platform/tools/trading_coding_agent.py \
+            agent-platform/tools/trading_review_agent.py \
+            agent-platform/tools/trading_coding_agent_stub.py \
             "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/"
 
       - name: Install tools and verify

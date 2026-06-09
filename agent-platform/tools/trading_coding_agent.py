@@ -304,7 +304,7 @@ def verify(workspace: Path) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     agent_file = workspace / "tools" / "trading_coding_agent.py"
     if agent_file.exists():
-        checks.append(run_cmd(["python3", "-m", "py_compile", "tools/trading_coding_agent.py"], cwd=workspace, timeout=60))
+        checks.append(run_cmd(["python3", "-m", "py_compile", "agent-platform/tools/trading_coding_agent.py"], cwd=workspace, timeout=60))
     else:
         checks.append(run_cmd(["git", "diff", "--check"], cwd=workspace, timeout=30))
     return {"checks": checks, "ok": all(c["returncode"] == 0 for c in checks)}

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def load(name, rel):
@@ -17,7 +17,7 @@ def load(name, rel):
 
 class MVP0AgentTests(unittest.TestCase):
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}
         spoofed = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "other-app"}}
         failing = {"name": "review-agent/pass", "status": "completed", "conclusion": "failure", "app": {"slug": "trading-review-agent"}}
@@ -37,7 +37,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None, "agent/issue-5-docs"), (False, "missing_review_check"))
 
     def test_coding_agent_fix_prompt_includes_review_context(self):
-        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         prompt = agent.build_prompt(
             {"number": 7, "title": "Fix me", "body": "body"},
             {
@@ -51,7 +51,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Update the existing PR branch only", prompt)
 
     def test_coding_agent_fix_pr_requires_trusted_same_repo_agent_branch(self):
-        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         config = {"repo": "atzmonpersonalassistant/trader", "base_branch": "main"}
         trusted = {
             "number": 12,
@@ -78,7 +78,7 @@ class MVP0AgentTests(unittest.TestCase):
             agent.validate_fix_pr(config, trusted, {"labels": [{"name": "agent:pr-opened"}, {"name": "agent:blocked"}]})
 
     def test_orchestrator_clean_status_fallback_merges_and_deletes_branch(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         calls = []
 
         original_github_request = orch.github_request
@@ -104,7 +104,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(calls[1][0], "DELETE")
 
     def test_orchestrator_dispatch_coding_uses_real_agent_command(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import argparse
         import contextlib
         import io
@@ -144,7 +144,7 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(json.loads(row[1])["command"], ["trading-coding-agent", "run", "--issue", "21"])
 
     def test_orchestrator_cleanup_workspaces_respects_state_and_dry_run(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import argparse
         import contextlib
         import io
@@ -189,7 +189,7 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertFalse(deleted["dry_run"])
 
     def test_orchestrator_notification_outbox_and_ack_sent(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import argparse
         import contextlib
         import io
@@ -258,7 +258,7 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(state, "sent")
 
     def test_orchestrator_blocked_outbox_is_deduped(self):
-        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import sqlite3
         with TemporaryDirectory() as tmp:
             db = Path(tmp) / "state.db"
@@ -273,17 +273,17 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("blocked_pr", rows[0][1])
 
     def test_coding_agent_enforces_docs_only_changes(self):
-        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("options-trade-lab/PROJECT_PLAN.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("options-trade-lab/ARCHITECTURE.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("options-trade-lab/docs/quantconnect-agentic-platform-lld.md"))
-        self.assertFalse(agent.is_allowed_mvp0_change("options-trade-lab/archive/mvp0/task-breakdown.md"))
-        self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
+        self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/docs/mvp0/task-breakdown.md"))
+        self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
 
     def test_coding_agent_skip_codex_writes_current_planning_path(self):
-        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             target = workspace / "options-trade-lab" / "PROJECT_PLAN.md"
@@ -299,7 +299,7 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertIn("coding-agent smoke issue #55", target.read_text(encoding="utf-8"))
 
     def test_review_fetch_pr_context_uses_issue_labels(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         calls = []
 
         def fake_request(method, url, token, payload=None, accept="application/vnd.github+json"):
@@ -324,7 +324,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertTrue(any("/issues/7" in url for _, url, _ in calls))
 
     def test_review_autoreview_selection_and_required_failure(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         context = {
             "files": [{"filename": ".github/workflows/vps-deploy.yml"}],
             "pr": {"labels": [], "base": {"ref": "main"}},
@@ -349,7 +349,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("FAIL", text)
 
     def test_review_required_check_fails_when_model_review_missing(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
             path, text, passed = review.write_review(
                 Path(tmp),
@@ -377,7 +377,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("did not start with PASS or FAIL", malformed_text)
 
     def test_agent_command_timeout_redacts_tokens(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         url_fixture = "https://x-access-token:" + "ghs_TIMEOUTSECRET" + "@github.com/owner/repo.git"
         result = review.run_cmd(["python3", "-c", "import time,sys; print(sys.argv[1]); time.sleep(2)", url_fixture], timeout=0.1)
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
@@ -386,8 +386,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Command timed out", rendered)
 
     def test_agent_command_results_redact_github_installation_tokens(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
-        coding = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        coding = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         url_fixture = "https://x-access-token:" + "ghs_ABC123SECRET" + "@github.com/owner/repo.git"
         result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", url_fixture])
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
@@ -396,7 +396,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([url_fixture])) + coding.redact_text(url_fixture))
 
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
-        review = load("trading_review_agent", "tools/trading_review_agent.py")
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         safe = review.deterministic_review({
             "diff": "+Private keys are stored under /etc/trading-agents/secrets/<role>/private-key.pem\n",
             "pr": {"labels": [{"name": "human:approved"}]},

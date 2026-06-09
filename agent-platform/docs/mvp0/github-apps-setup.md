@@ -302,7 +302,7 @@ Group B is complete when:
 A helper script is available:
 
 ```bash
-python3 tools/github_app_manifest_flow.py serve
+python3 agent-platform/tools/github_app_manifest_flow.py serve
 ```
 
 Then open:
@@ -371,10 +371,10 @@ Private keys are intentionally stored outside git and must later be moved to GCP
 Installation token helper:
 
 ```bash
-python3 tools/trading_agent_token.py orchestrator
-python3 tools/trading_agent_token.py coding
-python3 tools/trading_agent_token.py review
-python3 tools/trading_agent_token.py validator
+python3 agent-platform/tools/trading_agent_token.py orchestrator
+python3 agent-platform/tools/trading_agent_token.py coding
+python3 agent-platform/tools/trading_agent_token.py review
+python3 agent-platform/tools/trading_agent_token.py validator
 ```
 
 Token minting has been verified for all four Apps.
