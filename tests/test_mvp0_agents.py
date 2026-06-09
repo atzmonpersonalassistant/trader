@@ -1,3 +1,4 @@
+import argparse
 import importlib.util
 import unittest
 from pathlib import Path
@@ -274,9 +275,25 @@ class MVP0AgentTests(unittest.TestCase):
     def test_coding_agent_enforces_docs_only_changes(self):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0-task-breakdown.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("plans/mvp0/task-breakdown.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
+
+    def test_coding_agent_skip_codex_writes_current_mvp0_path(self):
+        agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            target = workspace / "plans" / "mvp0" / "task-breakdown.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("# Task Breakdown\n", encoding="utf-8")
+            result = agent.run_codex(
+                workspace,
+                {"number": 55, "title": "Smoke"},
+                {},
+                argparse.Namespace(log_dir=workspace / "logs", skip_codex=True, codex_timeout_seconds=1),
+            )
+            self.assertEqual(result["returncode"], 0)
+            self.assertIn("coding-agent smoke issue #55", target.read_text(encoding="utf-8"))
 
     def test_review_fetch_pr_context_uses_issue_labels(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")

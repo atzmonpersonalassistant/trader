@@ -21,7 +21,17 @@ This is **not** a live-trading system. Live execution is explicitly out of scope
 - `PROJECT_PLAN.md` — task list and approval workflow.
 - `ARCHITECTURE.md` — proposed modular architecture.
 - `context/` — conversation-derived context, preferences, lessons, and source-of-truth notes.
+- `docs/` — strategy/system design docs moved out of repo-level `plans/`.
 
+## Legacy Radar Cleanup
+
+The old standalone scanner folders were removed from this repo:
+
+- `earnings-volatility-radar/`
+- `market-radar/`
+- `options-radar/`
+
+Future scanner work should be implemented under the coherent `options-trade-lab/` structure, not as separate top-level radar projects.
 
 ## Outputs
 

@@ -1,4 +1,0 @@
-ticker,reason,always_scan,notes
-CRDO,user_watchlist,true,Semiconductor connectivity; keep on radar even without a near-term event
-HPE,user_watchlist,true,Enterprise hardware; keep on radar even without a near-term event
-IBM,user_watchlist,true,Enterprise tech; keep on radar even without a near-term event

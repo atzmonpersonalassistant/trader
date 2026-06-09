@@ -182,7 +182,7 @@ Status: Completed ✅
 Completed evidence:
 
 ```text
-GitHub App setup guide: plans/mvp0-github-apps-setup.md
+GitHub App setup guide: plans/mvp0/github-apps-setup.md
 Manifest helper: tools/github_app_manifest_flow.py
 Token helper: tools/trading_agent_token.py
 
@@ -524,13 +524,13 @@ E1 Coding Agent CLI skeleton is implemented and verified locally and on the VM u
 E2 issue workspace creation is implemented and verified locally and on the VM. `trading-coding-agent run --issue N` now creates `/agents/coding/workspaces/issue-N/` as a git checkout from `main`, using a short-lived Coding App token for private GitHub HTTPS clone and then resetting `origin` to the clean non-token URL.
 E3 branch creation is implemented and verified on the VM. The Coding Agent creates `agent/issue-<n>-<slug>` from fresh `main`.
 E4 Codex execution wrapper is implemented and production-verified on the VM after installing locked-down Codex auth for `agent-coding`. It runs `codex exec --sandbox workspace-write -c approval_policy="never"`, captures stdout/stderr/logs, and does not print secrets.
-E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `plans/mvp0-task-breakdown.md` with a small documentation change and `git diff --check` passed.
+E5 minimal code/doc change flow is production-verified on issue #3: Codex edited `plans/mvp0/task-breakdown.md` with a small documentation change and `git diff --check` passed.
 E6 commit and push is implemented and verified on the VM using the Coding App token. It committed `ce3ef11` to `agent/issue-3-mvp-0-test-orchestrator-claim-flow` and never pushed main. Existing branch update uses explicit `--force-with-lease=<ref>:<sha>`.
 E7 PR creation is implemented and verified on the VM: the Coding App opened/updated PR #4 targeting main.
 E8 fix retry mode is implemented and verified on PR #4: `trading-coding-agent run --issue 3 --fix-pr 4` read review context, checked out the existing PR branch, updated it, and pushed with explicit force-with-lease.
 F1-F6 Review Agent MVP is implemented and verified on PR #4. `trading-review-agent review --pr 4` creates `/agents/review/workspaces/pr-4/`, fetches PR metadata/files/diff, uses the standard checklist, runs Codex review, writes `.review-agent/review.md`, posts a PR comment, and publishes the required `review-agent/pass` check. A first review failed with actionable feedback; after E8 retry, review passed and published a success check.
 G1 Orchestrator systemd service/timer is implemented on the VM. `trading-orchestrator.timer` is enabled and active, runs every 10 minutes as `agent-orchestrator`, uses a flock lock, and logs to `/agents/orchestrator/logs/tick.log`.
-G2 manual operator commands are documented in `plans/mvp0-operator-runbook.md`.
+G2 manual operator commands are documented in `plans/mvp0/operator-runbook.md`.
 G3 log locations and rotation are documented in the runbook and deployed on the VM as `/etc/logrotate.d/trading-agents`; `logrotate -d` validates the config.
 H1 approval request payload is defined in the runbook and implemented in Orchestrator outbox payloads.
 H2 approval request creation is implemented in `enable-auto-merge`: PRs labeled `needs:human-approval` without `human:approved` are skipped and deduped into `approval-pr-<n>` outbox messages.
