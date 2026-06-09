@@ -528,6 +528,18 @@ def cmd_scan_prs(args: argparse.Namespace) -> int:
             action = upsert_pr(conn, pr, issue_external_id)
             if action == "inserted":
                 inserted += 1
+                create_notification_outbox(
+                    conn,
+                    external_id=f"pr-opened-{pr_number}",
+                    notification_type="pr_opened",
+                    message=(
+                        f"Agent opened PR #{pr_number}: {pr.get('title') or ''}\n"
+                        f"Issue: #{issue_number if issue_number is not None else 'unknown'}\n"
+                        f"URL: {pr.get('html_url') or f'https://github.com/{args.owner}/{args.repo}/pull/{pr_number}'}"
+                    ),
+                    payload={"pr": pr_number, "issue": issue_number, "title": pr.get("title"), "url": pr.get("html_url")},
+                    labels=["notification", "pr_opened"],
+                )
             else:
                 updated += 1
             pr_summaries.append(
@@ -688,6 +700,30 @@ def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token:
 def remove_issue_label(owner: str, repo: str, issue_number: int, label: str, token: str) -> None:
     encoded = urllib.parse.quote(label, safe="")
     github_request("DELETE", f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/labels/{encoded}", token)
+
+
+def create_notification_outbox(
+    conn: sqlite3.Connection,
+    *,
+    external_id: str,
+    notification_type: str,
+    message: str,
+    payload: dict[str, Any],
+    labels: list[str] | None = None,
+) -> tuple[str, bool]:
+    ts = now_iso()
+    existing = conn.execute("SELECT state FROM outbox WHERE external_id=?", (external_id,)).fetchone()
+    if existing:
+        return external_id, False
+    full_payload = {"type": notification_type, **payload}
+    conn.execute(
+        """
+        INSERT INTO outbox(external_id, state, labels, channel, message, payload_json, created_at, updated_at, last_seen_at, retry_count)
+        VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)
+        """,
+        (external_id, json.dumps(labels or [notification_type], sort_keys=True), message, json.dumps(full_payload, sort_keys=True), ts, ts, ts),
+    )
+    return external_id, True
 
 
 def create_approval_request_outbox(
@@ -1305,6 +1341,18 @@ def cmd_finalize_merged(args: argparse.Namespace) -> int:
                 state="succeeded",
                 payload={"pr": pr_number, "issue": issue_number, "merged_at": pr.get("merged_at")},
             )
+            create_notification_outbox(
+                conn,
+                external_id=f"pr-merged-{pr_number}",
+                notification_type="pr_merged",
+                message=(
+                    f"Agent PR #{pr_number} merged successfully.\n"
+                    f"Issue: #{issue_number if issue_number is not None else 'unknown'}\n"
+                    f"URL: {pr.get('html_url') or f'https://github.com/{args.owner}/{args.repo}/pull/{pr_number}'}"
+                ),
+                payload={"pr": pr_number, "issue": issue_number, "title": pr.get("title"), "url": pr.get("html_url"), "merged_at": pr.get("merged_at")},
+                labels=["notification", "pr_merged"],
+            )
             finalized.append({"pr": pr_number, "issue": issue_number, "merged_at": pr.get("merged_at")})
     print(json.dumps({"ok": True, "command": "finalize-merged", "finalized": finalized}, indent=2, sort_keys=True))
     return 0
@@ -1407,6 +1455,27 @@ def cmd_outbox_next(args: argparse.Namespace) -> int:
         if key in payload:
             result[key] = payload[key]
     print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_outbox_ack_sent(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    ts = now_iso()
+    with connect(args.db) as conn:
+        row = conn.execute("SELECT state, payload_json FROM outbox WHERE external_id=?", (args.outbox_id,)).fetchone()
+        if not row:
+            print(json.dumps({"ok": False, "reason": "outbox_not_found", "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
+        payload = json.loads(row["payload_json"] or "{}")
+        message_type = payload.get("type") or "message"
+        if message_type == "approval_request":
+            print(json.dumps({"ok": False, "reason": "not_notification", "type": message_type, "outbox_id": args.outbox_id}, indent=2, sort_keys=True))
+            return 1
+        conn.execute(
+            "UPDATE outbox SET state='sent', updated_at=?, last_seen_at=? WHERE external_id=?",
+            (ts, ts, args.outbox_id),
+        )
+    print(json.dumps({"ok": True, "outbox_id": args.outbox_id, "state": "sent"}, indent=2, sort_keys=True))
     return 0
 
 
@@ -1564,6 +1633,9 @@ def build_parser() -> argparse.ArgumentParser:
     outbox_sub = outbox.add_subparsers(dest="outbox_command", required=True)
     outbox_next = outbox_sub.add_parser("next")
     outbox_next.set_defaults(func=cmd_outbox_next)
+    outbox_ack_sent = outbox_sub.add_parser("ack-sent")
+    outbox_ack_sent.add_argument("--outbox-id", required=True)
+    outbox_ack_sent.set_defaults(func=cmd_outbox_ack_sent)
 
     inbox = sub.add_parser("inbox")
     inbox_sub = inbox.add_subparsers(dest="inbox_command", required=True)
