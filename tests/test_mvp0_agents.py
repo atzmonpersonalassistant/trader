@@ -196,6 +196,17 @@ class MVP0AgentTests(unittest.TestCase):
             "pr": {"labels": []},
         })
         self.assertFalse(token_unsafe["pass"])
+        literal_value = "literal" + "_secret" + "_value"
+        lowercase_unsafe = review.deterministic_review({
+            "diff": f"+password={literal_value}\n+api_key={literal_value}\n",
+            "pr": {"labels": []},
+        })
+        self.assertFalse(lowercase_unsafe["pass"])
+        code_safe = review.deterministic_review({
+            "diff": "+token = mint_token(config)\n+DEFAULT_TOKEN_CMD = os.environ.get(\"TRADING_AGENT_TOKEN_CMD\")\n",
+            "pr": {"labels": []},
+        })
+        self.assertTrue(code_safe["pass"])
         self.assertFalse(review.should_run_model_review(token_unsafe, skip_model=False))
         with TemporaryDirectory() as tmp:
             _, review_text, passed = review.write_review(Path(tmp), 13, token_unsafe, None)

@@ -202,13 +202,15 @@ def has_secret_like_text(diff: str) -> bool:
     ]
     if any(re.search(pattern, added_text) for pattern in token_patterns):
         return True
-    assignment = re.compile(r"^\s*([A-Z0-9_]*(?:API[_-]?KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_]*)\s*[:=]\s*['\"]?([^\s'\"]{8,})")
+    assignment = re.compile(r"(?i)^\s*([A-Z0-9_]*(?:API[_-]?KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_]*)\s*[:=]\s*['\"]?([^\s'\"]{8,})")
     for line in added_diff_lines(diff):
         match = assignment.search(line)
         if not match:
             continue
         value = match.group(2)
         if value.startswith("${{") or value.startswith("<") or value.startswith("***") or "(" in value:
+            continue
+        if value.startswith(("os.environ", "str(", "dict(", "json.", "urllib.", "subprocess.", "Path(")):
             continue
         return True
     return False
