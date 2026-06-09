@@ -276,6 +276,7 @@ class MVP0AgentTests(unittest.TestCase):
         agent = load("trading_coding_agent", "tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("options-trade-lab/archive/mvp0/task-breakdown.md"))
+        self.assertFalse(agent.is_allowed_mvp0_change("options-trade-lab/ARCHITECTURE.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
 
