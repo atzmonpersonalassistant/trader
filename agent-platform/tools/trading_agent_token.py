@@ -13,8 +13,8 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import getpass
 import os
+import pwd
 import subprocess
 import time
 import urllib.request
@@ -56,7 +56,7 @@ def expected_linux_user(role: str, cfg: dict[str, Any]) -> str:
 
 def enforce_role_user(role: str, cfg: dict[str, Any]) -> None:
     expected = expected_linux_user(role, cfg)
-    actual = getpass.getuser()
+    actual = pwd.getpwuid(os.geteuid()).pw_name
     if actual != expected:
         raise SystemExit(f"Refusing to mint {role!r} token as OS user {actual!r}; expected {expected!r}")
 

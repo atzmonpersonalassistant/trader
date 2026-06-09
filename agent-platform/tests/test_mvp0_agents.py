@@ -389,14 +389,20 @@ class MVP0AgentTests(unittest.TestCase):
         token = load("trading_agent_token", "agent-platform/tools/trading_agent_token.py")
         self.assertEqual(token.expected_linux_user("coding", {}), "agent-coding")
         self.assertEqual(token.expected_linux_user("coding", {"linux_user": "custom-coder"}), "custom-coder")
-        original = token.getpass.getuser
-        token.getpass.getuser = lambda: "agent-review"
+        class FakePw:
+            pw_name = "agent-review"
+
+        original_geteuid = token.os.geteuid
+        original_getpwuid = token.pwd.getpwuid
+        token.os.geteuid = lambda: 123
+        token.pwd.getpwuid = lambda uid: FakePw()
         try:
             with self.assertRaises(SystemExit):
                 token.enforce_role_user("coding", {})
             token.enforce_role_user("review", {})
         finally:
-            token.getpass.getuser = original
+            token.os.geteuid = original_geteuid
+            token.pwd.getpwuid = original_getpwuid
 
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
