@@ -6,22 +6,16 @@ Trading research, agent infrastructure, and options-system experiments.
 
 ### `options-trade-lab/`
 
-Research-first options trading lab for strategy design, scanner planning, validation, and future implementation.
+Main project area for options research, strategy design, scanner planning, validation, and future implementation.
 
 - Main docs: `options-trade-lab/README.md`
 - Architecture: `options-trade-lab/ARCHITECTURE.md`
 - Project plan: `options-trade-lab/PROJECT_PLAN.md`
 - Strategy/platform docs: `options-trade-lab/docs/`
 - Context notes: `options-trade-lab/context/`
+- Historical MVP-0/platform notes: `options-trade-lab/archive/`
 
 Future scanner work should be implemented under this coherent project structure, not as separate top-level radar folders.
-
-### `plans/`
-
-Platform and infrastructure planning documents.
-
-- `plans/mvp0/` — MVP-0 agentic development loop setup, runbook, costs, and task breakdown.
-- `plans/platform/` — broader agent runtime/platform architecture notes.
 
 ### `ibkr-client/`
 
@@ -33,11 +27,12 @@ Read-only Interactive Brokers connectivity utilities for **IB Gateway only**. St
 
 ## Removed Legacy Folders
 
-The old standalone radar folders were removed from the active repo layout:
+The old standalone radar/planning folders were removed from the active repo layout:
 
 - `options-radar/`
 - `market-radar/`
 - `earnings-volatility-radar/`
+- top-level `plans/`
 
 They should not be used as source-of-truth going forward.
 
