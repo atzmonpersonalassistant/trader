@@ -187,6 +187,75 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertTrue((review / "pr-4").exists())
             self.assertFalse(deleted["dry_run"])
 
+    def test_orchestrator_notification_outbox_and_ack_sent(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import json
+        import sqlite3
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            with sqlite3.connect(db) as conn:
+                first = orch.create_notification_outbox(
+                    conn,
+                    external_id="pr-opened-42",
+                    notification_type="pr_opened",
+                    message="Agent opened PR #42",
+                    payload={"pr": 42, "url": "https://example/pr/42"},
+                )
+                second = orch.create_notification_outbox(
+                    conn,
+                    external_id="pr-opened-42",
+                    notification_type="pr_opened",
+                    message="Agent opened PR #42",
+                    payload={"pr": 42},
+                )
+            self.assertEqual(first, ("pr-opened-42", True))
+            self.assertEqual(second, ("pr-opened-42", False))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                orch.cmd_outbox_next(argparse.Namespace(db=db))
+            pending = json.loads(out.getvalue())
+            self.assertEqual(pending["type"], "pr_opened")
+            self.assertEqual(pending["id"], "pr-opened-42")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = orch.cmd_outbox_ack_sent(argparse.Namespace(db=db, outbox_id="pr-opened-42"))
+            self.assertEqual(rc, 0)
+            with sqlite3.connect(db) as conn:
+                state = conn.execute("SELECT state FROM outbox WHERE external_id='pr-opened-42'").fetchone()[0]
+            self.assertEqual(state, "sent")
+
+            with sqlite3.connect(db) as conn:
+                orch.create_approval_request_outbox(
+                    conn,
+                    pr_number=43,
+                    title="Needs approval",
+                    url="https://example/pr/43",
+                    reason="human gate",
+                    risk_summary="approval must stay pending",
+                )
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = orch.cmd_outbox_ack_sent(argparse.Namespace(db=db, outbox_id="approval-pr-43"))
+            self.assertEqual(rc, 1)
+            self.assertEqual(json.loads(out.getvalue())["reason"], "not_notification")
+            with sqlite3.connect(db) as conn:
+                state = conn.execute("SELECT state FROM outbox WHERE external_id='approval-pr-43'").fetchone()[0]
+            self.assertEqual(state, "pending")
+
+            with sqlite3.connect(db) as conn:
+                orch.create_blocked_outbox(conn, pr_number=44, title="Blocked", url="https://example/pr/44", reason="retry limit", retry_count=51)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = orch.cmd_outbox_ack_sent(argparse.Namespace(db=db, outbox_id="blocked-pr-44"))
+            self.assertEqual(rc, 0)
+            with sqlite3.connect(db) as conn:
+                state = conn.execute("SELECT state FROM outbox WHERE external_id='blocked-pr-44'").fetchone()[0]
+            self.assertEqual(state, "sent")
+
     def test_orchestrator_blocked_outbox_is_deduped(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import sqlite3
