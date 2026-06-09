@@ -174,6 +174,11 @@ class MVP0AgentTests(unittest.TestCase):
             "pr": {"labels": [{"name": "human:approved"}]},
         })
         self.assertTrue(safe["pass"])
+        workflow_reference = review.deterministic_review({
+            "diff": "+VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}\n",
+            "pr": {"labels": [{"name": "human:approved"}]},
+        })
+        self.assertTrue(workflow_reference["pass"])
 
         begin_marker = "-----BEGIN " + "PRIVATE KEY-----"
         end_marker = "-----END " + "PRIVATE KEY-----"
