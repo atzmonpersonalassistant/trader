@@ -76,6 +76,31 @@ class MVP0AgentTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "blocked_or_rejected"):
             agent.validate_fix_pr(config, trusted, {"labels": [{"name": "agent:pr-opened"}, {"name": "agent:blocked"}]})
 
+    def test_orchestrator_clean_status_fallback_merges_and_deletes_branch(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        calls = []
+
+        original_github_request = orch.github_request
+        try:
+            def fake_github_request(method, url, token, payload=None):
+                calls.append((method, url, payload))
+                if method == "PUT" and url.endswith("/pulls/8/merge"):
+                    return {"merged": True, "sha": "abc"}, {}
+                if method == "DELETE" and url.endswith("/git/refs/heads%2Fagent%2Fissue-7-docs"):
+                    return None, {}
+                raise AssertionError((method, url, payload))
+
+            orch.github_request = fake_github_request
+            merge = orch.merge_pull_request("atzmonpersonalassistant", "trader", 8, "token")
+            deleted = orch.delete_branch_ref("atzmonpersonalassistant", "trader", "agent/issue-7-docs", "token")
+        finally:
+            orch.github_request = original_github_request
+
+        self.assertEqual(merge, {"merged": True, "sha": "abc"})
+        self.assertTrue(deleted)
+        self.assertEqual(calls[0][0], "PUT")
+        self.assertEqual(calls[1][0], "DELETE")
+
     def test_orchestrator_blocked_outbox_is_deduped(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import sqlite3
