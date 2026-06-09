@@ -116,13 +116,13 @@ jobs:
           exec python3 /usr/local/lib/trading_review_agent.py "$@"
           EOF_BIN
           sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent
-          python3 -m py_compile \
+          PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
             /usr/local/lib/trading_orchestrator.py \
             /usr/local/lib/trading_coding_agent.py \
             /usr/local/lib/trading_review_agent.py \
             /usr/local/lib/trading_coding_agent_stub.py
-          sudo -n -u agent-orchestrator trading-orchestrator status >/tmp/trader-orchestrator-status.json
-          sudo -n -u agent-orchestrator trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
