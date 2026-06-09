@@ -21,10 +21,13 @@ jobs:
     name: Install orchestrator/coding/review tools on VPS
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Validate required secrets are present
         env:
