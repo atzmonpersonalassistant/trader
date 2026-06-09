@@ -253,7 +253,7 @@ def run_codex(workspace: Path, issue: dict[str, Any], config: dict[str, Any], ar
     last_message = logs_dir / f"codex-issue-{issue['number']}-{ts}.txt"
     if args.skip_codex:
         # Deterministic fallback for local smoke tests; production runs should not use this.
-        target = workspace / "plans" / "mvp0-task-breakdown.md"
+        target = workspace / "plans" / "mvp0" / "task-breakdown.md"
         with target.open("a", encoding="utf-8") as f:
             f.write(f"\n<!-- coding-agent smoke issue #{issue['number']} at {now_iso()} -->\n")
         return {"skipped": True, "last_message": str(last_message), "returncode": 0, "stdout": "", "stderr": ""}
