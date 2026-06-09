@@ -31,7 +31,7 @@ The old standalone scanner folders were removed from this repo:
 - `market-radar/`
 - `options-radar/`
 
-Future scanner work should be implemented under the coherent `options-planning/` structure, not as separate top-level radar projects.
+Future scanner work should be implemented under the coherent `planning/` structure, not as separate top-level radar projects.
 
 ## Outputs
 
@@ -39,9 +39,9 @@ This project is currently a research/planning folder, not a runnable scanner. It
 
 The intended future output locations, according to `ARCHITECTURE.md`, are:
 
-- `options-planning/data/results/` — scan and backtest output artifacts.
-- `options-planning/reports/daily/` — generated daily candidate reports.
-- `options-planning/reports/backtests/` — generated backtest reports.
+- `planning/data/results/` — scan and backtest output artifacts.
+- `planning/reports/daily/` — generated daily candidate reports.
+- `planning/reports/backtests/` — generated backtest reports.
 
 When implementation starts, generated data/results/reports should be clearly documented here and ignored/tracked intentionally in `.gitignore`.
 
