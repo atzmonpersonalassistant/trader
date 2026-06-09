@@ -103,3 +103,21 @@ or from the path in `TRADING_AGENT_APPS_CONFIG`.
 Use `agent-platform/config-examples/github-apps.example.json` as the template. The config file contains IDs and paths, not private-key contents, but it should still be treated as server-local operational config.
 
 Each role entry may include `linux_user`. If omitted, the token helper expects `agent-<role>`; for example `coding` must run as `agent-coding`.
+
+## Sudoers dispatch rule
+
+The orchestrator should dispatch coding work as `agent-coding`, not as `agent-orchestrator`.
+
+Example sudoers snippet at `/etc/sudoers.d/trading-agent-orchestrator-dispatch`:
+
+```text
+agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent *
+agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent-stub *
+```
+
+Validate with:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch
+sudo -n -u agent-orchestrator sudo -n -u agent-coding /usr/local/bin/trading-coding-agent --help
+```
