@@ -102,6 +102,51 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["sha"], "reviewed-head-sha")
         self.assertEqual(calls[1][0], "DELETE")
 
+    def test_orchestrator_cleanup_workspaces_respects_state_and_dry_run(self):
+        orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import json
+        import sqlite3
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "state.db"
+            coding = root / "coding"
+            review = root / "review"
+            (coding / "issue-1").mkdir(parents=True)
+            (coding / "issue-2").mkdir(parents=True)
+            (review / "pr-3").mkdir(parents=True)
+            (review / "pr-4").mkdir(parents=True)
+            orch.init_db(db)
+            now = orch.now_iso()
+            with sqlite3.connect(db) as conn:
+                conn.execute("INSERT INTO issues(external_id, number, title, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count) VALUES ('i1', 1, 'done', 'closed', '[]', '{}', ?, ?, ?, 0)", (now, now, now))
+                conn.execute("INSERT INTO issues(external_id, number, title, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count) VALUES ('i2', 2, 'open', 'open', '[]', '{}', ?, ?, ?, 0)", (now, now, now))
+                conn.execute("INSERT INTO pull_requests(external_id, number, issue_external_id, branch, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count) VALUES ('p3', 3, 'i1', 'agent/issue-1', 'merged', '[]', '{}', ?, ?, ?, 0)", (now, now, now))
+                conn.execute("INSERT INTO pull_requests(external_id, number, issue_external_id, branch, state, labels, payload_json, created_at, updated_at, last_seen_at, retry_count) VALUES ('p4', 4, 'i2', 'agent/issue-2', 'open', '[]', '{}', ?, ?, ?, 0)", (now, now, now))
+            args = argparse.Namespace(db=db, coding_workspace_root=coding, review_workspace_root=review, older_than_hours=0, confirm_delete=False)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                orch.cmd_cleanup_workspaces(args)
+            dry = json.loads(out.getvalue())
+            self.assertTrue(dry["dry_run"])
+            self.assertTrue((coding / "issue-1").exists())
+            self.assertTrue((review / "pr-3").exists())
+            self.assertEqual({item.get("issue") for item in dry["cleaned"] if item["kind"] == "coding"}, {1})
+            self.assertEqual({item.get("pr") for item in dry["cleaned"] if item["kind"] == "review"}, {3})
+
+            args.confirm_delete = True
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                orch.cmd_cleanup_workspaces(args)
+            deleted = json.loads(out.getvalue())
+            self.assertFalse((coding / "issue-1").exists())
+            self.assertTrue((coding / "issue-2").exists())
+            self.assertFalse((review / "pr-3").exists())
+            self.assertTrue((review / "pr-4").exists())
+            self.assertFalse(deleted["dry_run"])
+
     def test_orchestrator_blocked_outbox_is_deduped(self):
         orch = load("trading_orchestrator", "tools/trading_orchestrator.py")
         import sqlite3

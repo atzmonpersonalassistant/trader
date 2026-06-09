@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import re
 import sqlite3
 import subprocess
@@ -17,12 +18,14 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_DB_PATH = Path(os.environ.get("TRADING_ORCHESTRATOR_DB", "/agents/orchestrator/state/orchestrator.db"))
 DEFAULT_BACKUP_DIR = Path(os.environ.get("TRADING_ORCHESTRATOR_BACKUP_DIR", "/agents/orchestrator/backups"))
+DEFAULT_CODING_WORKSPACE_ROOT = Path(os.environ.get("TRADING_CODING_WORKSPACE_ROOT", "/agents/coding/workspaces"))
+DEFAULT_REVIEW_WORKSPACE_ROOT = Path(os.environ.get("TRADING_REVIEW_WORKSPACE_ROOT", "/agents/review/workspaces"))
 DEFAULT_GITHUB_OWNER = os.environ.get("TRADING_GITHUB_OWNER", "atzmonpersonalassistant")
 DEFAULT_GITHUB_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_READY_LABEL = os.environ.get("TRADING_READY_LABEL", "agent:ready")
@@ -1297,6 +1300,81 @@ def cmd_finalize_merged(args: argparse.Namespace) -> int:
     return 0
 
 
+def workspace_age_ok(path: Path, older_than_hours: int) -> bool:
+    if older_than_hours <= 0:
+        return True
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    except FileNotFoundError:
+        return False
+    return datetime.now(timezone.utc) - mtime >= timedelta(hours=older_than_hours)
+
+
+def safe_workspace_child(root: Path, path: Path, prefix: str) -> bool:
+    try:
+        resolved_root = root.resolve()
+        resolved_path = path.resolve()
+    except FileNotFoundError:
+        return False
+    return path.is_dir() and path.name.startswith(prefix) and resolved_path.parent == resolved_root
+
+
+def cleanup_workspace(path: Path, *, dry_run: bool) -> dict[str, Any]:
+    result = {"path": str(path), "deleted": False, "dry_run": dry_run}
+    if dry_run:
+        return result
+    shutil.rmtree(path)
+    result["deleted"] = True
+    return result
+
+
+def cmd_cleanup_workspaces(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    dry_run = not args.confirm_delete
+    cleaned: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    coding_root = Path(args.coding_workspace_root)
+    review_root = Path(args.review_workspace_root)
+    with connect(args.db) as conn:
+        issue_rows = conn.execute("SELECT number, state FROM issues ORDER BY number ASC").fetchall()
+        for row in issue_rows:
+            issue_number = int(row["number"])
+            state = str(row["state"] or "")
+            path = coding_root / f"issue-{issue_number}"
+            if not path.exists():
+                continue
+            if state != "closed":
+                skipped.append({"path": str(path), "reason": "issue_not_closed", "issue": issue_number, "state": state})
+                continue
+            if not safe_workspace_child(coding_root, path, "issue-"):
+                skipped.append({"path": str(path), "reason": "unsafe_path", "issue": issue_number})
+                continue
+            if not workspace_age_ok(path, args.older_than_hours):
+                skipped.append({"path": str(path), "reason": "too_new", "issue": issue_number})
+                continue
+            cleaned.append({"kind": "coding", "issue": issue_number, **cleanup_workspace(path, dry_run=dry_run)})
+
+        pr_rows = conn.execute("SELECT number, state FROM pull_requests ORDER BY number ASC").fetchall()
+        for row in pr_rows:
+            pr_number = int(row["number"])
+            state = str(row["state"] or "")
+            path = review_root / f"pr-{pr_number}"
+            if not path.exists():
+                continue
+            if state not in {"closed", "merged"}:
+                skipped.append({"path": str(path), "reason": "pr_not_done", "pr": pr_number, "state": state})
+                continue
+            if not safe_workspace_child(review_root, path, "pr-"):
+                skipped.append({"path": str(path), "reason": "unsafe_path", "pr": pr_number})
+                continue
+            if not workspace_age_ok(path, args.older_than_hours):
+                skipped.append({"path": str(path), "reason": "too_new", "pr": pr_number})
+                continue
+            cleaned.append({"kind": "review", "pr": pr_number, **cleanup_workspace(path, dry_run=dry_run)})
+    print(json.dumps({"ok": True, "command": "cleanup-workspaces", "dry_run": dry_run, "cleaned": cleaned, "skipped": skipped}, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_outbox_next(args: argparse.Namespace) -> int:
     init_db(args.db)
     with connect(args.db) as conn:
@@ -1455,6 +1533,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     finalize = sub.add_parser("finalize-merged")
     finalize.set_defaults(func=cmd_finalize_merged)
+
+    cleanup = sub.add_parser("cleanup-workspaces")
+    cleanup.add_argument("--coding-workspace-root", type=Path, default=DEFAULT_CODING_WORKSPACE_ROOT)
+    cleanup.add_argument("--review-workspace-root", type=Path, default=DEFAULT_REVIEW_WORKSPACE_ROOT)
+    cleanup.add_argument("--older-than-hours", type=int, default=24)
+    cleanup.add_argument("--confirm-delete", action="store_true", help="delete eligible workspaces; default is dry-run")
+    cleanup.set_defaults(func=cmd_cleanup_workspaces)
 
     dispatch = sub.add_parser("dispatch")
     dispatch_sub = dispatch.add_subparsers(dest="dispatch_command", required=True)
