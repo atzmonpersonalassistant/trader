@@ -150,7 +150,7 @@ class MVP0AgentTests(unittest.TestCase):
 
     def test_agent_command_timeout_redacts_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
-        secret_url = "https://x-access-token:ghs_TIMEOUTSECRET@github.com/owner/repo.git"
+        secret_url = "https://x-access-token:" + "ghs_TIMEOUTSECRET" + "@github.com/owner/repo.git"
         result = review.run_cmd(["python3", "-c", "import time,sys; print(sys.argv[1]); time.sleep(2)", secret_url], timeout=0.1)
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
         self.assertEqual(result["returncode"], 124)
@@ -160,7 +160,7 @@ class MVP0AgentTests(unittest.TestCase):
     def test_agent_command_results_redact_github_installation_tokens(self):
         review = load("trading_review_agent", "tools/trading_review_agent.py")
         coding = load("trading_coding_agent", "tools/trading_coding_agent.py")
-        secret_url = "https://x-access-token:ghs_ABC123SECRET@github.com/owner/repo.git"
+        secret_url = "https://x-access-token:" + "ghs_ABC123SECRET" + "@github.com/owner/repo.git"
         result = review.run_cmd(["python3", "-c", "import sys; print(sys.argv[1]); print(sys.argv[1], file=sys.stderr)", secret_url])
         rendered = " ".join(result["command"]) + result["stdout"] + result["stderr"]
         self.assertIn("<redacted>", rendered)

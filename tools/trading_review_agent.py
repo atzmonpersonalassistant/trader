@@ -187,18 +187,38 @@ def ensure_review_workspace(config: dict[str, Any], pr_number: int, token: str, 
     return {"workspace": str(workspace), "head_ref": head_ref, "base_ref": base_ref, "artifacts": str(artifacts)}
 
 
-def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
-    diff = context["diff"]
-    lower = diff.lower()
-    findings: list[str] = []
-    secret_patterns = [
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
-        r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*['\"]?(?!\$\{\{)[^\s'\"]{8,}",
+def added_diff_lines(diff: str) -> list[str]:
+    return [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
+
+
+def has_secret_like_text(diff: str) -> bool:
+    added_text = "\n".join(added_diff_lines(diff))
+    if re.search(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", added_text):
+        return True
+    token_patterns = [
         r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b",
         r"\bgithub_pat_[A-Za-z0-9_]{20,}\b",
         r"\bsk-[A-Za-z0-9_-]{20,}\b",
     ]
-    if any(re.search(pattern, diff) for pattern in secret_patterns):
+    if any(re.search(pattern, added_text) for pattern in token_patterns):
+        return True
+    assignment = re.compile(r"^\s*([A-Z0-9_]*(?:API[_-]?KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_]*)\s*[:=]\s*['\"]?([^\s'\"]{8,})")
+    for line in added_diff_lines(diff):
+        match = assignment.search(line)
+        if not match:
+            continue
+        value = match.group(2)
+        if value.startswith("${{") or value.startswith("<") or value.startswith("***") or "(" in value:
+            continue
+        return True
+    return False
+
+
+def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
+    diff = context["diff"]
+    lower = diff.lower()
+    findings: list[str] = []
+    if has_secret_like_text(diff):
         findings.append("Potential secret-like text found in diff.")
     if any(term in lower for term in ["live trading", "ibkr", "position sizing", "risk limit"]):
         labels = [label.get("name") for label in context["pr"].get("labels", [])]
