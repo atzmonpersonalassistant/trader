@@ -1,4 +1,4 @@
-# Options Trade Lab — Architecture
+# Options Planning — Architecture
 
 ## Status
 
@@ -60,7 +60,7 @@ options-planning/
 ├── scripts/
 │   └── cli.py                        # later: command entrypoint
 ├── src/
-│   └── options_trade_lab/
+│   └── options_planning/
 │       ├── __init__.py
 │       ├── config/                   # config loading and validation
 │       ├── data/                     # provider adapters and canonical schemas

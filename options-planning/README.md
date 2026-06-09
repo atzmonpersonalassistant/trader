@@ -1,6 +1,6 @@
-# Options Trade Lab
+# Options Planning
 
-Research-first options trading lab for challenging, scanning, and evaluating options trade ideas before risking capital.
+Research-first options trading planning workspace for challenging, scanning, and evaluating options trade ideas before risking capital.
 
 ## Current Scope
 

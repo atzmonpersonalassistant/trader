@@ -1,4 +1,4 @@
-# Options Trade Lab — Project Plan
+# Options Planning — Project Plan
 
 ## Rule of Engagement
 
