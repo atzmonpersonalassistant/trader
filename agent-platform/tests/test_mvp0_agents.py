@@ -275,9 +275,9 @@ class MVP0AgentTests(unittest.TestCase):
     def test_coding_agent_enforces_docs_only_changes(self):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("options-planning-lab/PROJECT_PLAN.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("options-planning-lab/ARCHITECTURE.md"))
-        self.assertTrue(agent.is_allowed_mvp0_change("options-planning-lab/docs/quantconnect-agentic-platform-lld.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("options-planning/PROJECT_PLAN.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("options-planning/ARCHITECTURE.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("options-planning/docs/quantconnect-agentic-platform-lld.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/docs/mvp0/task-breakdown.md"))
         self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
@@ -286,7 +286,7 @@ class MVP0AgentTests(unittest.TestCase):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            target = workspace / "options-planning-lab" / "PROJECT_PLAN.md"
+            target = workspace / "options-planning" / "PROJECT_PLAN.md"
             target.parent.mkdir(parents=True)
             target.write_text("# Project Plan\n", encoding="utf-8")
             result = agent.run_codex(
