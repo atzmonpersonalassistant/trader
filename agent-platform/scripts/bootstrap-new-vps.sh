@@ -64,6 +64,7 @@ ensure_user agent-orchestrator
 ensure_user agent-coding
 ensure_user agent-review
 ensure_user agent-validator
+ensure_user agent-research
 # Orchestrator needs group access only for cleanup/traversal of coding/review workspaces.
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
@@ -72,6 +73,7 @@ usermod -aG agent-review agent-orchestrator
 # only by roles in agent-quantconnect.
 usermod -aG agent-quantconnect agent-orchestrator
 usermod -aG agent-quantconnect agent-validator
+usermod -aG agent-quantconnect agent-research
 
 log "creating /agents layout"
 install_dir root root 711 /agents
@@ -91,12 +93,12 @@ install_dir agent-review agent-review 750 /agents/review/state
 install_dir agent-review agent-review 2770 /agents/review/workspaces
 install_dir agent-review agent-review 750 /agents/review/logs
 
-# The research CLI currently runs as agent-orchestrator. A future dedicated
-# agent-research user can take ownership once MVP1 defines that role.
-install_dir root root 755 /agents/research
-install_dir agent-orchestrator agent-orchestrator 750 /agents/research/state
-install_dir agent-orchestrator agent-orchestrator 750 /agents/research/logs
-install_dir agent-orchestrator agent-orchestrator 750 /agents/research/reports
+install_dir agent-research agent-research 750 /agents/research
+install_dir agent-research agent-research 750 /agents/research/state
+install_dir agent-research agent-research 750 /agents/research/logs
+install_dir agent-research agent-research 750 /agents/research/reports
+chown -R agent-research:agent-research /agents/research
+chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
 
 install_dir agent-validator agent-validator 750 /agents/validator
 install_dir agent-validator agent-validator 750 /agents/validator/state
@@ -106,11 +108,10 @@ install_dir agent-validator agent-validator 755 /agents/validator/workspaces
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 755 /etc/trading-agents
 install_dir root root 711 /etc/trading-agents/secrets
-for role in orchestrator coding review validator; do
+for role in orchestrator coding review validator research; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
-# Research currently runs as agent-orchestrator, not a dedicated agent-research user.
-install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research
+install_dir root agent-research 750 /etc/trading-agents/secrets/research
 install_dir root agent-quantconnect 750 /etc/trading-agents/secrets/quantconnect
 if [[ -e /etc/trading-agents/secrets/quantconnect/env ]]; then
   chown root:agent-quantconnect /etc/trading-agents/secrets/quantconnect/env
@@ -163,12 +164,19 @@ if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
     "installation_id": "REPLACE_ME",
     "private_key_path": "/etc/trading-agents/secrets/validator/private-key.pem",
     "linux_user": "agent-validator"
+  },
+  "research": {
+    "app_slug": "trading-research-agent",
+    "app_id": "REPLACE_ME",
+    "installation_id": "REPLACE_ME",
+    "private_key_path": "/etc/trading-agents/secrets/research/private-key.pem",
+    "linux_user": "agent-research"
   }
 }
 JSON
   # This file contains IDs and private-key paths only, not private-key contents.
-  # It must be readable by agent-orchestrator, agent-coding, agent-review, and
-  # agent-validator because each role runs trading-agent-token as its own user.
+  # It must be readable by agent-orchestrator, agent-coding, agent-review,
+  # agent-validator, and agent-research because each role may run tools as its own user.
   chmod 644 /etc/trading-agents/github-apps.json
   chown root:root /etc/trading-agents/github-apps.json
 fi
