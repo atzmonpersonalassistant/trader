@@ -44,9 +44,12 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 sqlite3 sudo
+      ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
+    fi
+    if ! command -v lean >/dev/null 2>&1; then
+      python3 -m pip install --break-system-packages --upgrade lean
     fi
   else
     log "apt-get not found; skipping package install"
@@ -97,8 +100,9 @@ install_dir agent-research agent-research 750 /agents/research
 install_dir agent-research agent-research 750 /agents/research/state
 install_dir agent-research agent-research 750 /agents/research/logs
 install_dir agent-research agent-research 750 /agents/research/reports
+install_dir agent-research agent-research 750 /agents/research/lean-workspace
 chown -R agent-research:agent-research /agents/research
-chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
+chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
 
 install_dir agent-validator agent-validator 750 /agents/validator
 install_dir agent-validator agent-validator 750 /agents/validator/state
@@ -188,6 +192,7 @@ Next manual steps:
 1. Install real GitHub App private keys under /etc/trading-agents/secrets/*/private-key.pem.
 2. Replace /etc/trading-agents/github-apps.json placeholder IDs with real App/installation IDs.
 3. Install Codex/OpenAI auth for agent-coding and agent-review if those roles run Codex on the VPS.
-4. Update GitHub Actions secrets: VPS_HOST, VPS_USER, VPS_SSH_PRIVATE_KEY, VPS_SSH_HOST_KEY.
-5. Run the vps-deploy workflow and then the validation checklist in server-migration.md.
+4. Confirm Lean CLI is available for agent-research and run Lean login from the QuantConnect env file.
+5. Update GitHub Actions secrets: VPS_HOST, VPS_USER, VPS_SSH_PRIVATE_KEY, VPS_SSH_HOST_KEY.
+6. Run the vps-deploy workflow and then the validation checklist in server-migration.md.
 NEXT
