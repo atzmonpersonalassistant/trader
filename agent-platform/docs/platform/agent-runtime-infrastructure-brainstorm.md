@@ -37,7 +37,7 @@ The system should keep five logical agent roles:
    - Reads QuantConnect reports and decides whether to discard, refine, or retest a hypothesis.
    - Does **not** write production code, approve PRs, or place trades.
    - First target family: cheap upside via long calls, low-debit bull call spreads, calendars/diagonals, and LEAPS call spreads.
-   - Current status: tested as an ad-hoc OpenClaw sub-agent; not yet implemented as a persistent `trading-research-agent` CLI.
+   - Current status: initial `trading-research-agent` CLI exists under `agent-platform/tools/` for queue seeding/listing; not yet wired into the orchestrator timer or a persistent research loop.
 
 4. **Quant Research Validator Agent**
    - Reviews backtest/sweep results as an independent governance role.

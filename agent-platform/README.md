@@ -18,9 +18,11 @@ As of the current VPS setup, the **implemented and deployed** agent CLIs are:
 2. `trading-coding-agent` running as Linux user `agent-coding` when dispatched.
 3. `trading-review-agent` running as Linux user `agent-review` when reviewing PRs.
 
-The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent.
+This repo also includes a new research-agent CLI:
 
-A Strategy/Quant Research Agent has been tested as an ad-hoc OpenClaw sub-agent for options strategy ideation, but it is **not yet implemented in `agent-platform/tools/`**, has no dedicated CLI, and is not deployed as a persistent VPS role. Planned name: `trading-research-agent`.
+4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. It is not yet wired into the orchestrator timer or deployed as a continuously running VPS role.
+
+The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent.
 
 The goal is that someone can copy `agent-platform/` and understand/adapt the architecture without copying the options trading project.
 
