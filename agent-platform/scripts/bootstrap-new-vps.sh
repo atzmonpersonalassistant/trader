@@ -53,7 +53,13 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
   fi
 fi
 
-log "creating role users"
+log "creating role users and QuantConnect access group"
+if getent group agent-quantconnect >/dev/null 2>&1; then
+  log "group exists: agent-quantconnect"
+else
+  log "creating group: agent-quantconnect"
+  groupadd --system agent-quantconnect
+fi
 ensure_user agent-orchestrator
 ensure_user agent-coding
 ensure_user agent-review
@@ -62,6 +68,10 @@ ensure_user agent-validator
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
 usermod -aG agent-review agent-orchestrator
+# QuantConnect credentials are shared from a single root-owned env file, readable
+# only by roles in agent-quantconnect.
+usermod -aG agent-quantconnect agent-orchestrator
+usermod -aG agent-quantconnect agent-validator
 
 log "creating /agents layout"
 install_dir root root 711 /agents
@@ -101,6 +111,11 @@ for role in orchestrator coding review validator; do
 done
 # Research currently runs as agent-orchestrator, not a dedicated agent-research user.
 install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research
+install_dir root agent-quantconnect 750 /etc/trading-agents/secrets/quantconnect
+if [[ -e /etc/trading-agents/secrets/quantconnect/env ]]; then
+  chown root:agent-quantconnect /etc/trading-agents/secrets/quantconnect/env
+  chmod 640 /etc/trading-agents/secrets/quantconnect/env
+fi
 
 log "installing root-owned dispatch wrappers"
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
