@@ -51,6 +51,20 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     if ! command -v lean >/dev/null 2>&1; then
       python3 -m pip install --break-system-packages --upgrade lean
     fi
+    python3 - <<'PY_CHMOD'
+import importlib.util
+import os
+from pathlib import Path
+spec = importlib.util.find_spec("lean")
+if spec and spec.submodule_search_locations:
+    Path(spec.submodule_search_locations[0]).chmod(0o755)
+    for root, dirs, files in os.walk(spec.submodule_search_locations[0]):
+        for d in dirs:
+            Path(root, d).chmod(0o755)
+        for f in files:
+            file = Path(root, f)
+            file.chmod(file.stat().st_mode | 0o444)
+PY_CHMOD
   else
     log "apt-get not found; skipping package install"
   fi
