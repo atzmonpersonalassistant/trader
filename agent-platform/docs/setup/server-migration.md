@@ -15,7 +15,17 @@ This only covers GitHub Actions SSH deploy.
 
 ## What must exist on the new server
 
-The new server also needs:
+The new server also needs the bootstrap script applied first:
+
+```bash
+sudo agent-platform/scripts/bootstrap-new-vps.sh
+# or, on a minimal Ubuntu server:
+sudo agent-platform/scripts/bootstrap-new-vps.sh --install-system-packages
+```
+
+The script creates users, directories, permissions, sudoers rules, and placeholder config paths. It deliberately does **not** install secrets.
+
+After bootstrap, the server needs:
 
 1. Linux users:
    - `agent-orchestrator`
@@ -48,7 +58,7 @@ The new server also needs:
    - `/home/agent-review/.codex/auth.json`
    - future, if the research agent uses Codex directly: `/home/agent-research/.codex/auth.json`
 
-6. Systemd units/timers and sudoers rules for orchestrator dispatch/review flow.
+6. Systemd units/timers for orchestrator dispatch/review flow. Basic sudoers dispatch rules are created by `agent-platform/scripts/bootstrap-new-vps.sh`.
 
 ## Private keys: copy vs regenerate
 
@@ -110,18 +120,18 @@ Each role entry may include `linux_user`. If omitted, the token helper expects `
 
 ## Sudoers dispatch rule
 
-The orchestrator should dispatch coding work as `agent-coding`, not as `agent-orchestrator`.
+The orchestrator should dispatch coding work only through root-owned validation wrappers. It should not get wildcard sudo access to the full `trading-coding-agent` CLI.
 
 Example sudoers snippet at `/etc/sudoers.d/trading-agent-orchestrator-dispatch`:
 
 ```text
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent *
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent-stub *
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *
 ```
 
 Validate with:
 
 ```bash
 sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch
-sudo -n -u agent-orchestrator sudo -n -u agent-coding /usr/local/bin/trading-coding-agent --help
+sudo -n -u agent-orchestrator sudo -n /usr/local/sbin/trading-dispatch-coding-agent run --issue 1
 ```

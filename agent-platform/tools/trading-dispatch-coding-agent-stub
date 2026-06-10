@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Narrow root-owned sudo target for orchestrator -> coding-agent stub dispatch.
+set -euo pipefail
+
+if [[ "$#" -ne 6 || "$1" != "--issue-number" || ! "$2" =~ ^[0-9]+$ || "$3" != "--issue-external-id" || "$4" == -* || "$5" != "--title" ]]; then
+  echo "usage: trading-dispatch-coding-agent-stub --issue-number <number> --issue-external-id <id> --title <title>" >&2
+  exit 64
+fi
+
+exec sudo -n -u agent-coding /usr/local/bin/trading-coding-agent-stub \
+  --issue-number "$2" \
+  --issue-external-id "$4" \
+  --title "$6"

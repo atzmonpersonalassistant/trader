@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Narrow root-owned sudo target for orchestrator -> coding-agent dispatch.
+set -euo pipefail
+
+if [[ "$#" -eq 3 && "$1" == "run" && "$2" == "--issue" && "$3" =~ ^[0-9]+$ ]]; then
+  exec sudo -n -u agent-coding /usr/local/bin/trading-coding-agent run --issue "$3"
+fi
+
+if [[ "$#" -eq 5 && "$1" == "run" && "$2" == "--issue" && "$3" =~ ^[0-9]+$ && "$4" == "--fix-pr" && "$5" =~ ^[0-9]+$ ]]; then
+  exec sudo -n -u agent-coding /usr/local/bin/trading-coding-agent run --issue "$3" --fix-pr "$5"
+fi
+
+echo "usage: trading-dispatch-coding-agent run --issue <number> [--fix-pr <number>]" >&2
+exit 64

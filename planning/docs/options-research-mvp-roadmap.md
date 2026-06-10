@@ -42,6 +42,8 @@ This avoids building MVP1 around a workflow we already know we will throw away i
 - Produce research reports and evidence, not live trades.
 - Store strategy code, configs, reports, and research artifacts in the repo.
 - Route changes through GitHub issues, PRs, coding agent, and review agent.
+- Define backup/restore for VPS runtime state such as `/agents/orchestrator/state/orchestrator.db`. This is intentionally deferred from the current setup and belongs in MVP1.
+- Decide which state should move out of the VPS into GitHub, repo artifacts, or cloud storage. This is intentionally deferred from the current setup and belongs in MVP1.
 
 ### First Strategy Candidates
 

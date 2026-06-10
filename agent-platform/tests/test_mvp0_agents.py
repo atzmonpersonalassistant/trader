@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -19,6 +20,42 @@ def load(name, rel):
 
 
 class MVP0AgentTests(unittest.TestCase):
+    def test_bootstrap_new_vps_script_static_validation(self):
+        script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        text = script.read_text()
+        self.assertIn('ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 sqlite3 sudo', text)
+        self.assertIn('npm install -g @openai/codex', text)
+        self.assertIn('usermod -aG agent-coding agent-orchestrator', text)
+        self.assertIn('usermod -aG agent-review agent-orchestrator', text)
+        self.assertIn('install_dir agent-coding agent-coding 2770 /agents/coding/workspaces', text)
+        self.assertIn('install_dir agent-review agent-review 2770 /agents/review/workspaces', text)
+        self.assertNotIn('groupadd --system agent-platform', text)
+        self.assertIn('install_dir root root 755 /etc/trading-agents', text)
+        self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
+        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent *', text)
+        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub *', text)
+        self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
+        self.assertIn('for role in orchestrator coding review validator; do', text)
+        self.assertNotIn('for role in orchestrator coding review validator research; do', text)
+        self.assertIn('"orchestrator": {', text)
+        self.assertIn('"coding": {', text)
+        self.assertIn('"review": {', text)
+        self.assertNotIn('"roles": {', text)
+        self.assertIn('install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research', text)
+        self.assertIn('chmod 644 /etc/trading-agents/github-apps.json', text)
+        self.assertIn('chown root:root /etc/trading-agents/github-apps.json', text)
+
+    def test_dispatch_wrappers_reject_unexpected_arguments(self):
+        real = ROOT / "agent-platform/tools/trading-dispatch-coding-agent"
+        stub = ROOT / "agent-platform/tools/trading-dispatch-coding-agent-stub"
+        subprocess.run(["bash", "-n", str(real)], check=True)
+        subprocess.run(["bash", "-n", str(stub)], check=True)
+        self.assertEqual(subprocess.run([str(real), "--config", "evil"]).returncode, 64)
+        self.assertEqual(subprocess.run([str(real), "run", "--issue", "abc"]).returncode, 64)
+        self.assertEqual(subprocess.run([str(real), "run", "--issue", "1", "--config", "evil"]).returncode, 64)
+        self.assertEqual(subprocess.run([str(stub), "run", "--issue", "1"]).returncode, 64)
+
     def test_research_agent_seeds_cheap_call_queue(self):
         research = load("trading_research_agent", "agent-platform/tools/trading_research_agent.py")
         with TemporaryDirectory() as tmp:
@@ -134,6 +171,20 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["sha"], "reviewed-head-sha")
         self.assertEqual(calls[1][0], "DELETE")
 
+    def test_orchestrator_dispatch_coding_stub_uses_safe_wrapper_contract(self):
+        orch = load("trading_orchestrator_stub_dispatch", "agent-platform/tools/trading_orchestrator.py")
+        args = argparse.Namespace(coding_stub_cmd="sudo -n /usr/local/sbin/trading-dispatch-coding-agent-stub")
+        cmd = orch.command_parts(args.coding_stub_cmd) + [
+            "--issue-number",
+            "{issue}",
+            "--issue-external-id",
+            "{issue_external_id}",
+            "--title",
+            "{title}",
+        ]
+        self.assertEqual(cmd[:3], ["sudo", "-n", "/usr/local/sbin/trading-dispatch-coding-agent-stub"])
+        self.assertNotIn("run", cmd)
+
     def test_orchestrator_dispatch_coding_uses_real_agent_command(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import argparse
@@ -157,7 +208,7 @@ class MVP0AgentTests(unittest.TestCase):
                 calls.append((cmd, kwargs))
                 return FakeProc()
             orch.subprocess.run = fake_run
-            args = argparse.Namespace(db=db, claimed_label="agent:claimed", coding_agent_cmd="sudo -n -u agent-coding trading-coding-agent", timeout_seconds=123)
+            args = argparse.Namespace(db=db, claimed_label="agent:claimed", coding_agent_cmd="sudo -n /usr/local/sbin/trading-dispatch-coding-agent", timeout_seconds=123)
             try:
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
@@ -165,14 +216,14 @@ class MVP0AgentTests(unittest.TestCase):
             finally:
                 orch.subprocess.run = original
             self.assertEqual(rc, 0)
-            self.assertEqual(calls[0][0], ["sudo", "-n", "-u", "agent-coding", "trading-coding-agent", "run", "--issue", "21"])
+            self.assertEqual(calls[0][0], ["sudo", "-n", "/usr/local/sbin/trading-dispatch-coding-agent", "run", "--issue", "21"])
             self.assertEqual(calls[0][1]["timeout"], 123)
             result = json.loads(out.getvalue())
             self.assertTrue(result["ok"])
             with sqlite3.connect(db) as conn:
                 row = conn.execute("SELECT labels, result_json FROM attempts").fetchone()
             self.assertEqual(json.loads(row[0]), ["coding-agent"])
-            self.assertEqual(json.loads(row[1])["command"], ["sudo", "-n", "-u", "agent-coding", "trading-coding-agent", "run", "--issue", "21"])
+            self.assertEqual(json.loads(row[1])["command"], ["sudo", "-n", "/usr/local/sbin/trading-dispatch-coding-agent", "run", "--issue", "21"])
 
     def test_orchestrator_cleanup_workspaces_respects_state_and_dry_run(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
