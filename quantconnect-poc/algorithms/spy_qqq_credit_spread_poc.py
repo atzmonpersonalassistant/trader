@@ -20,6 +20,9 @@ class SpyQqqCreditSpreadPoc(QCAlgorithm):
     """Small defined-risk options strategy scaffold for QuantConnect Cloud."""
 
     def Initialize(self):
+        if self.LiveMode:
+            raise RuntimeError("This POC is research/backtest only and must not run live.")
+
         self.SetStartDate(2023, 1, 1)
         self.SetEndDate(2024, 1, 1)
         self.SetCash(100000)

@@ -20,6 +20,11 @@ def load_function_from_source(function_name):
 
 
 class QuantConnectPocAlgorithmTests(unittest.TestCase):
+    def test_algorithm_contains_live_mode_guard(self):
+        source = ALGO_PATH.read_text()
+        self.assertIn("self.LiveMode", source)
+        self.assertIn("must not run live", source)
+
     def test_safe_spread_quantity_refuses_trade_above_risk_budget(self):
         calculate = load_function_from_source("calculate_safe_spread_quantity")
         self.assertEqual(calculate(100_000, 0.005, 10), 0)
