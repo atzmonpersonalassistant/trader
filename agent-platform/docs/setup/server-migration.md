@@ -22,18 +22,21 @@ The new server also needs:
    - `agent-coding`
    - `agent-review`
    - optional future: `agent-validator`
+   - optional future: `agent-research`
 
 2. Directory layout:
    - `/agents/orchestrator/{state,logs,backups}`
    - `/agents/coding/{workspaces,logs}`
    - `/agents/review/{workspaces,logs}`
-   - `/etc/trading-agents/secrets/{orchestrator,coding,review,validator}`
+   - future: `/agents/research/{state,logs,reports}`
+   - `/etc/trading-agents/secrets/{orchestrator,coding,review,validator,research}`
 
 3. GitHub App private keys:
    - `/etc/trading-agents/secrets/orchestrator/private-key.pem`
    - `/etc/trading-agents/secrets/coding/private-key.pem`
    - `/etc/trading-agents/secrets/review/private-key.pem`
    - optional: `/etc/trading-agents/secrets/validator/private-key.pem`
+   - optional: `/etc/trading-agents/secrets/research/private-key.pem`
 
 4. Agent config files:
    - `/agents/coding/config.json`
@@ -43,6 +46,7 @@ The new server also needs:
 5. Codex/OpenAI auth for the users that run Codex:
    - `/home/agent-coding/.codex/auth.json`
    - `/home/agent-review/.codex/auth.json`
+   - future, if the research agent uses Codex directly: `/home/agent-research/.codex/auth.json`
 
 6. Systemd units/timers and sudoers rules for orchestrator dispatch/review flow.
 

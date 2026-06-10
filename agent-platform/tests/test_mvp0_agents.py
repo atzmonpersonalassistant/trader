@@ -1,5 +1,7 @@
 import argparse
 import importlib.util
+import json
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,11 +13,40 @@ def load(name, rel):
     spec = importlib.util.spec_from_file_location(name, ROOT / rel)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 class MVP0AgentTests(unittest.TestCase):
+    def test_research_agent_seeds_cheap_call_queue(self):
+        research = load("trading_research_agent", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "strategy-queue.json"
+            rc = research.cmd_seed(argparse.Namespace(queue=str(queue)))
+            self.assertEqual(rc, 0)
+            items = research.load_queue(queue)
+            self.assertGreaterEqual(len(items), 3)
+            self.assertEqual(items[0]["id"], "qqq-pullback-low-debit-bull-call-spread")
+            self.assertEqual(items[0]["status"], "queued")
+            self.assertIn("quantconnect_test_spec", items[0])
+            self.assertIn(items[0]["family"], {"bull_call_spread", "long_call"})
+
+    def test_research_agent_next_returns_highest_priority_candidate(self):
+        research = load("trading_research_agent_next", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "strategy-queue.json"
+            research.cmd_seed(argparse.Namespace(queue=str(queue)))
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_next(argparse.Namespace(queue=str(queue)))
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "candidate")
+            self.assertEqual(payload["candidate"]["id"], "qqq-pullback-low-debit-bull-call-spread")
+
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}

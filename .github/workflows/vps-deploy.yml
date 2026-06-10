@@ -50,6 +50,7 @@ jobs:
             agent-platform/tools/trading_coding_agent.py \
             agent-platform/tools/trading_review_agent.py \
             agent-platform/tools/trading_coding_agent_stub.py \
+            agent-platform/tools/trading_research_agent.py \
             agent-platform/tools/trading_agent_token.py
 
       - name: Install SSH key
@@ -82,11 +83,13 @@ jobs:
             agent-platform/tools/trading-orchestrator \
             agent-platform/tools/trading-coding-agent \
             agent-platform/tools/trading-review-agent \
+            agent-platform/tools/trading-research-agent \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
             agent-platform/tools/trading_coding_agent.py \
             agent-platform/tools/trading_review_agent.py \
             agent-platform/tools/trading_coding_agent_stub.py \
+            agent-platform/tools/trading_research_agent.py \
             "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/"
 
       - name: Install tools and verify
@@ -102,6 +105,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
@@ -123,7 +127,12 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_coding_agent_stub.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub
+          sudo tee /usr/local/bin/trading-research-agent >/dev/null <<'EOF_BIN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec python3 /usr/local/lib/trading_research_agent.py "$@"
+          EOF_BIN
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent
           python3 - <<'PY'
           from pathlib import Path
           for file in [
@@ -131,6 +140,7 @@ jobs:
               Path('/usr/local/lib/trading_coding_agent.py'),
               Path('/usr/local/lib/trading_review_agent.py'),
               Path('/usr/local/lib/trading_coding_agent_stub.py'),
+              Path('/usr/local/lib/trading_research_agent.py'),
               Path('/usr/local/bin/trading-agent-token'),
           ]:
               compile(file.read_text(), str(file), 'exec')

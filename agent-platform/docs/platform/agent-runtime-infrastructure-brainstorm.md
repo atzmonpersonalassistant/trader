@@ -16,13 +16,14 @@ The key design concern is whether the same agent/runtime should both write code 
 
 ## 2. Logical Agents
 
-The system should keep four logical agent roles:
+The system should keep five logical agent roles:
 
 1. **Coding Agent**
    - Writes code.
    - Works on GitHub issues.
    - Opens branches and PRs.
    - Fixes CI/review comments.
+   - Does **not** choose trading strategies.
 
 2. **Review Agent**
    - Reviews PR diffs.
@@ -30,13 +31,22 @@ The system should keep four logical agent roles:
    - Performs a quant-specific PR checklist where relevant.
    - Should be independent from the Coding Agent session.
 
-3. **Quant Research Validator Agent**
-   - Reviews backtest/sweep results.
+3. **Strategy / Quant Research Agent**
+   - Generates strategy hypotheses and experiment queues.
+   - Defines entry/exit rules, data requirements, risk caps, and discard criteria.
+   - Reads QuantConnect reports and decides whether to discard, refine, or retest a hypothesis.
+   - Does **not** write production code, approve PRs, or place trades.
+   - First target family: cheap upside via long calls, low-debit bull call spreads, calendars/diagonals, and LEAPS call spreads.
+   - Current status: tested as an ad-hoc OpenClaw sub-agent; not yet implemented as a persistent `trading-research-agent` CLI.
+
+4. **Quant Research Validator Agent**
+   - Reviews backtest/sweep results as an independent governance role.
    - Looks for overfitting, weak baselines, bad risk assumptions, and unstable performance.
    - Decides whether research is ready for paper promotion.
    - Can mark issues as `agent:ready` when evidence is sufficient.
+   - Current status: `agent-validator` Linux user exists on the VPS, but no deployed validator CLI exists yet.
 
-4. **Reporting / Orchestration Agent**
+5. **Reporting / Orchestration Agent**
    - Creates follow-up issues.
    - Updates experiment registry.
    - Sends WhatsApp summaries.
