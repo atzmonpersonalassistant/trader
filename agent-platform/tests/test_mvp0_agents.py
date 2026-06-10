@@ -106,6 +106,40 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Run diagnostics first", research.QC_RESEARCH_PROMPT)
         self.assertIn("option-chain availability", research.QC_RESEARCH_PROMPT)
         self.assertIn("retest_after_technical_fix", research.QC_RESEARCH_PROMPT)
+        self.assertIn("RESEARCH_MANDATE", research.QC_RESEARCH_PROMPT)
+
+    def test_research_agent_mandate_captures_uriel_governance(self):
+        research = load("trading_research_agent_mandate", "agent-platform/tools/trading_research_agent.py")
+        mandate = research.RESEARCH_MANDATE
+        self.assertEqual(mandate["mode"], "autonomous_24_7_within_mandate")
+        self.assertIn("options-only", mandate["primary_goal"])
+        self.assertEqual(mandate["research_scope"]["instrument_scope"], "Options only. Ignore good non-options/equity-only setups as candidates.")
+        self.assertIn("defined-risk", mandate["research_scope"]["short_premium"])
+        self.assertIn("zero_dte", "_".join(mandate["research_scope"].keys()))
+        self.assertIn("2018-present", mandate["candidate_gate"]["candidate_requires_full_validation"])
+        self.assertEqual(mandate["validation_protocol"]["concurrency"].split(";")[0], "One QC cloud backtest at a time with the current single B2-8 backtest node")
+        self.assertIn("No hard daily backtest cap", mandate["validation_protocol"]["daily_cap"])
+        self.assertIn("Parameter optimization", mandate["validation_protocol"]["optimization_policy"])
+        self.assertTrue(mandate["external_sources"]["citation_required"])
+        self.assertIn("GitHub issue", mandate["external_sources"]["tooling_policy"])
+        self.assertIn("hourly", mandate["notifications_and_governance"]["heartbeat_frequency"].lower())
+        self.assertIn("GitHub issues only", mandate["notifications_and_governance"]["github_permissions"])
+        self.assertIn("live_trading", mandate["hard_forbidden"])
+        self.assertTrue(mandate["open_questions_next"])
+
+    def test_research_agent_mandate_command_outputs_no_secrets(self):
+        research = load("trading_research_agent_mandate_cmd", "agent-platform/tools/trading_research_agent.py")
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = research.cmd_mandate(argparse.Namespace())
+        self.assertEqual(rc, 0)
+        payload = json.loads(out.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mandate"]["candidate_gate"]["benchmark"], "Primary benchmark is S&P 500 / SPY. Add secondary benchmark when obviously relevant.")
+        self.assertNotIn("QUANTCONNECT_API_TOKEN", out.getvalue())
+        self.assertNotIn("***", out.getvalue())
 
     def test_research_agent_lean_setup_plan_has_no_secret_values(self):
         research = load("trading_research_agent_setup", "agent-platform/tools/trading_research_agent.py")

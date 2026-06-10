@@ -19,9 +19,86 @@ DEFAULT_REPORTS_DIR = Path("/agents/research/reports")
 DEFAULT_WORKSPACE_DIR = Path("/agents/research/lean-workspace")
 DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
 
+
+
+RESEARCH_MANDATE: dict[str, Any] = {
+    "status": "draft_from_uriel_2026_06_10_continue_questions_tomorrow",
+    "mode": "autonomous_24_7_within_mandate",
+    "primary_goal": "Find options-only setups with balanced positive expectancy, validated rigorously before notifying as candidates.",
+    "research_scope": {
+        "asset_scope": "Anything QuantConnect supports, provided options data/liquidity are adequate for validation.",
+        "instrument_scope": "Options only. Ignore good non-options/equity-only setups as candidates.",
+        "strategy_scope": "Any options strategy is allowed if the structure fits the setup, risk is defined/measurable, and QC can test it.",
+        "short_premium": "Allowed only as defined-risk structures such as credit spreads, iron condors, butterflies, and defined-risk calendars/diagonals. Naked short options are forbidden.",
+        "zero_dte": "Allowed if backtestable, but must be labeled ultra-short/high execution risk.",
+        "initial_timeframe": "Near-term opportunities: days to two weeks.",
+        "payoff_objective": "Balanced expectancy: positive expected value with reasonable payoff/risk, drawdown, trade count, and validation quality.",
+        "risk_profiles": "All risk profiles may be explored, but every candidate must be labeled conservative/balanced/aggressive or equivalent.",
+    },
+    "candidate_gate": {
+        "candidate_requires_full_validation": "A candidate may be sent to Uriel only after full validation over 2018-present or an equivalent walk-forward/out-of-sample protocol.",
+        "watch_policy": "Technically interesting setups without full validation remain internal and should not be sent as watch alerts.",
+        "benchmark": "Primary benchmark is S&P 500 / SPY. Add secondary benchmark when obviously relevant.",
+        "benchmark_comparisons": ["strategy_vs_SPY", "strategy_vs_underlying_when_relevant", "strategy_vs_naive_options_baseline_when_relevant"],
+        "minimum_metrics": [
+            "total_return", "max_drawdown", "win_rate", "profit_factor", "expectancy_per_trade",
+            "number_of_trades", "average_holding_period", "sharpe", "sortino", "comparison_vs_SPY",
+            "worst_period_or_regime", "liquidity_risk", "event_risk", "verdict"
+        ],
+        "conviction_format": "low/medium/high plus breakdown: setup quality, liquidity risk, backtest evidence, event risk, payoff/risk, and why the structure fits.",
+        "low_sample_policy": "Do not automatically discard low-trade/short-history ideas if the thesis is strong; lower conviction and document the limitation.",
+        "parameter_stability": "No candidate if performance depends on a single magic parameter; require stability across nearby parameter ranges.",
+        "drawdown_policy": "Judge drawdown relative to strategy profile. Aggressive strategies may tolerate deeper drawdown only if convexity/return justifies it.",
+        "regime_specific_policy": "A strategy that works only in one period/regime can be a candidate only if it identifies that regime in advance.",
+    },
+    "validation_protocol": {
+        "qc_default": "QuantConnect/LEAN Cloud is the default validation platform.",
+        "concurrency": "One QC cloud backtest at a time with the current single B2-8 backtest node; hypotheses may be planned/scored in parallel.",
+        "daily_cap": "No hard daily backtest cap within existing paid resources, but use retry caps, loop guards, and bug stop rules.",
+        "backtest_periods": "Use initial/recent diagnostics as needed, but candidates require 2018-present validation or walk-forward/OOS evidence.",
+        "execution_scenarios": ["optimistic", "realistic", "conservative"],
+        "resolution_policy": "Adaptive: daily for coarse screening; hourly/minute for validation when timing matters; 0DTE/very-short-dated strategies generally require minute-level evidence.",
+        "regime_policy": "Adaptive: start with simple regime tags; deepen analysis if performance is regime-dependent.",
+        "optimization_policy": "Parameter optimization may be used as part of adaptive search, but no optimized result can become a candidate without out-of-sample or walk-forward validation, combination-count disclosure, robustness checks, and complexity penalty.",
+        "latency_policy": "Quality before speed. Do not reject good research for being slow, but stop/report technical stuck loops or repeated failures.",
+        "cost_policy": "Use existing paid QC resources freely. Do not increase subscriptions, nodes, or costs without approval. May open issues/recommend upgrades if bottleneck is clear.",
+        "lookahead_policy": "External or market data without clear timestamp/real-time availability may seed hypotheses only; confidence is penalized and candidate status requires a version using only data available at decision time.",
+    },
+    "external_sources": {
+        "allowed": "Any public/legal/cited source may be used to generate hypotheses, including news, filings, earnings calendars, analyst changes, social/sentiment, and public company materials.",
+        "forbidden": "No paywall/protected-source scraping and no non-public information.",
+        "citation_required": True,
+        "evidence_rule": "External context can generate hypotheses but is not proof of edge; QC validation is required before candidate status.",
+        "tooling_policy": "Prefer dedicated CLIs/tools for external sources instead of ad-hoc curl. If a new CLI/tool is needed, open a GitHub issue; do not install it silently.",
+        "api_key_policy": "If a source requires API key/login, open a GitHub issue and ask Uriel to decide; do not touch secrets independently.",
+        "cache_policy": "Retention depends on source: keep QC reports/metrics/failure library/audit trail long-term; filings/public docs may keep raw if evidence; news/social should generally store summaries, links, timestamps, and short-lived cache rather than raw dumps.",
+    },
+    "notifications_and_governance": {
+        "notify_on": "Send WhatsApp for reasonable validated candidates, daily summary, and hourly alive heartbeat if no interesting candidate.",
+        "heartbeat_frequency": "Hourly when running, even with no findings, including alive/running-or-idle, hypotheses today, QC status, and current focus.",
+        "daily_summary": "Full daily summary: checked, discarded, refine queue, candidates, failures, tomorrow plan, and recommendations to change mandate/caps/universe.",
+        "github_permissions": "Research agent may open GitHub issues only. It may not open PRs or trigger coding agent without approval.",
+        "paper_trading": "If candidate is strong, open a promote-to-paper GitHub issue. Do not start paper trading automatically.",
+        "mandate_changes": "If mandate is blocking/defective, the agent may temporarily adapt within principles to avoid getting stuck, then must open a GitHub issue documenting the problem, temporary deviation, rationale, and proposed permanent mandate change.",
+        "reports": "WhatsApp summaries should be concise; full reports should live in files/GitHub artifacts.",
+        "audit_trail": "Full audit trail required: prompt/job spec, sources/citations, hypotheses, parameters, QC ids, metrics, decisions, failures, temporary mandate deviations, issues/links.",
+        "failure_library": "Keep failures and use them to steer future research; do not repeatedly test the same disproven idea.",
+    },
+    "hard_forbidden": [
+        "live_trading", "placing_orders", "opening_or_closing_positions", "changing_secrets_or_auth",
+        "increasing_costs_or_subscriptions_without_approval", "deleting_state_or_reports",
+        "changing_mandate_permanently_without_issue", "opening_PRs_or_triggering_coding_agent_without_approval",
+        "naked_short_options", "paywall_or_protected_source_scraping", "using_non_public_information"
+    ],
+    "open_questions_next": [
+        "Defined-risk preference vs expectancy for long-premium/open-risk structures (question 54 was pending).",
+        "Any additional sizing/capital assumptions later if Uriel wants position sizing; currently none.",
+    ],
+}
+
 QC_RESEARCH_PROMPT = """You are the Strategy / Quant Research Agent for the Trader project.
 
-Use QuantConnect as the primary research platform. Prefer Lean CLI and QC Cloud workflows over raw REST when possible. Use REST only for gaps or artifact extraction. Backtests must run in QuantConnect Cloud unless explicitly labeled local diagnostics.
+Use QuantConnect as the primary research platform. Prefer Lean CLI and QC Cloud workflows over raw REST when possible. Use REST only for gaps or artifact extraction. Backtests must run in QuantConnect Cloud unless explicitly labeled local diagnostics. Follow RESEARCH_MANDATE exactly; it captures Uriel's current instructions and unresolved questions.
 
 For every hypothesis:
 1. Convert the direction into a precise, testable research spec.
@@ -221,10 +298,16 @@ def cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mandate(args: argparse.Namespace) -> int:
+    print(json.dumps({"ok": True, "mandate": RESEARCH_MANDATE}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_qc_prompt(args: argparse.Namespace) -> int:
     payload = {
         "ok": True,
         "prompt": QC_RESEARCH_PROMPT,
+        "mandate": RESEARCH_MANDATE,
         "lean_first": True,
         "qc_cloud_default": True,
         "reports_dir": str(Path(args.reports_dir)),
@@ -269,6 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.set_defaults(func=cmd_list)
     next_cmd = sub.add_parser("next", help="Return the next queued research candidate")
     next_cmd.set_defaults(func=cmd_next)
+    mandate_cmd = sub.add_parser("mandate", help="Print Uriel's current autonomous research mandate")
+    mandate_cmd.set_defaults(func=cmd_mandate)
     prompt_cmd = sub.add_parser("qc-prompt", help="Print the default QC/Lean-first research prompt")
     prompt_cmd.set_defaults(func=cmd_qc_prompt)
     setup_cmd = sub.add_parser("qc-lean-setup-plan", help="Print the Lean/QC setup plan for agent-research")
