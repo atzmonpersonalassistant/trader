@@ -10,6 +10,20 @@ This module contains the architecture built so far:
 - GitHub App token helper — mints short-lived installation tokens from per-agent GitHub App private keys.
 - MVP-0 docs/runbooks — historical but useful setup and operating notes.
 
+## Current runtime inventory
+
+As of the current VPS setup, the **implemented and deployed** agent CLIs are:
+
+1. `trading-orchestrator` running as Linux user `agent-orchestrator`.
+2. `trading-coding-agent` running as Linux user `agent-coding` when dispatched.
+3. `trading-review-agent` running as Linux user `agent-review` when reviewing PRs.
+
+This repo also includes a new research-agent CLI:
+
+4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. The deploy workflow provisions `/agents/research/{state,logs,reports}` owned by `agent-orchestrator`, so the CLI is currently run by `agent-orchestrator`. It is not yet wired into the orchestrator timer or split into a dedicated `agent-research` Linux user.
+
+The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent.
+
 The goal is that someone can copy `agent-platform/` and understand/adapt the architecture without copying the options trading project.
 
 ## What is reusable
