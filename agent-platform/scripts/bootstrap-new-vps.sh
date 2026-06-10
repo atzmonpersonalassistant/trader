@@ -136,8 +136,11 @@ if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
   }
 }
 JSON
-  chmod 640 /etc/trading-agents/github-apps.json
-  chown root:agent-orchestrator /etc/trading-agents/github-apps.json
+  # This file contains IDs and private-key paths only, not private-key contents.
+  # It must be readable by agent-orchestrator, agent-coding, agent-review, and
+  # agent-validator because each role runs trading-agent-token as its own user.
+  chmod 644 /etc/trading-agents/github-apps.json
+  chown root:root /etc/trading-agents/github-apps.json
 fi
 
 log "bootstrap complete"

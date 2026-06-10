@@ -31,6 +31,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('"review": {', text)
         self.assertNotIn('"roles": {', text)
         self.assertIn('install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research', text)
+        self.assertIn('chmod 644 /etc/trading-agents/github-apps.json', text)
+        self.assertIn('chown root:root /etc/trading-agents/github-apps.json', text)
 
     def test_research_agent_seeds_cheap_call_queue(self):
         research = load("trading_research_agent", "agent-platform/tools/trading_research_agent.py")
