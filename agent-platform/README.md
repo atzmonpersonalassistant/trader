@@ -20,7 +20,7 @@ As of the current VPS setup, the **implemented and deployed** agent CLIs are:
 
 This repo also includes a research-agent CLI:
 
-4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues and exposes the default Lean-first / QC Cloud research prompt. The deploy workflow provisions a dedicated `agent-research` Linux user, owns `/agents/research/{state,logs,reports,lean-workspace}` with that user, gives it access to the shared QuantConnect env through the `agent-quantconnect` group, and logs Lean CLI into QuantConnect without printing secrets. It is not yet wired into an orchestrator timer.
+4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues, exposes the default Lean-first / QC Cloud research prompt, and exposes Uriel's current autonomous research mandate via `trading-research-agent mandate`. The deploy workflow provisions a dedicated `agent-research` Linux user, owns `/agents/research/{state,logs,reports,lean-workspace}` with that user, gives it access to the shared QuantConnect env through the `agent-quantconnect` group, and logs Lean CLI into QuantConnect without printing secrets. It is not yet wired into an orchestrator timer.
 
 The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent. `agent-validator` also has QuantConnect env access for future independent validation.
 
@@ -48,4 +48,4 @@ Secrets and machine-local runtime state are intentionally excluded:
 - `/agents/*/state`, logs, and workspaces
 - GitHub Actions secret values
 
-See `docs/security-and-secrets.md`, `docs/setup/server-migration.md`, and `docs/platform/research-agent-qc-workflow.md` before moving to a new server or sharing this module.
+See `docs/security-and-secrets.md`, `docs/setup/server-migration.md`, `docs/platform/research-agent-qc-workflow.md`, and `docs/platform/research-agent-autonomous-mandate.md` before moving to a new server or sharing this module.
