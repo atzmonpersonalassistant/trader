@@ -193,6 +193,20 @@ jobs:
             fi
             sudo python3 -m pip install --break-system-packages --upgrade lean
           fi
+          sudo python3 - <<'PY_CHMOD'
+          import importlib.util
+          import os
+          from pathlib import Path
+          spec = importlib.util.find_spec("lean")
+          if spec and spec.submodule_search_locations:
+              Path(spec.submodule_search_locations[0]).chmod(0o755)
+              for root, dirs, files in os.walk(spec.submodule_search_locations[0]):
+                  for d in dirs:
+                      Path(root, d).chmod(0o755)
+                  for f in files:
+                      file = Path(root, f)
+                      file.chmod(file.stat().st_mode | 0o444)
+          PY_CHMOD
           sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'
           sudo -n -u agent-research bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env; set +a; export HOME=/home/agent-research; mkdir -p /agents/research/lean-workspace; printf "%s\n" "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/tmp/trader-lean-login.log; lean whoami >/tmp/trader-lean-whoami.log'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
