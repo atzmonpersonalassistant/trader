@@ -18,11 +18,11 @@ As of the current VPS setup, the **implemented and deployed** agent CLIs are:
 2. `trading-coding-agent` running as Linux user `agent-coding` when dispatched.
 3. `trading-review-agent` running as Linux user `agent-review` when reviewing PRs.
 
-This repo also includes a new research-agent CLI:
+This repo also includes a research-agent CLI:
 
-4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. The deploy workflow provisions `/agents/research/{state,logs,reports}` owned by `agent-orchestrator`, so the CLI is currently run by `agent-orchestrator`. It is not yet wired into the orchestrator timer or split into a dedicated `agent-research` Linux user.
+4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. The deploy workflow provisions a dedicated `agent-research` Linux user, owns `/agents/research/{state,logs,reports}` with that user, and gives it access to the shared QuantConnect env through the `agent-quantconnect` group. It is not yet wired into an orchestrator timer.
 
-The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent.
+The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent. `agent-validator` also has QuantConnect env access for future independent validation.
 
 The goal is that someone can copy `agent-platform/` and understand/adapt the architecture without copying the options trading project.
 

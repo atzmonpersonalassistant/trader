@@ -37,22 +37,22 @@ After bootstrap, the server needs:
    - `agent-coding`
    - `agent-review`
    - optional future: `agent-validator`
-   - optional future: `agent-research` (current deployed research CLI can run as `agent-orchestrator`)
+   - `agent-research`
 
 2. Directory layout:
    - `/agents/orchestrator/{state,logs,backups}`
    - `/agents/coding/{workspaces,logs}`
    - `/agents/review/{workspaces,logs}`
-   - `/agents/research/{state,logs,reports}` currently owned by `agent-orchestrator`; future dedicated research runtime may move ownership to `agent-research`
+   - `/agents/research/{state,logs,reports}` owned by `agent-research`
    - `/etc/trading-agents/secrets/{orchestrator,coding,review,validator,research}`
-   - `/etc/trading-agents/secrets/quantconnect/env`, installed by `vps-deploy.yml` from GitHub Secrets and readable only by `root` plus the `agent-quantconnect` group. Current members are limited to non-prompt-driven QuantConnect runner roles (`agent-orchestrator` and `agent-validator`); prompt-driven coding/review users should not receive raw token access.
+   - `/etc/trading-agents/secrets/quantconnect/env`, installed by `vps-deploy.yml` from GitHub Secrets and readable only by `root` plus the `agent-quantconnect` group. Current members are limited to non-prompt-driven QuantConnect runner roles (`agent-orchestrator`, `agent-validator`, and `agent-research`); prompt-driven coding/review users should not receive raw token access.
 
 3. GitHub App private keys:
    - `/etc/trading-agents/secrets/orchestrator/private-key.pem`
    - `/etc/trading-agents/secrets/coding/private-key.pem`
    - `/etc/trading-agents/secrets/review/private-key.pem`
    - optional: `/etc/trading-agents/secrets/validator/private-key.pem`
-   - optional: `/etc/trading-agents/secrets/research/private-key.pem`
+   - optional/future: `/etc/trading-agents/secrets/research/private-key.pem`
 
 4. Agent config files:
    - `/agents/coding/config.json`
@@ -108,7 +108,7 @@ sudo -n -u agent-review env HOME=/home/agent-review trading-review-agent review 
 sudo -n -u agent-coding trading-coding-agent run --issue <safe-test-issue> --skip-codex
 ```
 
-Then trigger `vps-deploy.yml` from GitHub Actions and confirm it deploys successfully to the new server. The deploy verifies that `agent-orchestrator` can source `/etc/trading-agents/secrets/quantconnect/env` and see non-empty QuantConnect variables without printing the secret values.
+Then trigger `vps-deploy.yml` from GitHub Actions and confirm it deploys successfully to the new server. The deploy verifies that `agent-orchestrator` and `agent-research` can source `/etc/trading-agents/secrets/quantconnect/env` and see non-empty QuantConnect variables without printing the secret values.
 
 ## GitHub App token helper config
 
