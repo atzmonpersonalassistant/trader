@@ -152,8 +152,9 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
-          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent seed-cheap-calls >/tmp/trader-research-seed.json
-          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent next >/tmp/trader-research-next.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json next >/tmp/trader-research-next.json
+          rm -f /tmp/trader-research-smoke-queue.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
