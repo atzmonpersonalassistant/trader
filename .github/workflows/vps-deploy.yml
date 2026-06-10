@@ -186,13 +186,16 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo -n -u agent-research bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
-          if ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
+          if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
             if ! python3 -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
               sudo apt-get update
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip python3-venv
             fi
             sudo python3 -m pip install --break-system-packages --upgrade lean
           fi
+          sudo python3 - <<'PY_LEAN_MODULES'
+          import lean.models
+          PY_LEAN_MODULES
           sudo python3 - <<'PY_CHMOD'
           import importlib.util
           import os
