@@ -126,7 +126,7 @@ Example sudoers snippet at `/etc/sudoers.d/trading-agent-orchestrator-dispatch`:
 
 ```text
 agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
-agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub --issue-number [0-9]* --issue-external-id * --title *
 ```
 
 Validate with:

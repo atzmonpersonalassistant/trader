@@ -156,7 +156,7 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
-          agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
+          agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub --issue-number [0-9]* --issue-external-id * --title *
           EOF_SUDOERS
           sudo chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
           sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null

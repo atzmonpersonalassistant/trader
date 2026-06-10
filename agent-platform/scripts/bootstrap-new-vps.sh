@@ -115,7 +115,7 @@ cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
 # root-owned validation wrappers. Do not grant wildcard access to the full
 # trading-coding-agent CLI; it accepts config paths and token commands.
 agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
-agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub --issue-number [0-9]* --issue-external-id * --title *
 SUDOERS
 chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
 visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
