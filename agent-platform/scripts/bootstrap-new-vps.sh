@@ -42,7 +42,7 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq openssh-client python3 sudo
+      ca-certificates curl git jq openssh-client openssl python3 sudo
   else
     log "apt-get not found; skipping package install"
   fi
