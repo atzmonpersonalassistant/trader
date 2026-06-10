@@ -7,6 +7,15 @@ Research only. Not live trading. Do not deploy live without separate review.
 from AlgorithmImports import *  # type: ignore  # QuantConnect runtime import
 
 
+def calculate_safe_spread_quantity(portfolio_value, max_risk_fraction, spread_width):
+    """Return spread quantity without exceeding max width-based risk budget."""
+    if portfolio_value <= 0 or max_risk_fraction <= 0 or spread_width <= 0:
+        return 0
+    max_risk_dollars = portfolio_value * max_risk_fraction
+    one_spread_width_risk = spread_width * 100
+    return int(max_risk_dollars // one_spread_width_risk)
+
+
 class SpyQqqCreditSpreadPoc(QCAlgorithm):
     """Small defined-risk options strategy scaffold for QuantConnect Cloud."""
 
@@ -74,8 +83,14 @@ class SpyQqqCreditSpreadPoc(QCAlgorithm):
             return
 
         width = abs(long_leg.Strike - short_leg.Strike)
-        max_risk_dollars = self.Portfolio.TotalPortfolioValue * self.max_risk_fraction
-        qty = int(max(1, max_risk_dollars // (width * 100)))
+        qty = calculate_safe_spread_quantity(
+            portfolio_value=self.Portfolio.TotalPortfolioValue,
+            max_risk_fraction=self.max_risk_fraction,
+            spread_width=width,
+        )
+        if qty < 1:
+            self.Debug(f"Skip trade: one spread width ${width} exceeds risk budget")
+            return
         qty = min(qty, 1)  # POC safety: one spread max
 
         if self.strategy == "bear_call":
