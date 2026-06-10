@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Bootstrap a fresh VPS for the Trader agent platform.
+#
+# This script creates the local Linux users, directory layout, permissions,
+# sudoers dispatch rules, and placeholder config paths needed before GitHub
+# Actions can deploy the agent tools. It does not install or copy secrets.
+
+set -euo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "ERROR: run as root, e.g. sudo $0" >&2
+  exit 1
+fi
+
+INSTALL_TOOLS="0"
+if [[ "${1:-}" == "--install-system-packages" ]]; then
+  INSTALL_TOOLS="1"
+fi
+
+log() { printf '[bootstrap-new-vps] %s\n' "$*"; }
+
+ensure_user() {
+  local user="$1"
+  if id -u "$user" >/dev/null 2>&1; then
+    log "user exists: $user"
+  else
+    log "creating system user: $user"
+    useradd --system --create-home --shell /usr/sbin/nologin "$user"
+  fi
+}
+
+install_dir() {
+  local owner="$1"
+  local group="$2"
+  local mode="$3"
+  local path="$4"
+  install -d -o "$owner" -g "$group" -m "$mode" "$path"
+}
+
+if [[ "$INSTALL_TOOLS" == "1" ]]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    log "installing base packages via apt-get"
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl git jq openssh-client python3 sudo
+  else
+    log "apt-get not found; skipping package install"
+  fi
+fi
+
+log "creating role users"
+ensure_user agent-orchestrator
+ensure_user agent-coding
+ensure_user agent-review
+ensure_user agent-validator
+
+log "creating /agents layout"
+install_dir root root 711 /agents
+install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator
+install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/state
+install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/logs
+install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/backups
+
+install_dir agent-coding agent-coding 750 /agents/coding
+install_dir agent-coding agent-coding 750 /agents/coding/state
+install_dir agent-coding agent-coding 755 /agents/coding/workspaces
+install_dir agent-coding agent-coding 755 /agents/coding/logs
+install_dir agent-coding agent-coding 750 /agents/coding/controller
+
+install_dir agent-review agent-review 750 /agents/review
+install_dir agent-review agent-review 750 /agents/review/state
+install_dir agent-review agent-review 755 /agents/review/workspaces
+install_dir agent-review agent-review 750 /agents/review/logs
+
+# The research CLI currently runs as agent-orchestrator. A future dedicated
+# agent-research user can take ownership once MVP1 defines that role.
+install_dir root root 755 /agents/research
+install_dir agent-orchestrator agent-orchestrator 750 /agents/research/state
+install_dir agent-orchestrator agent-orchestrator 750 /agents/research/logs
+install_dir agent-orchestrator agent-orchestrator 750 /agents/research/reports
+
+install_dir agent-validator agent-validator 750 /agents/validator
+install_dir agent-validator agent-validator 750 /agents/validator/state
+install_dir agent-validator agent-validator 750 /agents/validator/logs
+install_dir agent-validator agent-validator 755 /agents/validator/workspaces
+
+log "creating server-local secret/config directories without secret contents"
+install_dir root root 750 /etc/trading-agents
+install_dir root root 750 /etc/trading-agents/secrets
+for role in orchestrator coding review validator research; do
+  install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
+done
+
+log "installing sudoers rules"
+cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
+# Allow orchestrator to dispatch coding-agent work and run workspace cleanup.
+agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent *
+agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent-stub *
+SUDOERS
+chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
+visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
+
+log "creating placeholder config files if missing"
+if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
+  cat > /etc/trading-agents/github-apps.json <<'JSON'
+{
+  "roles": {
+    "orchestrator": {
+      "app_id": "REPLACE_ME",
+      "installation_id": "REPLACE_ME",
+      "private_key_path": "/etc/trading-agents/secrets/orchestrator/private-key.pem",
+      "linux_user": "agent-orchestrator"
+    },
+    "coding": {
+      "app_id": "REPLACE_ME",
+      "installation_id": "REPLACE_ME",
+      "private_key_path": "/etc/trading-agents/secrets/coding/private-key.pem",
+      "linux_user": "agent-coding"
+    },
+    "review": {
+      "app_id": "REPLACE_ME",
+      "installation_id": "REPLACE_ME",
+      "private_key_path": "/etc/trading-agents/secrets/review/private-key.pem",
+      "linux_user": "agent-review"
+    }
+  }
+}
+JSON
+  chmod 640 /etc/trading-agents/github-apps.json
+  chown root:agent-orchestrator /etc/trading-agents/github-apps.json
+fi
+
+log "bootstrap complete"
+cat <<'NEXT'
+
+Next manual steps:
+1. Install real GitHub App private keys under /etc/trading-agents/secrets/*/private-key.pem.
+2. Replace /etc/trading-agents/github-apps.json placeholder IDs with real App/installation IDs.
+3. Install Codex/OpenAI auth for agent-coding and agent-review if those roles run Codex on the VPS.
+4. Update GitHub Actions secrets: VPS_HOST, VPS_USER, VPS_SSH_PRIVATE_KEY, VPS_SSH_HOST_KEY.
+5. Run the vps-deploy workflow and then the validation checklist in server-migration.md.
+NEXT

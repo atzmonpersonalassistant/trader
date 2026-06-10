@@ -15,7 +15,17 @@ This only covers GitHub Actions SSH deploy.
 
 ## What must exist on the new server
 
-The new server also needs:
+The new server also needs the bootstrap script applied first:
+
+```bash
+sudo agent-platform/scripts/bootstrap-new-vps.sh
+# or, on a minimal Ubuntu server:
+sudo agent-platform/scripts/bootstrap-new-vps.sh --install-system-packages
+```
+
+The script creates users, directories, permissions, sudoers rules, and placeholder config paths. It deliberately does **not** install secrets.
+
+After bootstrap, the server needs:
 
 1. Linux users:
    - `agent-orchestrator`
@@ -48,7 +58,7 @@ The new server also needs:
    - `/home/agent-review/.codex/auth.json`
    - future, if the research agent uses Codex directly: `/home/agent-research/.codex/auth.json`
 
-6. Systemd units/timers and sudoers rules for orchestrator dispatch/review flow.
+6. Systemd units/timers for orchestrator dispatch/review flow. Basic sudoers dispatch rules are created by `agent-platform/scripts/bootstrap-new-vps.sh`.
 
 ## Private keys: copy vs regenerate
 
