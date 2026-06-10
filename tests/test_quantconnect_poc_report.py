@@ -29,11 +29,21 @@ class QuantConnectPocReportTests(unittest.TestCase):
 
     def test_renders_report_without_secret_values(self):
         report = research_report.render_report(
-            {"underlying": "SPY", "strategy": "bear_call", "api_token": "SECRET"},
+            {
+                "underlying": "SPY",
+                "strategy": "bear_call",
+                "api_token": "SECRET",
+                "api_key": "KEY",
+                "password": "PASSWORD",
+                "authorization": "Bearer abc",
+            },
             {"trade_count": 40, "sharpe": 0.8, "max_drawdown_pct": 8, "profit_factor": 1.2},
         )
         self.assertIn("paper_test_candidate", report)
         self.assertNotIn("SECRET", report)
+        self.assertNotIn("KEY", report)
+        self.assertNotIn("PASSWORD", report)
+        self.assertNotIn("Bearer abc", report)
 
 
 if __name__ == "__main__":

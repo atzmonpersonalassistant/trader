@@ -61,8 +61,27 @@ def evaluate(metrics: dict[str, Any]) -> ResearchVerdict:
     return ResearchVerdict("paper_test_candidate", ["basic metrics pass minimum POC thresholds"])
 
 
+REPORT_CONFIG_ALLOWLIST = {
+    "hypothesis",
+    "underlying",
+    "strategy",
+    "min_dte",
+    "max_dte",
+    "short_delta_target",
+    "spread_width",
+    "max_risk_fraction",
+    "live_trading",
+}
+
+
+def safe_report_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return only explicit research parameters safe to publish in Markdown."""
+    return {key: config[key] for key in sorted(config) if key in REPORT_CONFIG_ALLOWLIST}
+
+
 def render_report(config: dict[str, Any], metrics: dict[str, Any]) -> str:
     validate_config(config)
+    safe_config = safe_report_config(config)
     verdict = evaluate(metrics)
     lines = [
         "# QuantConnect Options POC Research Report",
@@ -74,10 +93,8 @@ def render_report(config: dict[str, Any], metrics: dict[str, Any]) -> str:
         "",
         "## Parameters",
     ]
-    for key in sorted(config):
-        if "secret" in key.lower() or "token" in key.lower():
-            continue
-        lines.append(f"- {key}: `{config[key]}`")
+    for key, value in safe_config.items():
+        lines.append(f"- {key}: `{value}`")
     lines.extend(["", "## Metrics"])
     for key in sorted(metrics):
         lines.append(f"- {key}: `{metrics[key]}`")
