@@ -154,7 +154,7 @@ jobs:
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json next >/tmp/trader-research-next.json
-          rm -f /tmp/trader-research-smoke-queue.json
+          sudo -n -u agent-orchestrator rm -f /tmp/trader-research-smoke-queue.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
