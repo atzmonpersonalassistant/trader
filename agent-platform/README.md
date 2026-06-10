@@ -20,7 +20,7 @@ As of the current VPS setup, the **implemented and deployed** agent CLIs are:
 
 This repo also includes a new research-agent CLI:
 
-4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. It is not yet wired into the orchestrator timer or deployed as a continuously running VPS role.
+4. `trading-research-agent` — implemented in `agent-platform/tools/` and included in the deploy workflow. It seeds/lists strategy hypothesis queues. The deploy workflow provisions `/agents/research/{state,logs,reports}` owned by `agent-orchestrator`, so the CLI is currently run by `agent-orchestrator`. It is not yet wired into the orchestrator timer or split into a dedicated `agent-research` Linux user.
 
 The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent.
 

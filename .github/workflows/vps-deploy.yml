@@ -106,6 +106,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
+          sudo install -d -o agent-orchestrator -g agent-orchestrator -m 750 /agents/research/state /agents/research/logs /agents/research/reports
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
@@ -151,6 +152,8 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent seed-cheap-calls >/tmp/trader-research-seed.json
+          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent next >/tmp/trader-research-next.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE

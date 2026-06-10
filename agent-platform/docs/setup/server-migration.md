@@ -22,13 +22,13 @@ The new server also needs:
    - `agent-coding`
    - `agent-review`
    - optional future: `agent-validator`
-   - optional future: `agent-research`
+   - optional future: `agent-research` (current deployed research CLI can run as `agent-orchestrator`)
 
 2. Directory layout:
    - `/agents/orchestrator/{state,logs,backups}`
    - `/agents/coding/{workspaces,logs}`
    - `/agents/review/{workspaces,logs}`
-   - future: `/agents/research/{state,logs,reports}`
+   - `/agents/research/{state,logs,reports}` currently owned by `agent-orchestrator`; future dedicated research runtime may move ownership to `agent-research`
    - `/etc/trading-agents/secrets/{orchestrator,coding,review,validator,research}`
 
 3. GitHub App private keys:
