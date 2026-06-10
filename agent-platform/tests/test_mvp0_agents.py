@@ -24,16 +24,18 @@ class MVP0AgentTests(unittest.TestCase):
         script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
         subprocess.run(["bash", "-n", str(script)], check=True)
         text = script.read_text()
-        self.assertIn('ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 sqlite3 sudo', text)
+        self.assertIn('ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo', text)
         self.assertIn('npm install -g @openai/codex', text)
+        self.assertIn('python3 -m pip install --break-system-packages --upgrade lean', text)
         self.assertIn('usermod -aG agent-coding agent-orchestrator', text)
         self.assertIn('usermod -aG agent-review agent-orchestrator', text)
         self.assertIn('install_dir agent-coding agent-coding 2770 /agents/coding/workspaces', text)
         self.assertIn('install_dir agent-review agent-review 2770 /agents/review/workspaces', text)
         self.assertIn('ensure_user agent-research', text)
         self.assertIn('install_dir agent-research agent-research 750 /agents/research', text)
+        self.assertIn('install_dir agent-research agent-research 750 /agents/research/lean-workspace', text)
         self.assertIn('chown -R agent-research:agent-research /agents/research', text)
-        self.assertIn('chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports', text)
+        self.assertIn('chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace', text)
         self.assertNotIn('groupadd --system agent-platform', text)
         self.assertIn('install_dir root root 755 /etc/trading-agents', text)
         self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
@@ -96,6 +98,46 @@ class MVP0AgentTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertEqual(payload["type"], "candidate")
             self.assertEqual(payload["candidate"]["id"], "qqq-pullback-low-debit-bull-call-spread")
+
+    def test_research_agent_qc_prompt_is_lean_cloud_diagnostics_first(self):
+        research = load("trading_research_agent_prompt", "agent-platform/tools/trading_research_agent.py")
+        self.assertIn("Prefer Lean CLI", research.QC_RESEARCH_PROMPT)
+        self.assertIn("QuantConnect Cloud", research.QC_RESEARCH_PROMPT)
+        self.assertIn("Run diagnostics first", research.QC_RESEARCH_PROMPT)
+        self.assertIn("option-chain availability", research.QC_RESEARCH_PROMPT)
+        self.assertIn("retest_after_technical_fix", research.QC_RESEARCH_PROMPT)
+
+    def test_research_agent_lean_setup_plan_has_no_secret_values(self):
+        research = load("trading_research_agent_setup", "agent-platform/tools/trading_research_agent.py")
+        import contextlib
+        import io
+        out = io.StringIO()
+        args = argparse.Namespace(workspace_dir="/tmp/lean workspace;bad")
+        with contextlib.redirect_stdout(out):
+            rc = research.cmd_qc_lean_setup_plan(args)
+        self.assertEqual(rc, 0)
+        payload = json.loads(out.getvalue())
+        commands = "\n".join(payload["commands"])
+        self.assertIn("lean login --user-id $QUANTCONNECT_USER_ID", commands)
+        self.assertIn("printf '%s\\n'", commands)
+        self.assertIn("lean whoami", commands)
+        self.assertIn("'/tmp/lean workspace;bad'", commands)
+        self.assertNotIn("mkdir -p /tmp/lean workspace;bad", commands)
+        self.assertNotIn("/agents/research/lean-workspace", commands)
+        self.assertNotIn("--api-token $QUANTCONNECT_API_TOKEN", commands)
+        self.assertNotIn("***", commands)
+
+    def test_vps_deploy_logs_lean_in_as_agent_research(self):
+        text = (ROOT / ".github/workflows/vps-deploy.yml").read_text()
+        self.assertIn("/agents/research/lean-workspace", text)
+        self.assertIn("sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'", text)
+        self.assertIn("python3 -m pip install --break-system-packages --upgrade lean", text)
+        self.assertIn("lean login --user-id", text)
+        self.assertIn("set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env", text)
+        self.assertIn("printf \"%s\\n\" \"$QUANTCONNECT_API_TOKEN\" | lean login", text)
+        self.assertNotIn("--api-token \"$QUANTCONNECT_API_TOKEN\"", text)
+        self.assertIn("lean whoami", text)
+        self.assertIn("trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next", text)
 
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")

@@ -9,13 +9,40 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 DEFAULT_STATE_DIR = Path("/agents/research/state")
 DEFAULT_REPORTS_DIR = Path("/agents/research/reports")
+DEFAULT_WORKSPACE_DIR = Path("/agents/research/lean-workspace")
 DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
+
+QC_RESEARCH_PROMPT = """You are the Strategy / Quant Research Agent for the Trader project.
+
+Use QuantConnect as the primary research platform. Prefer Lean CLI and QC Cloud workflows over raw REST when possible. Use REST only for gaps or artifact extraction. Backtests must run in QuantConnect Cloud unless explicitly labeled local diagnostics.
+
+For every hypothesis:
+1. Convert the direction into a precise, testable research spec.
+2. Run diagnostics first: signal count, option-chain availability, contract counts under filters, rejection reasons, missing Greeks/IV, and trade/event counts by symbol/year/regime.
+3. Only run broad backtests after diagnostics show enough data/events.
+4. Use QC capabilities deeply: option chains/universes, Greeks/delta/IV, History, indicators, scheduled scanners, cloud backtests, parameters/sweeps, logs/ObjectStore/artifacts where accessible.
+5. Save artifacts under /agents/research/reports/<run-id>/ without secrets.
+6. End with a verdict: discard, refine, retest_after_technical_fix, or candidate_for_validator_review.
+
+Do not place live trades. Do not make trade recommendations from weak or technically blocked evidence. If QC access, compute nodes, logs, ObjectStore, or data coverage block the run, say so plainly and recommend the exact next technical step.
+"""
+
+def lean_setup_commands(workspace_dir: Path) -> list[str]:
+    workspace = shlex.quote(str(workspace_dir))
+    return [
+        "python3 -m pip install --user --upgrade lean",
+        "python3 -m pipx install lean  # acceptable alternative when pipx is available",
+        "printf '%s\\n' \"$QUANTCONNECT_API_TOKEN\" | lean login --user-id $QUANTCONNECT_USER_ID",
+        f"mkdir -p {workspace} && cd {workspace} && lean init",
+        "lean whoami",
+    ]
 
 
 @dataclass(frozen=True)
@@ -194,9 +221,46 @@ def cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_qc_prompt(args: argparse.Namespace) -> int:
+    payload = {
+        "ok": True,
+        "prompt": QC_RESEARCH_PROMPT,
+        "lean_first": True,
+        "qc_cloud_default": True,
+        "reports_dir": str(Path(args.reports_dir)),
+        "workspace_dir": str(Path(args.workspace_dir)),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_qc_lean_setup_plan(args: argparse.Namespace) -> int:
+    payload = {
+        "ok": True,
+        "type": "lean_setup_plan",
+        "workspace_dir": str(Path(args.workspace_dir)),
+        "credential_env": "/etc/trading-agents/secrets/quantconnect/env",
+        "commands": lean_setup_commands(Path(args.workspace_dir)),
+        "verification": [
+            "command -v lean",
+            "lean --version",
+            "lean whoami",
+        ],
+        "notes": [
+            "Run as agent-research with HOME=/home/agent-research.",
+            "Do not print QUANTCONNECT_API_TOKEN or the Lean credentials file.",
+            "Cloud backtests should use lean cloud backtest <project> --push.",
+        ],
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Research-only strategy agent")
     parser.add_argument("--queue", default=str(DEFAULT_QUEUE_PATH))
+    parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
+    parser.add_argument("--workspace-dir", default=str(DEFAULT_WORKSPACE_DIR))
     sub = parser.add_subparsers(dest="command", required=True)
     seed = sub.add_parser("seed-cheap-calls", help="Seed initial cheap-call research queue")
     seed.set_defaults(func=cmd_seed)
@@ -205,6 +269,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.set_defaults(func=cmd_list)
     next_cmd = sub.add_parser("next", help="Return the next queued research candidate")
     next_cmd.set_defaults(func=cmd_next)
+    prompt_cmd = sub.add_parser("qc-prompt", help="Print the default QC/Lean-first research prompt")
+    prompt_cmd.set_defaults(func=cmd_qc_prompt)
+    setup_cmd = sub.add_parser("qc-lean-setup-plan", help="Print the Lean/QC setup plan for agent-research")
+    setup_cmd.set_defaults(func=cmd_qc_lean_setup_plan)
     return parser
 
 

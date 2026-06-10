@@ -130,9 +130,9 @@ jobs:
           if ! id agent-research >/dev/null 2>&1; then
             sudo useradd --system --create-home --shell /usr/sbin/nologin agent-research
           fi
-          sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
+          sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo chown -R agent-research:agent-research /agents/research
-          sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
+          sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           if ! getent group agent-quantconnect >/dev/null 2>&1; then
             sudo groupadd --system agent-quantconnect
           fi
@@ -186,6 +186,15 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo -n -u agent-research bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
+          if ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
+            if ! python3 -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip python3-venv
+            fi
+            sudo python3 -m pip install --break-system-packages --upgrade lean
+          fi
+          sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'
+          sudo -n -u agent-research bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env; set +a; export HOME=/home/agent-research; mkdir -p /agents/research/lean-workspace; printf "%s\n" "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/tmp/trader-lean-login.log; lean whoami >/tmp/trader-lean-whoami.log'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *
