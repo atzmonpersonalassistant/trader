@@ -44,27 +44,24 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq openssh-client openssl python3 sudo
+      ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 sqlite3 sudo
+    if ! command -v codex >/dev/null 2>&1; then
+      npm install -g @openai/codex
+    fi
   else
     log "apt-get not found; skipping package install"
   fi
 fi
 
-log "creating role users and shared platform group"
-if getent group agent-platform >/dev/null 2>&1; then
-  log "group exists: agent-platform"
-else
-  log "creating group: agent-platform"
-  groupadd --system agent-platform
-fi
+log "creating role users"
 ensure_user agent-orchestrator
 ensure_user agent-coding
 ensure_user agent-review
 ensure_user agent-validator
-usermod -aG agent-platform agent-orchestrator
-usermod -aG agent-platform agent-coding
-usermod -aG agent-platform agent-review
-usermod -aG agent-platform agent-validator
+# Orchestrator needs group access only for cleanup/traversal of coding/review workspaces.
+# Do not put all roles in one shared writable group.
+usermod -aG agent-coding agent-orchestrator
+usermod -aG agent-review agent-orchestrator
 
 log "creating /agents layout"
 install_dir root root 711 /agents
@@ -73,15 +70,15 @@ install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/state
 install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/logs
 install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/backups
 
-install_dir agent-coding agent-platform 750 /agents/coding
+install_dir agent-coding agent-coding 750 /agents/coding
 install_dir agent-coding agent-coding 750 /agents/coding/state
-install_dir agent-coding agent-platform 2775 /agents/coding/workspaces
+install_dir agent-coding agent-coding 2770 /agents/coding/workspaces
 install_dir agent-coding agent-coding 755 /agents/coding/logs
 install_dir agent-coding agent-coding 750 /agents/coding/controller
 
-install_dir agent-review agent-platform 750 /agents/review
+install_dir agent-review agent-review 750 /agents/review
 install_dir agent-review agent-review 750 /agents/review/state
-install_dir agent-review agent-platform 2775 /agents/review/workspaces
+install_dir agent-review agent-review 2770 /agents/review/workspaces
 install_dir agent-review agent-review 750 /agents/review/logs
 
 # The research CLI currently runs as agent-orchestrator. A future dedicated
