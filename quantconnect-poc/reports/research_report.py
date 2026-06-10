@@ -16,7 +16,10 @@ class ResearchVerdict:
     reasons: list[str]
 
 
-def _as_float(metrics: dict[str, Any], key: str, default: float = 0.0) -> float:
+MISSING = object()
+
+
+def _as_float(metrics: dict[str, Any], key: str, default: Any = 0.0) -> Any:
     value = metrics.get(key, default)
     if isinstance(value, dict):
         value = value.get("value", default)
@@ -44,7 +47,7 @@ def evaluate(metrics: dict[str, Any]) -> ResearchVerdict:
     trades = int(_as_float(metrics, "trade_count", _as_float(metrics, "Total Trades", 0)))
     sharpe = _as_float(metrics, "sharpe", _as_float(metrics, "Sharpe Ratio", 0))
     drawdown = abs(_as_float(metrics, "max_drawdown_pct", _as_float(metrics, "Drawdown", 100)))
-    profit_factor = _as_float(metrics, "profit_factor", _as_float(metrics, "Profit Factor", 0))
+    profit_factor = _as_float(metrics, "profit_factor", _as_float(metrics, "Profit Factor", MISSING))
 
     reasons: list[str] = []
     if trades < 30:
@@ -53,7 +56,7 @@ def evaluate(metrics: dict[str, Any]) -> ResearchVerdict:
         reasons.append("out-of-sample/overall Sharpe below 0.5 threshold")
     if drawdown > 20:
         reasons.append("max drawdown above 20%")
-    if profit_factor and profit_factor < 1.1:
+    if profit_factor is not MISSING and profit_factor < 1.1:
         reasons.append("profit factor below 1.1")
 
     if reasons:

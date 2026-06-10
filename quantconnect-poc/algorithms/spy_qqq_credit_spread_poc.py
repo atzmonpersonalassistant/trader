@@ -101,8 +101,7 @@ class SpyQqqCreditSpreadPoc(QCAlgorithm):
         else:
             legs = [Leg.Create(short_leg.Symbol, -qty), Leg.Create(long_leg.Symbol, qty)]
 
-        ticket = self.ComboMarketOrder(legs, 1, tag=f"POC {self.strategy} credit spread")
-        self.open_ticket_ids.add(ticket.OrderId)
+        self.ComboMarketOrder(legs, 1, tag=f"POC {self.strategy} credit spread")
         self.last_entry_date = self.Time.date()
 
     def _select_short_contract(self, contracts, right):

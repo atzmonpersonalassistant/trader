@@ -27,6 +27,13 @@ class QuantConnectPocReportTests(unittest.TestCase):
         self.assertEqual(verdict.verdict, "discard_or_refine")
         self.assertTrue(any("too few trades" in r for r in verdict.reasons))
 
+    def test_discards_zero_profit_factor_when_present(self):
+        verdict = research_report.evaluate(
+            {"trade_count": 40, "sharpe": 1.2, "max_drawdown_pct": 5, "profit_factor": 0}
+        )
+        self.assertEqual(verdict.verdict, "discard_or_refine")
+        self.assertTrue(any("profit factor" in r for r in verdict.reasons))
+
     def test_renders_report_without_secret_values(self):
         report = research_report.render_report(
             {
