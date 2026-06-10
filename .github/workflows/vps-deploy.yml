@@ -35,12 +35,16 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           VPS_SSH_HOST_KEY: ${{ secrets.VPS_SSH_HOST_KEY }}
+          QUANTCONNECT_USER_ID: ${{ secrets.QUANTCONNECT_USER_ID }}
+          QUANTCONNECT_API_TOKEN: ${{ secrets.QUANTCONNECT_API_TOKEN }}
         run: |
           set -euo pipefail
           test -n "$VPS_HOST"
           test -n "$VPS_USER"
           test -n "$VPS_SSH_PRIVATE_KEY"
           test -n "$VPS_SSH_HOST_KEY"
+          test -n "$QUANTCONNECT_USER_ID"
+          test -n "$QUANTCONNECT_API_TOKEN"
 
       - name: Compile tools before deploy
         run: |
@@ -75,8 +79,17 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           DEPLOY_DIR: /tmp/trader-agent-tools-${{ github.sha }}
+          QUANTCONNECT_USER_ID: ${{ secrets.QUANTCONNECT_USER_ID }}
+          QUANTCONNECT_API_TOKEN: ${{ secrets.QUANTCONNECT_API_TOKEN }}
         run: |
           set -euo pipefail
+          tmp_qc_env="$(mktemp)"
+          trap 'rm -f "$tmp_qc_env"' EXIT
+          chmod 600 "$tmp_qc_env"
+          {
+            printf "QUANTCONNECT_USER_ID=%q\n" "$QUANTCONNECT_USER_ID"
+            printf "QUANTCONNECT_API_TOKEN=%q\n" "$QUANTCONNECT_API_TOKEN"
+          } > "$tmp_qc_env"
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
             "rm -rf '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR'"
           scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
@@ -93,12 +106,16 @@ jobs:
             agent-platform/tools/trading_coding_agent_stub.py \
             agent-platform/tools/trading_research_agent.py \
             "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/"
+          scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$tmp_qc_env" "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/quantconnect.env"
 
       - name: Install tools and verify
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           DEPLOY_DIR: /tmp/trader-agent-tools-${{ github.sha }}
+          QUANTCONNECT_USER_ID: ${{ secrets.QUANTCONNECT_USER_ID }}
+          QUANTCONNECT_API_TOKEN: ${{ secrets.QUANTCONNECT_API_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
@@ -111,6 +128,13 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
           sudo install -d -o agent-orchestrator -g agent-orchestrator -m 750 /agents/research/state /agents/research/logs /agents/research/reports
+          if ! getent group agent-quantconnect >/dev/null 2>&1; then
+            sudo groupadd --system agent-quantconnect
+          fi
+          sudo usermod -aG agent-quantconnect agent-orchestrator
+          sudo usermod -aG agent-quantconnect agent-validator
+          sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
+          sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
@@ -154,6 +178,7 @@ jobs:
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-agent-token orchestrator | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-coding env PYTHONDONTWRITEBYTECODE=1 trading-agent-token coding | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
+          sudo -n -u agent-orchestrator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *

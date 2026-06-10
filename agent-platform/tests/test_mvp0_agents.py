@@ -43,6 +43,13 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('"review": {', text)
         self.assertNotIn('"roles": {', text)
         self.assertIn('install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research', text)
+        self.assertIn('groupadd --system agent-quantconnect', text)
+        self.assertIn('usermod -aG agent-quantconnect agent-orchestrator', text)
+        self.assertIn('usermod -aG agent-quantconnect agent-validator', text)
+        self.assertNotIn('usermod -aG agent-quantconnect agent-coding', text)
+        self.assertNotIn('usermod -aG agent-quantconnect agent-review', text)
+        self.assertIn('install_dir root agent-quantconnect 750 /etc/trading-agents/secrets/quantconnect', text)
+        self.assertIn('chmod 640 /etc/trading-agents/secrets/quantconnect/env', text)
         self.assertIn('chmod 644 /etc/trading-agents/github-apps.json', text)
         self.assertIn('chown root:root /etc/trading-agents/github-apps.json', text)
 
@@ -404,6 +411,22 @@ class MVP0AgentTests(unittest.TestCase):
             review.github_request = original
         self.assertEqual([label["name"] for label in context["pr"]["labels"]], ["human:approved"])
         self.assertTrue(any("/issues/7" in url for _, url, _ in calls))
+
+    def test_vps_deploy_installs_quantconnect_secret_env(self):
+        workflow = (ROOT / ".github/workflows/vps-deploy.yml").read_text()
+        self.assertIn("QUANTCONNECT_USER_ID: ${{ secrets.QUANTCONNECT_USER_ID }}", workflow)
+        self.assertIn("QUANTCONNECT_API_TOKEN: ${{ secrets.QUANTCONNECT_API_TOKEN }}", workflow)
+        self.assertIn('printf "QUANTCONNECT_USER_ID=%q\\n" "$QUANTCONNECT_USER_ID"', workflow)
+        self.assertIn('printf "QUANTCONNECT_API_TOKEN=%q\\n" "$QUANTCONNECT_API_TOKEN"', workflow)
+        self.assertIn('sudo groupadd --system agent-quantconnect', workflow)
+        self.assertIn('sudo usermod -aG agent-quantconnect agent-orchestrator', workflow)
+        self.assertIn('sudo usermod -aG agent-quantconnect agent-validator', workflow)
+        self.assertNotIn('sudo usermod -aG agent-quantconnect agent-coding', workflow)
+        self.assertNotIn('sudo usermod -aG agent-quantconnect agent-review', workflow)
+        self.assertIn('sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect', workflow)
+        self.assertIn('sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env', workflow)
+        self.assertIn('/etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"', workflow)
+        self.assertNotIn('QUANTCONNECT_API_TOKEN=***', workflow)
 
     def test_review_autoreview_selection_and_required_failure(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
