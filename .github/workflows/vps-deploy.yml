@@ -127,12 +127,18 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
-          sudo install -d -o agent-orchestrator -g agent-orchestrator -m 750 /agents/research/state /agents/research/logs /agents/research/reports
+          if ! id agent-research >/dev/null 2>&1; then
+            sudo useradd --system --create-home --shell /usr/sbin/nologin agent-research
+          fi
+          sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
+          sudo chown -R agent-research:agent-research /agents/research
+          sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports
           if ! getent group agent-quantconnect >/dev/null 2>&1; then
             sudo groupadd --system agent-quantconnect
           fi
           sudo usermod -aG agent-quantconnect agent-orchestrator
           sudo usermod -aG agent-quantconnect agent-validator
+          sudo usermod -aG agent-quantconnect agent-research
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
@@ -179,6 +185,7 @@ jobs:
           sudo -n -u agent-coding env PYTHONDONTWRITEBYTECODE=1 trading-agent-token coding | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
+          sudo -n -u agent-research bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *
@@ -187,9 +194,10 @@ jobs:
           sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
-          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json
-          sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json next >/tmp/trader-research-next.json
-          sudo -n -u agent-orchestrator rm -f /tmp/trader-research-smoke-queue.json
+          sudo -n -u agent-research rm -f /agents/research/state/deploy-smoke-queue.json
+          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json
+          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next >/tmp/trader-research-next.json
+          sudo -n -u agent-research rm -f /agents/research/state/deploy-smoke-queue.json
           rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
