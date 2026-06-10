@@ -48,11 +48,21 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
   fi
 fi
 
-log "creating role users"
+log "creating role users and shared platform group"
+if getent group agent-platform >/dev/null 2>&1; then
+  log "group exists: agent-platform"
+else
+  log "creating group: agent-platform"
+  groupadd --system agent-platform
+fi
 ensure_user agent-orchestrator
 ensure_user agent-coding
 ensure_user agent-review
 ensure_user agent-validator
+usermod -aG agent-platform agent-orchestrator
+usermod -aG agent-platform agent-coding
+usermod -aG agent-platform agent-review
+usermod -aG agent-platform agent-validator
 
 log "creating /agents layout"
 install_dir root root 711 /agents
@@ -61,15 +71,15 @@ install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/state
 install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/logs
 install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/backups
 
-install_dir agent-coding agent-coding 750 /agents/coding
+install_dir agent-coding agent-platform 750 /agents/coding
 install_dir agent-coding agent-coding 750 /agents/coding/state
-install_dir agent-coding agent-coding 755 /agents/coding/workspaces
+install_dir agent-coding agent-platform 2775 /agents/coding/workspaces
 install_dir agent-coding agent-coding 755 /agents/coding/logs
 install_dir agent-coding agent-coding 750 /agents/coding/controller
 
-install_dir agent-review agent-review 750 /agents/review
+install_dir agent-review agent-platform 750 /agents/review
 install_dir agent-review agent-review 750 /agents/review/state
-install_dir agent-review agent-review 755 /agents/review/workspaces
+install_dir agent-review agent-platform 2775 /agents/review/workspaces
 install_dir agent-review agent-review 750 /agents/review/logs
 
 # The research CLI currently runs as agent-orchestrator. A future dedicated
@@ -85,8 +95,8 @@ install_dir agent-validator agent-validator 750 /agents/validator/logs
 install_dir agent-validator agent-validator 755 /agents/validator/workspaces
 
 log "creating server-local secret/config directories without secret contents"
-install_dir root root 750 /etc/trading-agents
-install_dir root root 750 /etc/trading-agents/secrets
+install_dir root root 755 /etc/trading-agents
+install_dir root root 711 /etc/trading-agents/secrets
 for role in orchestrator coding review validator; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done

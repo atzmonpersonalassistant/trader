@@ -24,6 +24,12 @@ class MVP0AgentTests(unittest.TestCase):
         script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
         subprocess.run(["bash", "-n", str(script)], check=True)
         text = script.read_text()
+        self.assertIn('groupadd --system agent-platform', text)
+        self.assertIn('usermod -aG agent-platform agent-orchestrator', text)
+        self.assertIn('install_dir agent-coding agent-platform 2775 /agents/coding/workspaces', text)
+        self.assertIn('install_dir agent-review agent-platform 2775 /agents/review/workspaces', text)
+        self.assertIn('install_dir root root 755 /etc/trading-agents', text)
+        self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
         self.assertIn('for role in orchestrator coding review validator; do', text)
         self.assertNotIn('for role in orchestrator coding review validator research; do', text)
         self.assertIn('"orchestrator": {', text)
