@@ -28,6 +28,7 @@ MVP direction is documented in `docs/options-research-mvp-roadmap.md`: MVP1 shou
 14. **Add CLI entrypoints** — commands like `download-data`, `scan`, `backtest`, and `report`.
 15. **Write README and research rules** — document how to run it, what the backtest means, and what not to infer.
 16. **Add future integration hooks** — clean interfaces for IBKR, historical options providers, and paper trading.
+17. **Build QuantConnect options-strategy POC scaffold** — add a research-only `quantconnect-poc/` artifact for a defined-risk SPY/QQQ credit spread candidate with configurable 7-45 DTE, strike/delta selection, max risk per trade, local Markdown report generation from mocked/exported metrics, and unit tests for report logic plus safety validation. Guardrails: no live trading, no credentials, no local QuantConnect data downloads, no broad universe, no 0DTE default, and no auto-approval of trades.
 
 ## Current Status
 
