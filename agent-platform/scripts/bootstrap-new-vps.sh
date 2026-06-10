@@ -48,9 +48,12 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
     fi
-    if ! command -v lean >/dev/null 2>&1; then
+    if ! python3 -c 'import lean' >/dev/null 2>&1 || ! command -v lean >/dev/null 2>&1; then
       python3 -m pip install --break-system-packages --upgrade lean
     fi
+    python3 - <<'PY_LEAN_MODULES'
+import lean.models
+PY_LEAN_MODULES
     python3 - <<'PY_CHMOD'
 import importlib.util
 import os
