@@ -30,6 +30,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir agent-review agent-platform 2775 /agents/review/workspaces', text)
         self.assertIn('install_dir root root 755 /etc/trading-agents', text)
         self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
+        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*', text)
+        self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
         self.assertIn('for role in orchestrator coding review validator; do', text)
         self.assertNotIn('for role in orchestrator coding review validator research; do', text)
         self.assertIn('"orchestrator": {', text)
@@ -179,7 +181,7 @@ class MVP0AgentTests(unittest.TestCase):
                 calls.append((cmd, kwargs))
                 return FakeProc()
             orch.subprocess.run = fake_run
-            args = argparse.Namespace(db=db, claimed_label="agent:claimed", coding_agent_cmd="sudo -n -u agent-coding trading-coding-agent", timeout_seconds=123)
+            args = argparse.Namespace(db=db, claimed_label="agent:claimed", coding_agent_cmd="sudo -n /usr/local/sbin/trading-dispatch-coding-agent", timeout_seconds=123)
             try:
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
@@ -187,14 +189,14 @@ class MVP0AgentTests(unittest.TestCase):
             finally:
                 orch.subprocess.run = original
             self.assertEqual(rc, 0)
-            self.assertEqual(calls[0][0], ["sudo", "-n", "-u", "agent-coding", "trading-coding-agent", "run", "--issue", "21"])
+            self.assertEqual(calls[0][0], ["sudo", "-n", "/usr/local/sbin/trading-dispatch-coding-agent", "run", "--issue", "21"])
             self.assertEqual(calls[0][1]["timeout"], 123)
             result = json.loads(out.getvalue())
             self.assertTrue(result["ok"])
             with sqlite3.connect(db) as conn:
                 row = conn.execute("SELECT labels, result_json FROM attempts").fetchone()
             self.assertEqual(json.loads(row[0]), ["coding-agent"])
-            self.assertEqual(json.loads(row[1])["command"], ["sudo", "-n", "-u", "agent-coding", "trading-coding-agent", "run", "--issue", "21"])
+            self.assertEqual(json.loads(row[1])["command"], ["sudo", "-n", "/usr/local/sbin/trading-dispatch-coding-agent", "run", "--issue", "21"])
 
     def test_orchestrator_cleanup_workspaces_respects_state_and_dry_run(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")

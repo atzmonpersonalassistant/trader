@@ -82,6 +82,8 @@ jobs:
           scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             agent-platform/tools/trading-orchestrator \
             agent-platform/tools/trading-coding-agent \
+            agent-platform/tools/trading-dispatch-coding-agent \
+            agent-platform/tools/trading-dispatch-coding-agent-stub \
             agent-platform/tools/trading-review-agent \
             agent-platform/tools/trading-research-agent \
             agent-platform/tools/trading_agent_token.py \
@@ -106,6 +108,8 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
           sudo install -d -o agent-orchestrator -g agent-orchestrator -m 750 /agents/research/state /agents/research/logs /agents/research/reports
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
@@ -133,7 +137,7 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_research_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-coding-agent-stub
           python3 - <<'PY'
           from pathlib import Path
           for file in [
@@ -150,6 +154,12 @@ jobs:
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-agent-token orchestrator | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-coding env PYTHONDONTWRITEBYTECODE=1 trading-agent-token coding | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
+          sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
+          agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
+          agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
+          EOF_SUDOERS
+          sudo chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
+          sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /tmp/trader-research-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json

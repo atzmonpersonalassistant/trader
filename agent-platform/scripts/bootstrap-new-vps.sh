@@ -16,6 +16,8 @@ INSTALL_TOOLS="0"
 if [[ "${1:-}" == "--install-system-packages" ]]; then
   INSTALL_TOOLS="1"
 fi
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TOOLS_DIR="$(cd -- "${SCRIPT_DIR}/../tools" && pwd)"
 
 log() { printf '[bootstrap-new-vps] %s\n' "$*"; }
 
@@ -103,11 +105,17 @@ done
 # Research currently runs as agent-orchestrator, not a dedicated agent-research user.
 install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research
 
+log "installing root-owned dispatch wrappers"
+install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
+install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
+
 log "installing sudoers rules"
 cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
-# Allow orchestrator to dispatch coding-agent work and run workspace cleanup.
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent *
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent-stub *
+# Allow orchestrator to dispatch only fixed coding-agent run commands through
+# root-owned validation wrappers. Do not grant wildcard access to the full
+# trading-coding-agent CLI; it accepts config paths and token commands.
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
 SUDOERS
 chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
 visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null

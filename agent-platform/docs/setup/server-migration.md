@@ -120,18 +120,18 @@ Each role entry may include `linux_user`. If omitted, the token helper expects `
 
 ## Sudoers dispatch rule
 
-The orchestrator should dispatch coding work as `agent-coding`, not as `agent-orchestrator`.
+The orchestrator should dispatch coding work only through root-owned validation wrappers. It should not get wildcard sudo access to the full `trading-coding-agent` CLI.
 
 Example sudoers snippet at `/etc/sudoers.d/trading-agent-orchestrator-dispatch`:
 
 ```text
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent *
-agent-orchestrator ALL=(agent-coding) NOPASSWD: /usr/local/bin/trading-coding-agent-stub *
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub run --issue [0-9]*
 ```
 
 Validate with:
 
 ```bash
 sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch
-sudo -n -u agent-orchestrator sudo -n -u agent-coding /usr/local/bin/trading-coding-agent --help
+sudo -n -u agent-orchestrator sudo -n /usr/local/sbin/trading-dispatch-coding-agent run --issue 1
 ```
