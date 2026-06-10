@@ -87,9 +87,11 @@ install_dir agent-validator agent-validator 755 /agents/validator/workspaces
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 750 /etc/trading-agents
 install_dir root root 750 /etc/trading-agents/secrets
-for role in orchestrator coding review validator research; do
+for role in orchestrator coding review validator; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
+# Research currently runs as agent-orchestrator, not a dedicated agent-research user.
+install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research
 
 log "installing sudoers rules"
 cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
@@ -104,25 +106,33 @@ log "creating placeholder config files if missing"
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
   cat > /etc/trading-agents/github-apps.json <<'JSON'
 {
-  "roles": {
-    "orchestrator": {
-      "app_id": "REPLACE_ME",
-      "installation_id": "REPLACE_ME",
-      "private_key_path": "/etc/trading-agents/secrets/orchestrator/private-key.pem",
-      "linux_user": "agent-orchestrator"
-    },
-    "coding": {
-      "app_id": "REPLACE_ME",
-      "installation_id": "REPLACE_ME",
-      "private_key_path": "/etc/trading-agents/secrets/coding/private-key.pem",
-      "linux_user": "agent-coding"
-    },
-    "review": {
-      "app_id": "REPLACE_ME",
-      "installation_id": "REPLACE_ME",
-      "private_key_path": "/etc/trading-agents/secrets/review/private-key.pem",
-      "linux_user": "agent-review"
-    }
+  "orchestrator": {
+    "app_slug": "trading-orchestrator-agent",
+    "app_id": "REPLACE_ME",
+    "installation_id": "REPLACE_ME",
+    "private_key_path": "/etc/trading-agents/secrets/orchestrator/private-key.pem",
+    "linux_user": "agent-orchestrator"
+  },
+  "coding": {
+    "app_slug": "trading-coding-agent",
+    "app_id": "REPLACE_ME",
+    "installation_id": "REPLACE_ME",
+    "private_key_path": "/etc/trading-agents/secrets/coding/private-key.pem",
+    "linux_user": "agent-coding"
+  },
+  "review": {
+    "app_slug": "trading-review-agent",
+    "app_id": "REPLACE_ME",
+    "installation_id": "REPLACE_ME",
+    "private_key_path": "/etc/trading-agents/secrets/review/private-key.pem",
+    "linux_user": "agent-review"
+  },
+  "validator": {
+    "app_slug": "trading-validator-agent",
+    "app_id": "REPLACE_ME",
+    "installation_id": "REPLACE_ME",
+    "private_key_path": "/etc/trading-agents/secrets/validator/private-key.pem",
+    "linux_user": "agent-validator"
   }
 }
 JSON

@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -19,6 +20,18 @@ def load(name, rel):
 
 
 class MVP0AgentTests(unittest.TestCase):
+    def test_bootstrap_new_vps_script_static_validation(self):
+        script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        text = script.read_text()
+        self.assertIn('for role in orchestrator coding review validator; do', text)
+        self.assertNotIn('for role in orchestrator coding review validator research; do', text)
+        self.assertIn('"orchestrator": {', text)
+        self.assertIn('"coding": {', text)
+        self.assertIn('"review": {', text)
+        self.assertNotIn('"roles": {', text)
+        self.assertIn('install_dir root agent-orchestrator 750 /etc/trading-agents/secrets/research', text)
+
     def test_research_agent_seeds_cheap_call_queue(self):
         research = load("trading_research_agent", "agent-platform/tools/trading_research_agent.py")
         with TemporaryDirectory() as tmp:
