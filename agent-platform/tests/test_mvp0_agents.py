@@ -30,8 +30,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir agent-review agent-platform 2775 /agents/review/workspaces', text)
         self.assertIn('install_dir root root 755 /etc/trading-agents', text)
         self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
-        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent run --issue [0-9]*', text)
-        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub --issue-number [0-9]* --issue-external-id * --title *', text)
+        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent *', text)
+        self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub *', text)
         self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
         self.assertIn('for role in orchestrator coding review validator; do', text)
         self.assertNotIn('for role in orchestrator coding review validator research; do', text)
@@ -50,6 +50,8 @@ class MVP0AgentTests(unittest.TestCase):
         subprocess.run(["bash", "-n", str(real)], check=True)
         subprocess.run(["bash", "-n", str(stub)], check=True)
         self.assertEqual(subprocess.run([str(real), "--config", "evil"]).returncode, 64)
+        self.assertEqual(subprocess.run([str(real), "run", "--issue", "abc"]).returncode, 64)
+        self.assertEqual(subprocess.run([str(real), "run", "--issue", "1", "--config", "evil"]).returncode, 64)
         self.assertEqual(subprocess.run([str(stub), "run", "--issue", "1"]).returncode, 64)
 
     def test_research_agent_seeds_cheap_call_queue(self):
