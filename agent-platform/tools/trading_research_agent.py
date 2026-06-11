@@ -8,8 +8,11 @@ maintains research hypotheses/specs that a QuantConnect runner can test.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import shlex
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -338,6 +341,85 @@ def load_queue(path: Path) -> list[dict[str, Any]]:
     return json.loads(path.read_text())
 
 
+
+def save_queue(path: Path, queue: list[dict[str, Any]]) -> None:
+    write_json(path, queue)
+
+
+def save_queue_atomic(path: Path, queue: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(queue, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+
+
+def with_queue_lock(path: Path, func):
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        queue = load_queue(path)
+        result, new_queue = func(queue)
+        if new_queue is not None:
+            save_queue_atomic(path, new_queue)
+        return result
+
+
+def cmd_claim(args: argparse.Namespace) -> int:
+    queue_path = Path(args.queue)
+
+    def claim(queue: list[dict[str, Any]]):
+        queued = [item for item in queue if item.get("status") == "queued"]
+        if not queued:
+            return {"ok": True, "type": "none"}, None
+        candidate = sorted(queued, key=lambda item: (item.get("priority", 999), item["id"]))[0]
+        for item in queue:
+            if item.get("id") == candidate.get("id"):
+                item["status"] = "in_progress"
+                item["active_run_id"] = args.run_id
+                item.setdefault("attempts", 0)
+                item["attempts"] += 1
+                candidate = item
+                break
+        return {"ok": True, "type": "candidate", "candidate": candidate}, queue
+
+    payload = with_queue_lock(queue_path, claim)
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_complete(args: argparse.Namespace) -> int:
+    queue_path = Path(args.queue)
+
+    def complete(queue: list[dict[str, Any]]):
+        for item in queue:
+            if item.get("id") == args.candidate_id:
+                if item.get("active_run_id") not in (None, args.run_id):
+                    return {
+                        "ok": False,
+                        "error": "active_run_mismatch",
+                        "candidate_id": args.candidate_id,
+                        "active_run_id": item.get("active_run_id"),
+                        "run_id": args.run_id,
+                    }, None
+                item["status"] = args.status
+                item["last_run_id"] = args.run_id
+                item.pop("active_run_id", None)
+                return {"ok": True, "candidate_id": args.candidate_id, "status": args.status, "run_id": args.run_id}, queue
+        return {"ok": False, "error": "candidate_not_found", "candidate_id": args.candidate_id}, None
+
+    payload = with_queue_lock(queue_path, complete)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0 if payload.get("ok") else 1
+
 def cmd_seed(args: argparse.Namespace) -> int:
     queue_path = Path(args.queue)
     existing = {item["id"]: item for item in load_queue(queue_path)}
@@ -427,6 +509,14 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.set_defaults(func=cmd_list)
     next_cmd = sub.add_parser("next", help="Return the next queued research candidate")
     next_cmd.set_defaults(func=cmd_next)
+    claim_cmd = sub.add_parser("claim", help="Atomically claim the next queued research candidate")
+    claim_cmd.add_argument("--run-id", required=True)
+    claim_cmd.set_defaults(func=cmd_claim)
+    complete_cmd = sub.add_parser("complete", help="Mark a research candidate with a terminal or follow-up status")
+    complete_cmd.add_argument("--candidate-id", required=True)
+    complete_cmd.add_argument("--run-id", required=True)
+    complete_cmd.add_argument("--status", choices=["done", "refine", "blocked", "failed"], required=True)
+    complete_cmd.set_defaults(func=cmd_complete)
     mandate_cmd = sub.add_parser("mandate", help="Print Uriel's current autonomous research mandate")
     mandate_cmd.set_defaults(func=cmd_mandate)
     prompt_cmd = sub.add_parser("qc-prompt", help="Print the default QC/Lean-first research prompt")
