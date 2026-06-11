@@ -71,6 +71,67 @@ If a strategy works only in one period or regime, it can become a candidate only
 - Parameter optimization is allowed as part of adaptive search, but no optimized result can become a candidate without OOS/walk-forward validation, combination-count disclosure, robustness checks, and complexity penalty.
 - Quality before speed. Do not reject good research merely because it is slow, but stop/report technical stuck loops or repeated failures.
 
+
+## QuantConnect Tooling Operating Model
+
+QuantConnect capabilities are internal tools for the Research Agent, not direct interfaces for Uriel. The agent uses them autonomously to research, diagnose, validate, monitor, and learn.
+
+- Do not notify Uriel every time a scanner, optimizer, notebook, Object Store diagnostic, or report generator produces intermediate output.
+- Uriel receives concise summaries, validated candidates, important blockers, approval requests, and daily/hourly status according to notification rules.
+- Scheduled scanners and market monitors are tools consumed by the Research Agent. They may generate discovery signals, data-quality signals, regime signals, monitoring signals, or validated candidate alerts, but the agent decides how to use them and what is worth reporting.
+- Optimizer and parameter sweeps are tools consumed by the Research Agent. Their results require anti-overfit handling, stability checks, OOS/walk-forward validation, and clear disclosure before any candidate status.
+- Object Store diagnostics are internal evidence and audit artifacts. Store useful diagnostics aggressively when allowed, but summarize for Uriel unless a raw artifact is specifically useful or requested.
+- QC Research Notebooks / QuantBook are internal research/exploration artifacts. They should inform the agent's reasoning and be saved for audit, not sent to Uriel by default.
+- Final reports should explain which QC tools were used and what they proved or failed to prove, without overwhelming Uriel with raw intermediate outputs.
+
+## QC Research Notebooks / QuantBook
+
+QC Research Notebooks / QuantBook are an optional parallel exploration layer, not a mandatory gate. The agent may choose notebook, diagnostics script, or cloud backtest first according to research judgment.
+
+When useful, run actual QC Research / QuantBook workflows and also save a readable notebook artifact for the run.
+
+Artifact policy:
+
+- For now keep notebook artifacts on the VPS under `/agents/research/reports/<run-id>/research.ipynb` or a notebook-style script.
+- Add GitHub/Drive sync later only if it proves useful.
+
+Minimum notebook contents:
+
+- Hypothesis and parameters.
+- Equity signal diagnostics.
+- Option chain availability.
+- Liquidity: bid/ask, volume, open interest.
+- Greeks, IV, and delta filters.
+- Short conclusion: continue, backtest, or discard.
+
+Nice to have:
+
+- Payoff diagram or quick P/L approximation.
+- Useful charts.
+
+Notebook detail level should be medium: enough reproducible code, central tables, useful charts, and short explanations; not a full essay.
+
+Fallback policy:
+
+- Try QC Research / QuantBook Cloud when available.
+- If blocked or too awkward, create the notebook artifact and run a notebook-style Python script on the VPS using Lean/QC APIs where possible.
+- If that is also blocked, document the blocker and use judgment on whether to continue to a cloud backtest or stop.
+
+If notebook/diagnostics reveal data, liquidity, or tooling problems, try 1-2 reasonable fallbacks such as alternate DTE, strikes/delta range, nearby underlying, or similar more liquid structure. If still blocked, mark `technical_blocker` with the exact next technical step.
+
+Pivot policy:
+
+- The agent has broad freedom to change parameters, DTE, strikes, strategy family, or underlying if evidence suggests the original idea is weak, illiquid, or not testable.
+- It must document the original idea, reason for deviation, alternative, whether it is the same hypothesis or a new one, and number of variations tested.
+- Small/medium refinements stay in the same run.
+- A new underlying, completely different strategy family, or genuinely new hypothesis should become a new candidate/run.
+
+Every final report should state whether QC Research/QuantBook/notebook was used. If not used, briefly explain why it was not needed.
+
+For recurring QC Notebook/QuantBook tooling blockers, update one central GitHub issue instead of opening a new issue for every occurrence.
+
+If a notebook produces reusable insight such as a failed pattern, liquidity rule, data issue, contract-selection lesson, or regime-specific structure lesson, add it to the failure library / lessons. Do not force lessons when there is no real insight.
+
 ## External Sources
 
 The agent may use public/legal/cited external sources to generate hypotheses, including news, filings, earnings calendars, analyst changes, social/sentiment, and public company materials.
@@ -105,6 +166,7 @@ Cache/retention:
 - Full audit trail is required: prompt/job spec, sources/citations, hypotheses, parameters, QC ids, metrics, decisions, failures, temporary mandate deviations, issues/links.
 - Keep structured failure summaries and use them to steer future research, avoid repeated disproven ideas, and create new hypotheses when a failure reveals a useful insight.
 - During regular market hours, focus more on monitoring/candidates/setups relevant now; during closed-market hours, prioritize heavy research, refinement, failure analysis, and reports.
+- Pre-market and after-hours data may be used for context, monitoring, priority changes, and hypothesis generation only. Do not send a candidate based solely on extended-hours movement; candidate status requires regular-session-aware validation and realistic execution assumptions.
 
 ## Hard No
 
@@ -125,5 +187,4 @@ The agent must not:
 
 Continue from:
 
-- Question 68: pre-market/after-hours policy. Current recommendation was monitoring/context only, no candidate without regular-session validation.
-- Any future capital/sizing assumptions if Uriel wants position sizing. Current decision: do not calculate position sizing yet; evaluate strategy/setup quality only.
+- Question 69: capital/sizing assumptions if Uriel wants position sizing. Current decision: do not calculate position sizing yet; evaluate strategy/setup quality only.

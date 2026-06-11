@@ -76,6 +76,42 @@ RESEARCH_MANDATE: dict[str, Any] = {
         "cost_policy": "Use existing paid QC resources freely. Do not increase subscriptions, nodes, or costs without approval. May open issues/recommend upgrades if bottleneck is clear.",
         "lookahead_policy": "External or market data without clear timestamp/real-time availability may seed hypotheses only; confidence is penalized and candidate status requires a version using only data available at decision time.",
     },
+
+
+    "qc_tooling_operating_model": {
+        "principle": "QuantConnect capabilities are internal tools for the Research Agent, not direct interfaces for Uriel. The agent uses them autonomously to research, diagnose, validate, monitor, and learn.",
+        "user_interface_policy": "Do not notify Uriel every time a scanner, optimizer, notebook, object-store diagnostic, or report generator produces intermediate output. Uriel receives concise summaries, validated candidates, important blockers, approval requests, and daily/hourly status according to notification rules.",
+        "scanner_role": "Scheduled scanners and market monitors are tools consumed by the Research Agent. They may generate discovery signals, data-quality signals, regime signals, monitoring signals, or validated candidate alerts, but the agent decides how to use them and what is worth reporting.",
+        "optimizer_role": "Optimizer and parameter sweeps are tools consumed by the Research Agent. Their results require anti-overfit handling, stability checks, OOS/walk-forward validation, and clear disclosure before any candidate status.",
+        "object_store_role": "Object Store diagnostics are internal evidence and audit artifacts. Store useful diagnostics aggressively when allowed, but summarize for Uriel unless a raw artifact is specifically useful or requested.",
+        "notebook_role": "QC Research Notebooks / QuantBook are internal research/exploration artifacts. They should inform the agent's reasoning and be saved for audit, not sent to Uriel by default.",
+        "reporting_rule": "Final reports should explain which QC tools were used and what they proved or failed to prove, without overwhelming Uriel with raw intermediate outputs."
+    },
+    "qc_research_notebooks": {
+        "role": "QC Research Notebooks / QuantBook are an optional parallel exploration layer, not a mandatory gate. The agent may choose notebook, diagnostics script, or cloud backtest first according to research judgment.",
+        "desired_mode": "When useful, run actual QC Research / QuantBook workflows and also save a readable notebook artifact for the run.",
+        "artifact_policy": "For now keep notebook artifacts on the VPS under /agents/research/reports/<run-id>/research.ipynb or a notebook-style script. Add GitHub/Drive sync later only if it proves useful.",
+        "minimum_notebook_contents": [
+            "hypothesis_and_parameters",
+            "equity_signal_diagnostics",
+            "option_chain_availability",
+            "liquidity_bid_ask_volume_open_interest",
+            "greeks_iv_delta_filters",
+            "short_conclusion_continue_backtest_or_discard",
+        ],
+        "nice_to_have": [
+            "payoff_diagram_or_quick_pl_approximation",
+            "useful_charts",
+        ],
+        "detail_level": "Medium: enough reproducible code, central tables, useful charts, and short explanations; not a full essay.",
+        "fallback_policy": "Try QC Research / QuantBook Cloud when available. If blocked or too awkward, create the notebook artifact and run a notebook-style Python script on the VPS using Lean/QC APIs where possible. If that is also blocked, document the blocker and use judgment on whether to continue to a cloud backtest or stop.",
+        "data_liquidity_blocker_policy": "If notebook/diagnostics reveal data, liquidity, or tooling problems, try 1-2 reasonable fallbacks such as alternate DTE, strikes/delta range, nearby underlying, or similar more liquid structure. If still blocked, mark technical_blocker with exact next technical step.",
+        "pivot_freedom": "Broad freedom: the agent may change parameters, DTE, strikes, strategy family, or underlying if evidence suggests the original idea is weak, illiquid, or not testable, but must document original idea, reason for deviation, alternative, whether it is same hypothesis or new one, and number of variations tested.",
+        "pivot_run_policy": "Small/medium refinements stay in the same run. A new underlying, completely different strategy family, or genuinely new hypothesis should become a new candidate/run.",
+        "reporting_requirement": "Every final report should state whether QC Research/QuantBook/notebook was used. If not used, briefly explain why it was not needed.",
+        "tooling_issue_policy": "For recurring QC Notebook/QuantBook tooling blockers, update one central GitHub issue instead of opening a new issue for every occurrence.",
+        "learning_policy": "If a notebook produces reusable insight such as a failed pattern, liquidity rule, data issue, contract-selection lesson, or regime-specific structure lesson, add it to the failure library / lessons. Do not force lessons when there is no real insight.",
+    },
     "external_sources": {
         "allowed": "Any public/legal/cited source may be used to generate hypotheses, including news, filings, earnings calendars, analyst changes, social/sentiment, and public company materials.",
         "forbidden": "No paywall/protected-source scraping and no non-public information.",
@@ -96,6 +132,7 @@ RESEARCH_MANDATE: dict[str, Any] = {
         "audit_trail": "Full audit trail required: prompt/job spec, sources/citations, hypotheses, parameters, QC ids, metrics, decisions, failures, temporary mandate deviations, issues/links.",
         "failure_library": "Keep structured failure summaries and use them to steer future research, avoid repeated disproven ideas, and create new hypotheses when a failure reveals a useful insight.",
         "market_hours_policy": "During regular market hours, focus more on monitoring/candidates/setups relevant now; during closed-market hours, prioritize heavy research, refinement, failure analysis, and reports.",
+        "extended_hours_policy": "Pre-market and after-hours data may be used for context, monitoring, priority changes, and hypothesis generation only. Do not send a candidate based solely on extended-hours movement; candidate status requires regular-session-aware validation and realistic execution assumptions.",
     },
     "hard_forbidden": [
         "live_trading", "placing_orders", "opening_or_closing_positions", "changing_secrets_or_auth",
@@ -104,7 +141,7 @@ RESEARCH_MANDATE: dict[str, Any] = {
         "naked_short_options", "paywall_or_protected_source_scraping", "using_non_public_information"
     ],
     "open_questions_next": [
-        "Question 68 pending: pre-market/after-hours policy. Current recommendation was monitoring/context only, no candidate without regular-session validation.",
+        "Question 68 resolved: pre-market/after-hours may be used for context, monitoring, priority changes, and hypothesis generation only; no candidate based solely on extended-hours movement without regular-session-aware validation.",
         "Any additional sizing/capital assumptions later if Uriel wants position sizing; currently none.",
     ],
 }
