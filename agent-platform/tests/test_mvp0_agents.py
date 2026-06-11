@@ -34,8 +34,12 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir agent-review agent-review 2770 /agents/review/workspaces', text)
         self.assertIn('install_dir agent-review agent-review 750 /agents/review/lean-workspace', text)
         self.assertIn('ensure_user agent-research', text)
+        self.assertIn('ensure_user agent-research-runner', text)
         self.assertIn('install_dir agent-research agent-research 750 /agents/research', text)
         self.assertIn('install_dir agent-research agent-research 750 /agents/research/lean-workspace', text)
+        self.assertIn('install_dir agent-research-runner agent-research-runner 750 /agents/research-runner', text)
+        self.assertIn('install_dir agent-research agent-research-runner 770 /agents/research-runner/handoff', text)
+        self.assertIn('install_dir agent-research-runner agent-research-runner 700 /home/agent-research-runner/.codex', text)
         self.assertIn('chown -R agent-research:agent-research /agents/research', text)
         self.assertIn('chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace', text)
         self.assertIn('install_dir agent-validator agent-validator 750 /agents/validator/lean-workspace', text)
@@ -55,6 +59,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
         self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent *', text)
         self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub *', text)
+        self.assertIn('trading-agent-research-runner', text)
+        self.assertIn('agent-research ALL=(agent-research-runner) NOPASSWD:', text)
         self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
         self.assertIn('for role in orchestrator coding review validator research; do', text)
         self.assertIn('"orchestrator": {', text)
@@ -112,6 +118,61 @@ class MVP0AgentTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertEqual(payload["type"], "candidate")
             self.assertEqual(payload["candidate"]["id"], "qqq-pullback-low-debit-bull-call-spread")
+
+
+    def test_research_agent_claim_and_complete_advance_queue(self):
+        research = load("trading_research_agent_claim", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "strategy-queue.json"
+            research.cmd_seed(argparse.Namespace(queue=str(queue)))
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-1"))
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "candidate")
+            first_id = payload["candidate"]["id"]
+            self.assertEqual(payload["candidate"]["status"], "in_progress")
+            self.assertEqual(payload["candidate"]["active_run_id"], "run-1")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_complete(argparse.Namespace(queue=str(queue), candidate_id=first_id, run_id="stale-run", status="done"))
+            self.assertEqual(rc, 1)
+            self.assertEqual(json.loads(out.getvalue())["error"], "active_run_mismatch")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_complete(argparse.Namespace(queue=str(queue), candidate_id=first_id, run_id="run-1", status="done"))
+            self.assertEqual(rc, 0)
+            items = research.load_queue(queue)
+            self.assertEqual(next(item for item in items if item["id"] == first_id)["status"], "done")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-2"))
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertNotEqual(payload["candidate"]["id"], first_id)
+
+    def test_research_loop_uses_runner_without_raw_qc_secret_access(self):
+        script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        text = script.read_text()
+        self.assertIn("Option Pricing / Volatility Intelligence", text)
+        self.assertIn("agent-research-runner", text)
+        self.assertIn('sudo -n -u "$RUNNER_USER"', text)
+        self.assertIn("trading-research-runner-codex", text)
+        self.assertIn('setfacl -m "u:$RUNNER_USER:rwx" "$RUN_DIR"', text)
+        self.assertIn("--sandbox workspace-write", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
+        self.assertIn('approval_policy="never"', Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
+        self.assertIn("os.path.realpath", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
+        self.assertIn("claim --run-id", text)
+        self.assertIn("complete --candidate-id", text)
+        self.assertIn("candidate_for_validator_review", text)
+        self.assertIn('STATUS=failed', text)
+        self.assertIn("TRADING_RESEARCH_LOOP_DRY_RUN", text)
+        self.assertNotIn("--sandbox danger-full-access", text)
+        self.assertNotIn("/etc/trading-agents/secrets/quantconnect/env", text)
 
     def test_research_agent_qc_prompt_is_lean_cloud_diagnostics_first(self):
         research = load("trading_research_agent_prompt", "agent-platform/tools/trading_research_agent.py")
@@ -224,6 +285,17 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("sudo -n -u agent-review bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'", text)
         self.assertIn("sudo -n -u agent-validator bash -lc 'command -v lean >/dev/null 2>&1'", text)
         self.assertIn("trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next", text)
+        self.assertIn("agent-research-runner", text)
+        self.assertNotIn("trader-lean-runner-login.log", text)
+        self.assertNotIn("sudo bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env", text)
+        self.assertIn("sudo -n -u agent-research-runner bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'", text)
+        self.assertIn("test ! -f /home/agent-research-runner/.lean/credentials", text)
+        self.assertIn("/home/agent-research-runner/.codex/auth.json", text)
+        self.assertIn("codex --version >/dev/null", text)
+        self.assertIn("trading-research-runner-codex", text)
+        self.assertIn("TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop", text)
+        self.assertIn("latest_smoke_dir=", text)
+        self.assertIn("/agents/research-runner/handoff", text)
 
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
@@ -561,7 +633,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('sudo usermod -aG agent-quantconnect agent-orchestrator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-validator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-research', workflow)
-        self.assertIn('for role in coding review validator research; do', workflow)
+        self.assertIn('for role in coding review validator research research-runner; do', workflow)
         self.assertIn('sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"', workflow)
         self.assertIn('sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace', workflow)
         self.assertIn('sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace', workflow)
