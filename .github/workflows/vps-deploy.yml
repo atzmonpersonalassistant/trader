@@ -334,7 +334,7 @@ jobs:
           sudo chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
           sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
           sudo tee /etc/sudoers.d/trading-agent-research-runner >/dev/null <<'EOF_RESEARCH_SUDOERS'
-          agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex /agents/research-runner/handoff/research-pass-*-task.txt /agents/research/reports/research-pass-*
+          agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
           EOF_RESEARCH_SUDOERS
           sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
