@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+export HOME=/home/agent-research
+RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research-runner}
+RUNNER_HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research-runner}
+export PATH=/usr/local/bin:/usr/bin:/bin
+mkdir -p /agents/research/tmp
+cd /agents/research/tmp
+
+QUEUE=${TRADING_RESEARCH_QUEUE:-/agents/research/state/strategy-queue.json}
+LOG_DIR=${TRADING_RESEARCH_LOG_DIR:-/agents/research/logs}
+REPORTS_DIR=${TRADING_RESEARCH_REPORTS_DIR:-/agents/research/reports}
+RUNNER_HANDOFF_DIR=${TRADING_RESEARCH_RUNNER_HANDOFF_DIR:-/agents/research-runner/handoff}
+LOCK=${TRADING_RESEARCH_LOCK:-/agents/research/state/research-agent-loop.lock}
+LOOP_ONCE=${TRADING_RESEARCH_LOOP_ONCE:-0}
+DISABLE_SEED=${TRADING_RESEARCH_LOOP_DISABLE_SEED:-0}
+DRY_RUN=${TRADING_RESEARCH_LOOP_DRY_RUN:-0}
+mkdir -p "$LOG_DIR" "$REPORTS_DIR" /agents/research/tmp "$RUNNER_HANDOFF_DIR"
+
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "$(date -u +%FT%TZ) another research loop already running"
+  exit 0
+fi
+
+if [ "$DISABLE_SEED" != "1" ] && [ ! -s "$QUEUE" ]; then
+  trading-research-agent --queue "$QUEUE" seed-cheap-calls >> "$LOG_DIR/loop.log" 2>&1 || true
+fi
+
+while true; do
+  RUN_ID="research-pass-$(date -u +%Y%m%d-%H%M%S)"
+  RUN_DIR="$REPORTS_DIR/$RUN_ID"
+  mkdir -p "$RUN_DIR"
+  chmod 750 "$RUN_DIR"
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:$RUNNER_USER:--x" /agents /agents/research "$REPORTS_DIR" 2>/dev/null || true
+    setfacl -m "u:$RUNNER_USER:rwx" "$RUN_DIR"
+  else
+    chgrp "$RUNNER_USER" "$RUN_DIR"
+    chmod 770 "$RUN_DIR"
+  fi
+
+  trading-research-agent --queue "$QUEUE" claim --run-id "$RUN_ID" > "$RUN_DIR/candidate.json"
+  if python3 - "$RUN_DIR/candidate.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+sys.exit(0 if p.get('type') == 'candidate' else 1)
+PY
+  then
+    trading-research-agent mandate > "$RUN_DIR/mandate.json"
+    trading-research-agent qc-prompt > "$RUN_DIR/qc_prompt.json"
+    cat > "$RUN_DIR/task.txt" <<EOF
+You are running as the Trader Strategy / Quant Research Agent.
+
+Run one autonomous research pass for the candidate in ./candidate.json.
+
+Current Uriel mandate updates:
+- Pre-market and after-hours data may be used for context, monitoring, priority changes, and hypothesis generation only.
+- Do not send a candidate based solely on extended-hours movement.
+- Candidate status requires regular-session-aware validation and realistic execution assumptions.
+- Capital/sizing remains out of scope for MVP: report max loss/collateral/risk profile only; do not recommend dollars or contract count.
+
+Use QuantConnect as default, with QC Research Notebooks / QuantBook as the preferred diagnostics and exploration layer before cloud backtests. When testing a hypothesis, first create or update a QC-compatible research notebook artifact (research.ipynb or notebook-style script) that documents the signal, option-chain checks, contract filters, liquidity, event counts, and quick charts/tables where possible.
+
+Apply Option Pricing / Volatility Intelligence before candidate status: evaluate market mid versus theoretical/model range, IV rank/percentile where available, IV versus realized volatility, skew, term structure, Greeks and net spread exposures, debit/credit versus expected move and max risk, payoff scenarios before/at expiry, and sensitivity to bid/ask, fill, and slippage. Black-Scholes/Merton is only a baseline; use other lenses when useful such as binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo for path-dependent structures, empirical IV/RV, skew, term structure, and scenario simulation. Do not blindly optimize parameters to rescue a weak result; use pricing diagnostics to explain what failed and what is worth refining.
+
+Then run QC-compatible diagnostics and prepare cloud-backtest artifacts only after notebook/diagnostic/pricing evidence justifies them. The autonomous runner is intentionally not logged into QuantConnect and must not request, read, or print raw QuantConnect credentials. If a QC Cloud backtest is required, write the exact artifact and blocker/next-step instead of attempting privileged or live-capable commands. Do not place live trades and do not print secrets.
+
+Save all artifacts, scripts, JSON responses, logs, and final report in the current working directory: $RUN_DIR. End final_report.md with one verdict exactly: discard, refine, retest_after_technical_fix, or candidate_for_validator_review.
+
+If blocked by QC nodes/data/log extraction/tooling, document the exact blocker and next technical step instead of pretending the hypothesis was validated.
+EOF
+    echo "$(date -u +%FT%TZ) starting $RUN_ID" | tee -a "$LOG_DIR/loop.log"
+    set +e
+    cd "$RUN_DIR"
+    HANDOFF_TASK="$RUNNER_HANDOFF_DIR/$RUN_ID-task.txt"
+    install -o agent-research -g "$RUNNER_USER" -m 640 "$RUN_DIR/task.txt" "$HANDOFF_TASK"
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "$(date -u +%FT%TZ) dry-run $RUN_ID" | tee -a "$LOG_DIR/loop.log"
+      RC=0
+    else
+      # Keep the autonomous agent confined to the per-run workspace. QuantConnect
+      # credentials are not sourced or passed into Codex; the runner is deliberately
+      # not logged into Lean/QC and only receives a one-run task handoff.
+      sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+      RC=$?
+    fi
+    set -e
+    rm -f "$HANDOFF_TASK" 2>/dev/null || true
+    echo "$RC" > "$RUN_DIR/exit_code"
+    CANDIDATE_ID=$(python3 - "$RUN_DIR/candidate.json" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+print(p["candidate"]["id"])
+PY
+)
+    STATUS=done
+    if [ "$RC" != "0" ]; then
+      STATUS=failed
+    elif [ ! -s "$RUN_DIR/final_report.md" ]; then
+      STATUS=failed
+    elif ! grep -Eq "^(discard|refine|retest_after_technical_fix|candidate_for_validator_review)$" "$RUN_DIR/final_report.md"; then
+      STATUS=failed
+    elif grep -Eq "^retest_after_technical_fix$" "$RUN_DIR/final_report.md"; then
+      STATUS=blocked
+    elif grep -Eq "^refine$" "$RUN_DIR/final_report.md"; then
+      STATUS=refine
+    fi
+    trading-research-agent --queue "$QUEUE" complete --candidate-id "$CANDIDATE_ID" --run-id "$RUN_ID" --status "$STATUS" >> "$LOG_DIR/loop.log" 2>&1 || true
+    echo "$(date -u +%FT%TZ) finished $RUN_ID rc=$RC status=$STATUS" | tee -a "$LOG_DIR/loop.log"
+  else
+    echo "$(date -u +%FT%TZ) no queued candidate; sleeping" | tee -a "$LOG_DIR/loop.log"
+    rm -rf "$RUN_DIR"
+    if [ "$LOOP_ONCE" = "1" ]; then
+      exit 0
+    fi
+    sleep 1800
+  fi
+
+  if [ "$LOOP_ONCE" = "1" ]; then
+    exit 0
+  fi
+  sleep 300
+done
