@@ -238,7 +238,7 @@ chmod 755 /usr/local/bin/trading-research-runner-codex
 
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RESEARCH_RUNNER'
 # Allow the research loop to execute only the fixed, root-owned Codex wrapper as the non-secret-bearing runner.
-agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex /agents/research-runner/handoff/research-pass-*-task.txt /agents/research/reports/research-pass-*
+agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
 SUDOERS_RESEARCH_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
 visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
