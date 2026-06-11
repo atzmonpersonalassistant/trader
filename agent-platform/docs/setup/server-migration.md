@@ -41,9 +41,11 @@ After bootstrap, the server needs:
 
 2. Directory layout:
    - `/agents/orchestrator/{state,logs,backups}`
-   - `/agents/coding/{workspaces,logs}`
-   - `/agents/review/{workspaces,logs}`
+   - `/agents/coding/{workspaces,logs,lean-workspace}`
+   - `/agents/review/{workspaces,logs,lean-workspace}`
    - `/agents/research/{state,logs,reports,lean-workspace}` owned by `agent-research`
+   - `/agents/validator/{state,logs,workspaces,lean-workspace}`
+   - `/agents/shared/lean-projects` and `/agents/shared/research-artifacts`, owned by `root:agent-lean` with setgid group-write permissions plus default ACLs when `setfacl` is available, so Lean-capable roles can create and later update each other's files. If ACL tooling is unavailable, shared write wrappers must use `umask 0002`.
    - `/etc/trading-agents/secrets/{orchestrator,coding,review,validator,research}`
    - `/etc/trading-agents/secrets/quantconnect/env`, installed by `vps-deploy.yml` from GitHub Secrets and readable only by `root` plus the `agent-quantconnect` group. Current members are limited to non-prompt-driven QuantConnect runner roles (`agent-orchestrator`, `agent-validator`, and `agent-research`); prompt-driven coding/review users should not receive raw token access.
 
@@ -108,7 +110,7 @@ sudo -n -u agent-review env HOME=/home/agent-review trading-review-agent review 
 sudo -n -u agent-coding trading-coding-agent run --issue <safe-test-issue> --skip-codex
 ```
 
-Then trigger `vps-deploy.yml` from GitHub Actions and confirm it deploys successfully to the new server. The deploy verifies that `agent-orchestrator` and `agent-research` can source `/etc/trading-agents/secrets/quantconnect/env` and see non-empty QuantConnect variables without printing the secret values. It also installs Lean CLI when missing and runs `lean login` / `lean whoami` as `agent-research` using the server-local QuantConnect env file.
+Then trigger `vps-deploy.yml` from GitHub Actions and confirm it deploys successfully to the new server. The deploy verifies that `agent-orchestrator`, `agent-research`, and `agent-validator` can source `/etc/trading-agents/secrets/quantconnect/env` and see non-empty QuantConnect variables without printing the secret values. It also verifies that `agent-coding` and `agent-review` cannot read that env file. Lean CLI is installed when missing, role-scoped Lean workspaces and shared Lean directories are writable by the intended roles, and the shared directories pass create-then-modify smoke tests across Lean-capable roles. `lean login` / `lean whoami` runs as `agent-research` using the server-local QuantConnect env file.
 
 For research-agent operating defaults, see `agent-platform/docs/platform/research-agent-qc-workflow.md`. The important invariant is Lean-first / QC Cloud-first / diagnostics-first; REST API should be a fallback or artifact-extraction path, not the default research workflow.
 

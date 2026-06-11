@@ -120,6 +120,35 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" "DEPLOY_DIR='$DEPLOY_DIR' bash -s" <<'REMOTE'
           set -euo pipefail
+          configure_shared_collab_dir() {
+            local path="$1"
+            sudo install -d -o root -g agent-lean -m 2770 "$path"
+            sudo chgrp -R agent-lean "$path"
+            sudo chmod -R g+rwX "$path"
+            sudo find "$path" -type d -exec chmod 2770 {} +
+            if command -v setfacl >/dev/null 2>&1; then
+              sudo setfacl -m g:agent-lean:rwx,m::rwx "$path"
+              sudo find "$path" -type d -exec setfacl -m g:agent-lean:rwx,d:g:agent-lean:rwx,d:m::rwx,m::rwx {} +
+            else
+              echo "setfacl not found; shared Lean roles must use umask 0002 for collaborative writes" >&2
+            fi
+          }
+          validate_shared_collab_dir() {
+            local path="$1"
+            local smoke_dir="$path/.deploy-collab-$$"
+            sudo rm -rf "$smoke_dir"
+            if command -v setfacl >/dev/null 2>&1; then
+              sudo -n -u agent-coding bash -lc "set -euo pipefail; umask 022; mkdir '$smoke_dir'; printf coding > '$smoke_dir/from-coding.txt'"
+              sudo -n -u agent-review bash -lc "set -euo pipefail; printf review >> '$smoke_dir/from-coding.txt'; umask 022; mkdir '$smoke_dir/review-subdir'; printf review > '$smoke_dir/review-subdir/from-review.txt'"
+              sudo -n -u agent-validator bash -lc "set -euo pipefail; printf validator >> '$smoke_dir/review-subdir/from-review.txt'"
+            else
+              sudo -n -u agent-coding bash -lc "set -euo pipefail; umask 0002; mkdir '$smoke_dir'; printf coding > '$smoke_dir/from-coding.txt'"
+              sudo -n -u agent-review bash -lc "set -euo pipefail; printf review >> '$smoke_dir/from-coding.txt'; umask 0002; mkdir '$smoke_dir/review-subdir'; printf review > '$smoke_dir/review-subdir/from-review.txt'"
+              sudo -n -u agent-validator bash -lc "set -euo pipefail; printf validator >> '$smoke_dir/review-subdir/from-review.txt'"
+            fi
+            sudo -n -u agent-research bash -lc "set -euo pipefail; test -w '$smoke_dir/from-coding.txt'; test -w '$smoke_dir/review-subdir/from-review.txt'"
+            sudo rm -rf "$smoke_dir"
+          }
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_orchestrator.py" /usr/local/lib/trading_orchestrator.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
@@ -127,12 +156,31 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
-          if ! id agent-research >/dev/null 2>&1; then
-            sudo useradd --system --create-home --shell /usr/sbin/nologin agent-research
+          for role in coding review validator research; do
+            if ! id "agent-$role" >/dev/null 2>&1; then
+              sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"
+            fi
+          done
+          if ! getent group agent-lean >/dev/null 2>&1; then
+            sudo groupadd --system agent-lean
           fi
+          if ! command -v setfacl >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
+          fi
+          sudo usermod -aG agent-lean agent-coding
+          sudo usermod -aG agent-lean agent-review
+          sudo usermod -aG agent-lean agent-validator
+          sudo usermod -aG agent-lean agent-research
+          sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace
+          sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace
+          sudo install -d -o agent-validator -g agent-validator -m 750 /agents/validator /agents/validator/lean-workspace
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo chown -R agent-research:agent-research /agents/research
           sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
+          sudo install -d -o root -g agent-lean -m 750 /agents/shared
+          configure_shared_collab_dir /agents/shared/lean-projects
+          configure_shared_collab_dir /agents/shared/research-artifacts
           if ! getent group agent-quantconnect >/dev/null 2>&1; then
             sudo groupadd --system agent-quantconnect
           fi
@@ -186,6 +234,15 @@ jobs:
           sudo -n -u agent-review env PYTHONDONTWRITEBYTECODE=1 trading-agent-token review | python3 -c 'import sys; token=sys.stdin.read().strip(); assert len(token) > 20'
           sudo -n -u agent-orchestrator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo -n -u agent-research bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
+          sudo -n -u agent-validator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
+          sudo -n -u agent-coding bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
+          sudo -n -u agent-review bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
+          sudo -n -u agent-coding bash -lc 'test -d /agents/coding/lean-workspace && test -w /agents/coding/lean-workspace && test -w /agents/shared/lean-projects'
+          sudo -n -u agent-review bash -lc 'test -d /agents/review/lean-workspace && test -w /agents/review/lean-workspace && test -w /agents/shared/research-artifacts'
+          sudo -n -u agent-validator bash -lc 'test -d /agents/validator/lean-workspace && test -w /agents/validator/lean-workspace && test -w /agents/shared/lean-projects'
+          sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts'
+          validate_shared_collab_dir /agents/shared/lean-projects
+          validate_shared_collab_dir /agents/shared/research-artifacts
           if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
             if ! python3 -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
               sudo apt-get update
@@ -211,6 +268,7 @@ jobs:
                       file.chmod(file.stat().st_mode | 0o444)
           PY_CHMOD
           sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'
+          sudo -n -u agent-validator bash -lc 'command -v lean >/dev/null 2>&1'
           sudo -n -u agent-research bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env; set +a; export HOME=/home/agent-research; mkdir -p /agents/research/lean-workspace; printf "%s\n" "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/tmp/trader-lean-login.log; lean whoami >/tmp/trader-lean-whoami.log'
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
