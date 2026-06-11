@@ -141,8 +141,7 @@ RESEARCH_MANDATE: dict[str, Any] = {
         "naked_short_options", "paywall_or_protected_source_scraping", "using_non_public_information"
     ],
     "open_questions_next": [
-        "Question 68 resolved: pre-market/after-hours may be used for context, monitoring, priority changes, and hypothesis generation only; no candidate based solely on extended-hours movement without regular-session-aware validation.",
-        "Any additional sizing/capital assumptions later if Uriel wants position sizing; currently none.",
+        "Question 69 pending: capital/sizing assumptions if Uriel wants position sizing. Current decision: do not calculate position sizing yet; evaluate strategy/setup quality only.",
     ],
 }
 
