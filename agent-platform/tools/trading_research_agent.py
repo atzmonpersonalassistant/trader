@@ -78,6 +78,27 @@ RESEARCH_MANDATE: dict[str, Any] = {
     },
 
 
+
+    "option_pricing_intelligence": {
+        "principle": "Options research must include pricing and volatility intelligence, not only directional signals and parameter sweeps. The agent should ask whether the option structure is fairly/cheaply/expensively priced for the hypothesis and risk.",
+        "model_policy": "Use multiple pricing/volatility lenses when useful. Black-Scholes/Merton is a baseline, not a source of false certainty. The agent may also use binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo where path-dependence matters, empirical IV-vs-realized-vol analysis, term-structure/skew analysis, and scenario/payoff simulations.",
+        "required_diagnostics_before_candidate": [
+            "market_mid_vs_theoretical_price_or_model_range",
+            "iv_rank_or_iv_percentile_when_available",
+            "implied_volatility_vs_realized_volatility",
+            "skew_across_relevant_strikes",
+            "term_structure_across_relevant_expiries",
+            "greeks_delta_gamma_theta_vega_and_net_spread_exposures",
+            "spread_debit_or_credit_vs_expected_move_and_max_risk",
+            "payoff_scenarios_at_expiry_and_before_expiry",
+            "sensitivity_to_fill_slippage_and_bid_ask_width",
+            "liquidity_open_interest_volume_and_quote_quality"
+        ],
+        "strategy_fit_policy": "The agent must explain why the chosen option structure fits the pricing environment: e.g. debit spreads when upside convexity is reasonably priced, credit spreads when premium/skew/realized-vol relationship compensates risk, calendars/diagonals when term structure supports them, or discard when pricing is unfavorable.",
+        "optimization_policy": "Parameter sweeps may refine DTE/delta/width/exits only after pricing diagnostics identify a plausible failure mode or opportunity. Do not blindly optimize parameters to rescue a weak result.",
+        "evidence_policy": "Candidate status requires both backtest evidence and pricing evidence. Strong directional signal alone is insufficient if option pricing, IV/RV, skew, term structure, or execution assumptions are unfavorable.",
+        "humility_policy": "Pricing models are approximations and market makers are competitive. The goal is to understand risk/reward and avoid bad structures, not to assume theoretical mispricing is free edge. Penalize confidence when model assumptions are fragile or data quality is weak."
+    },
     "qc_tooling_operating_model": {
         "principle": "QuantConnect capabilities are internal tools for the Research Agent, not direct interfaces for Uriel. The agent uses them autonomously to research, diagnose, validate, monitor, and learn.",
         "user_interface_policy": "Do not notify Uriel every time a scanner, optimizer, notebook, object-store diagnostic, or report generator produces intermediate output. Uriel receives concise summaries, validated candidates, important blockers, approval requests, and daily/hourly status according to notification rules.",

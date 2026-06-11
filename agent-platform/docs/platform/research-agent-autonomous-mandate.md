@@ -72,6 +72,39 @@ If a strategy works only in one period or regime, it can become a candidate only
 - Quality before speed. Do not reject good research merely because it is slow, but stop/report technical stuck loops or repeated failures.
 
 
+
+## Option Pricing / Volatility Intelligence
+
+Options research must include pricing and volatility intelligence, not only directional signals and parameter sweeps. The agent should ask whether the option structure is fairly, cheaply, or expensively priced for the hypothesis and risk.
+
+Use multiple pricing and volatility lenses when useful. Black-Scholes/Merton is a baseline, not a source of false certainty. The agent may also use binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo where path-dependence matters, empirical IV-vs-realized-vol analysis, term-structure/skew analysis, and scenario/payoff simulations.
+
+Required diagnostics before candidate status:
+
+- Market mid versus theoretical price or model range.
+- IV rank or IV percentile when available.
+- Implied volatility versus realized volatility.
+- Skew across relevant strikes.
+- Term structure across relevant expiries.
+- Greeks: delta, gamma, theta, vega, and net spread exposures.
+- Spread debit/credit versus expected move and max risk.
+- Payoff scenarios at expiry and before expiry.
+- Sensitivity to fill, slippage, and bid-ask width.
+- Liquidity: open interest, volume, and quote quality.
+
+The agent must explain why the chosen option structure fits the pricing environment, for example:
+
+- Debit spreads when upside convexity is reasonably priced.
+- Credit spreads when premium/skew/realized-vol relationship compensates risk.
+- Calendars/diagonals when term structure supports them.
+- Discard when pricing is unfavorable.
+
+Parameter sweeps may refine DTE, delta, width, and exits only after pricing diagnostics identify a plausible failure mode or opportunity. Do not blindly optimize parameters to rescue a weak result.
+
+Candidate status requires both backtest evidence and pricing evidence. Strong directional signal alone is insufficient if option pricing, IV/RV, skew, term structure, or execution assumptions are unfavorable.
+
+Pricing models are approximations and market makers are competitive. The goal is to understand risk/reward and avoid bad structures, not to assume theoretical mispricing is free edge. Penalize confidence when model assumptions are fragile or data quality is weak.
+
 ## QuantConnect Tooling Operating Model
 
 QuantConnect capabilities are internal tools for the Research Agent, not direct interfaces for Uriel. The agent uses them autonomously to research, diagnose, validate, monitor, and learn.
