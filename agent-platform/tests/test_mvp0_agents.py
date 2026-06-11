@@ -104,6 +104,32 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertIn("quantconnect_test_spec", items[0])
             self.assertIn(items[0]["family"], {"bull_call_spread", "long_call"})
 
+    def test_research_agent_generate_ideas_adds_deduplicated_mandate_candidates(self):
+        research = load("trading_research_agent_ideas", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "strategy-queue.json"
+            research.cmd_seed(argparse.Namespace(queue=str(queue)))
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_generate_ideas(argparse.Namespace(queue=str(queue), min_queued=10, limit=6))
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertGreaterEqual(payload["added"], 4)
+            items = research.load_queue(queue)
+            ids = [item["id"] for item in items]
+            self.assertEqual(len(ids), len(set(ids)))
+            self.assertIn("spy-iv-rank-support-bull-put-spread", ids)
+            generated = next(item for item in items if item["id"] == "spy-iv-rank-support-bull-put-spread")
+            self.assertEqual(generated["source"], "deterministic_idea_generator")
+            self.assertEqual(generated["family"], "bull_put_spread")
+            self.assertIn("quantconnect_test_spec", generated)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                research.cmd_generate_ideas(argparse.Namespace(queue=str(queue), min_queued=10, limit=6))
+            self.assertEqual(len(research.load_queue(queue)), len(items))
+
     def test_research_agent_next_returns_highest_priority_candidate(self):
         research = load("trading_research_agent_next", "agent-platform/tools/trading_research_agent.py")
         with TemporaryDirectory() as tmp:
@@ -167,6 +193,9 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('approval_policy="never"', Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("os.path.realpath", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("claim --run-id", text)
+        self.assertIn("generate-ideas --min-queued 3", text)
+        self.assertLess(text.index("generate-ideas --min-queued 3"), text.index("claim --run-id"))
+        self.assertGreater(text.index("generate-ideas --min-queued 3"), text.index("while true; do"))
         self.assertIn("complete --candidate-id", text)
         self.assertIn("candidate_for_validator_review", text)
         self.assertIn('STATUS=failed', text)
