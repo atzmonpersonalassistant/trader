@@ -19,7 +19,10 @@ The agent should be creative inside the mandate, but skeptical. It should avoid 
 - **Instrument scope:** options only. Ignore good non-options/equity-only setups as candidates.
 - **Asset scope:** anything QuantConnect supports, provided options data and liquidity are adequate.
 - **Strategy scope:** any options strategy is allowed if the structure fits the setup, risk is defined/measurable, and QC can test it.
+- **Structure selection:** mixed rule. Long-premium structures are allowed when max risk is limited to premium. Short-premium structures must be defined-risk. Naked shorts are always forbidden. If two similar structures are tied or uncertain, prefer defined-risk.
 - **Short premium:** allowed only as defined-risk structures such as credit spreads, iron condors, butterflies, and defined-risk calendars/diagonals. Naked short options are forbidden.
+- **Complexity:** any options structure may be researched, but complexity requires stronger justification. Penalize structures that are complex without a clear edge, volatility/time-structure fit, or risk-control reason.
+- **Liquidity prefilter:** run a quick liquidity check before deep research. If option chain liquidity, spread, volume, or open interest is poor, discard or downgrade to low priority before spending on deep backtests.
 - **0DTE / very-short-dated:** allowed if backtestable, but must be labeled ultra-short/high execution risk.
 - **Initial opportunity timeframe:** days to two weeks.
 - **Payoff objective:** balanced expectancy, not blindly high win-rate or lottery-style payoff.
@@ -43,6 +46,12 @@ Low trade count or short history does not automatically discard a thesis, but it
 
 A result cannot become a candidate if it works only at a single magic parameter. Require stability across nearby parameter ranges.
 
+If there is material overfitting suspicion, the idea is not a candidate until it passes OOS, walk-forward, or robustness validation.
+
+Every report must disclose how many variations/parameter combinations were tested, what was selected, and reduce conviction when many trials were needed to find a good result.
+
+Every candidate report must include overlap/correlation versus existing candidates. Do not block research solely because exposure overlaps, but flag repeated bets such as multiple bullish tech/Nasdaq structures.
+
 If a strategy works only in one period or regime, it can become a candidate only if it identifies that regime in advance.
 
 ## Validation Protocol
@@ -54,7 +63,11 @@ If a strategy works only in one period or regime, it can become a candidate only
 - Use recent/quick diagnostics as needed, but candidates require 2018-present validation or walk-forward/OOS evidence.
 - Run execution scenarios: optimistic, realistic, conservative.
 - Adaptive resolution: daily for coarse screening; hourly/minute when timing matters; 0DTE/very-short-dated strategies generally require minute-level evidence.
-- Adaptive regime analysis: start with simple tags; deepen analysis if performance is regime-dependent.
+- Adaptive regime analysis: start with simple bull/bear/sideways tags; if strategy performance is regime-sensitive, deepen into trend, volatility, rates/macro, and sector leadership.
+- Material data quality problems block candidate status until explained or fixed. If option-chain gaps, bad fills, odd prices, sparse quotes, or recurring data failures appear, open a technical issue.
+- Runtime policy: start with cheap diagnostics, deepen only when there is signal, and if a backtest is stuck/too expensive/repeatedly failing, open an issue and move to another idea.
+- LLM judgment: the LLM may choose next research steps, propose refinements, explain failures, and assign combined conviction from numbers/context/risk, but may not override weak evidence. Candidates must be evidence-based.
+- Asymmetric/speculative candidates: keep a separate category. Huge upside is not enough; it still requires positive expectancy after validation.
 - Parameter optimization is allowed as part of adaptive search, but no optimized result can become a candidate without OOS/walk-forward validation, combination-count disclosure, robustness checks, and complexity penalty.
 - Quality before speed. Do not reject good research merely because it is slow, but stop/report technical stuck loops or repeated failures.
 
@@ -90,7 +103,8 @@ Cache/retention:
 - If the mandate is blocking/defective, the agent may temporarily adapt within the principles to avoid getting stuck, then must open a GitHub issue documenting the problem, temporary deviation, rationale, and proposed permanent mandate change.
 - WhatsApp should stay concise; full reports should live in files/GitHub artifacts.
 - Full audit trail is required: prompt/job spec, sources/citations, hypotheses, parameters, QC ids, metrics, decisions, failures, temporary mandate deviations, issues/links.
-- Keep a failure library and use it to steer future research.
+- Keep structured failure summaries and use them to steer future research, avoid repeated disproven ideas, and create new hypotheses when a failure reveals a useful insight.
+- During regular market hours, focus more on monitoring/candidates/setups relevant now; during closed-market hours, prioritize heavy research, refinement, failure analysis, and reports.
 
 ## Hard No
 
@@ -109,7 +123,7 @@ The agent must not:
 
 ## Open Questions
 
-Continue tomorrow from:
+Continue from:
 
-- Question 54: whether to prefer defined-risk structures by default, choose strictly by expectancy/risk, or apply different rules for long premium vs short premium.
+- Question 68: pre-market/after-hours policy. Current recommendation was monitoring/context only, no candidate without regular-session validation.
 - Any future capital/sizing assumptions if Uriel wants position sizing. Current decision: do not calculate position sizing yet; evaluate strategy/setup quality only.
