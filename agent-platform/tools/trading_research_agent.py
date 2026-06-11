@@ -330,6 +330,100 @@ def cheap_call_seed_queue() -> list[StrategyCandidate]:
     ]
 
 
+def generated_research_ideas(existing: list[dict[str, Any]] | None = None, *, limit: int = 6) -> list[StrategyCandidate]:
+    """Generate additional mandate-scoped research hypotheses.
+
+    First version is deterministic on purpose: it expands beyond the initial
+    cheap-call demo seeds while keeping candidates auditable, deduplicated, and
+    inside Uriel's options-only / defined-risk mandate. A later iteration can
+    add market-regime inputs and an LLM proposer once we have a journal.
+    """
+    existing_ids = {item.get("id") for item in (existing or [])}
+    templates = [
+        StrategyCandidate(
+            id="spy-iv-rank-support-bull-put-spread",
+            name="SPY defined-risk bull put spread after support hold",
+            priority=10,
+            family="bull_put_spread",
+            thesis="When SPY remains in an uptrend and IV is elevated versus recent realized movement, a defined-risk bull put spread may harvest premium with capped downside risk.",
+            structure="Sell 30-45 DTE put around 0.20-0.30 delta; buy a lower-strike put to cap risk.",
+            universe=["SPY"],
+            entry_rules=["SPY above SMA200", "Pullback holds SMA50 or prior support", "IV rank/percentile >= 50 when available", "Credit-to-width clears conservative fill/slippage threshold"],
+            exit_rules=["Take profit at 50-70% of credit", "Exit if short-strike delta doubles", "Exit below SMA200", "Exit by 7-14 DTE"],
+            risk_controls=["Defined risk only", "No naked short options", "One open trade per underlying", "Reject wide bid/ask chains"],
+            required_data=["SPY equity history", "SPY option chain", "Greeks/delta", "IV rank or proxy", "bid/ask and open interest"],
+            llm_value="Judge whether premium/skew/regime justify short-premium risk rather than blindly selling puts.",
+            pitfalls=["Short-vol tail risk", "Crash clustering", "Mid-price fills may overstate edge", "Works only in calm bull regimes"],
+            minimum_viability=["Positive expectancy after conservative fills", "Profit factor >= 1.15", "Robust across nearby deltas and widths", "Drawdown acceptable for defined-risk income"],
+            quantconnect_test_spec={"algorithm_template": "defined_risk_credit_spread", "underlying": "SPY", "strategy": "bull_put_spread", "min_dte": 30, "max_dte": 45, "short_delta_range": [0.20, 0.30], "iv_rank_min": 50},
+        ),
+        StrategyCandidate(
+            id="qqq-failed-breakout-bear-call-spread",
+            name="QQQ defined-risk bear call spread after failed breakout",
+            priority=11,
+            family="bear_call_spread",
+            thesis="When QQQ fails an upside breakout while premium/skew still pays enough credit, a defined-risk bear call spread may monetize mean reversion without unlimited upside risk.",
+            structure="Sell 21-45 DTE call around 0.20-0.30 delta; buy a higher-strike call to cap risk.",
+            universe=["QQQ"],
+            entry_rules=["Close falls back below 20-day high or upper Bollinger band", "Momentum rollover or RSI divergence", "IV percentile >= 45", "Credit-to-width above threshold", "Liquidity screen passes"],
+            exit_rules=["Take profit at 50-70% of credit", "Exit on renewed breakout", "Exit at 7-14 DTE", "Stop if spread value reaches 2x credit"],
+            risk_controls=["Defined risk only", "No averaging", "Reject if option spreads are too wide"],
+            required_data=["QQQ equity history", "QQQ option chain", "Bollinger bands", "Greeks/delta", "IV/skew"],
+            llm_value="Separate genuine failed-breakout regimes from ordinary uptrend pauses where short calls are dangerous.",
+            pitfalls=["Upside gap risk", "Fighting persistent tech momentum", "Overfit breakout thresholds"],
+            minimum_viability=["Positive expectancy in non-crash periods", "Controlled worst losses", "Works across several breakout definitions"],
+            quantconnect_test_spec={"algorithm_template": "defined_risk_credit_spread", "underlying": "QQQ", "strategy": "bear_call_spread", "min_dte": 21, "max_dte": 45, "short_delta_range": [0.20, 0.30], "failed_breakout_lookback_days": 20},
+        ),
+        StrategyCandidate(
+            id="iwm-elevated-iv-range-iron-condor",
+            name="IWM elevated-IV range iron condor",
+            priority=12,
+            family="iron_condor",
+            thesis="If IWM is range-bound and implied volatility is high relative to realized movement, a defined-risk iron condor may offer balanced premium capture.",
+            structure="Sell 30-45 DTE put and call spreads around 0.15-0.25 delta; buy wings to define risk.",
+            universe=["IWM"],
+            entry_rules=["Price near middle of 60-day range", "Realized volatility below implied volatility proxy", "IV percentile >= 50", "Both wings liquid", "No strong trend filter breach"],
+            exit_rules=["Take profit at 40-60% of credit", "Exit if underlying breaches short strike side", "Exit at 14 DTE", "Stop if loss reaches configured multiple of credit"],
+            risk_controls=["Defined risk both sides", "Reject low open-interest wings", "Model gap scenarios and skew changes"],
+            required_data=["IWM equity history", "IWM option chain", "IV/RV proxy", "bid/ask/OI", "range regime features"],
+            llm_value="Judge whether the regime is truly range-bound or just quiet before trend expansion.",
+            pitfalls=["Vol expansion after entry", "Small-cap gap risk", "Condor commissions/slippage", "False range classification"],
+            minimum_viability=["Positive expectancy after conservative costs", "Survives stress windows", "No single quiet regime explains all profit"],
+            quantconnect_test_spec={"algorithm_template": "iron_condor", "underlying": "IWM", "strategy": "iron_condor", "min_dte": 30, "max_dte": 45, "short_delta_range": [0.15, 0.25], "iv_rank_min": 50},
+        ),
+        StrategyCandidate(
+            id="tlt-rates-trend-debit-put-spread",
+            name="TLT downside debit put spread during rates uptrend",
+            priority=13,
+            family="bear_put_spread",
+            thesis="When TLT breaks down while rate-sensitive trend filters remain bearish, a debit put spread may express bond downside with capped risk and less theta bleed than outright puts.",
+            structure="Buy 45-75 DTE put around 0.40-0.55 delta; sell lower-strike put around 0.20-0.35 delta.",
+            universe=["TLT"],
+            entry_rules=["TLT below SMA50 and SMA200", "Close below 20-day low", "Downside trend strength positive", "IV percentile <= 65", "Debit-to-width below threshold"],
+            exit_rules=["Take profit at 80-120% of debit", "Stop at 50% debit loss", "Exit if close above SMA50", "Exit by 21 DTE"],
+            risk_controls=["Max loss is debit", "Avoid FOMC/event windows unless modeled", "Reject poor chain liquidity"],
+            required_data=["TLT equity history", "TLT option chain", "Greeks/delta", "IV/RV", "event calendar when available"],
+            llm_value="Frame rate-regime risk and avoid treating bond trend as a normal equity momentum signal.",
+            pitfalls=["Macro event reversals", "Options too expensive during rate scares", "Lower option liquidity than SPY/QQQ"],
+            minimum_viability=["Enough trades across multiple rate regimes", "Positive expectancy after slippage", "Not dependent on a single macro year"],
+            quantconnect_test_spec={"algorithm_template": "debit_put_spread", "underlying": "TLT", "strategy": "bear_put_spread", "min_dte": 45, "max_dte": 75, "buy_delta_range": [0.40, 0.55], "sell_delta_range": [0.20, 0.35]},
+        ),
+    ]
+    return [candidate for candidate in templates if candidate.id not in existing_ids][:limit]
+
+
+def merge_candidates(queue: list[dict[str, Any]], candidates: list[StrategyCandidate], *, source: str) -> tuple[list[dict[str, Any]], int]:
+    existing = {item["id"]: item for item in queue}
+    added = 0
+    for candidate in candidates:
+        if candidate.id not in existing:
+            payload = asdict(candidate)
+            payload["source"] = source
+            existing[candidate.id] = payload
+            added += 1
+    return sorted(existing.values(), key=lambda item: (item.get("priority", 999), item["id"])), added
+
+
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -422,12 +516,26 @@ def cmd_complete(args: argparse.Namespace) -> int:
 
 def cmd_seed(args: argparse.Namespace) -> int:
     queue_path = Path(args.queue)
-    existing = {item["id"]: item for item in load_queue(queue_path)}
-    for candidate in cheap_call_seed_queue():
-        existing.setdefault(candidate.id, asdict(candidate))
-    queue = sorted(existing.values(), key=lambda item: (item.get("priority", 999), item["id"]))
+    queue, added = merge_candidates(load_queue(queue_path), cheap_call_seed_queue(), source="static_seed")
     write_json(queue_path, queue)
-    print(json.dumps({"ok": True, "queue": str(queue_path), "count": len(queue)}, ensure_ascii=False, sort_keys=True))
+    print(json.dumps({"ok": True, "queue": str(queue_path), "count": len(queue), "added": added}, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def cmd_generate_ideas(args: argparse.Namespace) -> int:
+    queue_path = Path(args.queue)
+
+    def generate(queue: list[dict[str, Any]]):
+        queued_count = sum(1 for item in queue if item.get("status") == "queued")
+        if queued_count >= args.min_queued:
+            return {"ok": True, "queue": str(queue_path), "count": len(queue), "queued": queued_count, "added": 0, "reason": "min_queued_satisfied"}, None
+        generated = generated_research_ideas(queue, limit=args.limit)
+        new_queue, added = merge_candidates(queue, generated, source="deterministic_idea_generator")
+        new_queued_count = sum(1 for item in new_queue if item.get("status") == "queued")
+        return {"ok": True, "queue": str(queue_path), "count": len(new_queue), "queued": new_queued_count, "added": added, "source": "deterministic_idea_generator"}, new_queue
+
+    payload = with_queue_lock(queue_path, generate)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return 0
 
 
@@ -504,6 +612,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     seed = sub.add_parser("seed-cheap-calls", help="Seed initial cheap-call research queue")
     seed.set_defaults(func=cmd_seed)
+    ideas = sub.add_parser("generate-ideas", help="Generate additional mandate-scoped research ideas when queue is low")
+    ideas.add_argument("--min-queued", type=int, default=3)
+    ideas.add_argument("--limit", type=int, default=6)
+    ideas.set_defaults(func=cmd_generate_ideas)
     list_cmd = sub.add_parser("list", help="List research candidates")
     list_cmd.add_argument("--status")
     list_cmd.set_defaults(func=cmd_list)
