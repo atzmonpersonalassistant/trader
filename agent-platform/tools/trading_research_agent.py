@@ -17,6 +17,8 @@ from typing import Any
 DEFAULT_STATE_DIR = Path("/agents/research/state")
 DEFAULT_REPORTS_DIR = Path("/agents/research/reports")
 DEFAULT_WORKSPACE_DIR = Path("/agents/research/lean-workspace")
+DEFAULT_SHARED_PROJECTS_DIR = Path("/agents/shared/lean-projects")
+DEFAULT_SHARED_ARTIFACTS_DIR = Path("/agents/shared/research-artifacts")
 DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
 
 
@@ -116,7 +118,7 @@ For every hypothesis:
 2. Run diagnostics first: signal count, option-chain availability, contract counts under filters, rejection reasons, missing Greeks/IV, and trade/event counts by symbol/year/regime.
 3. Only run broad backtests after diagnostics show enough data/events.
 4. Use QC capabilities deeply: option chains/universes, Greeks/delta/IV, History, indicators, scheduled scanners, cloud backtests, parameters/sweeps, logs/ObjectStore/artifacts where accessible.
-5. Save artifacts under /agents/research/reports/<run-id>/ without secrets.
+5. Save artifacts under /agents/research/reports/<run-id>/ or /agents/shared/research-artifacts/<run-id>/ without secrets.
 6. End with a verdict: discard, refine, retest_after_technical_fix, or candidate_for_validator_review.
 
 Do not place live trades. Do not make trade recommendations from weak or technically blocked evidence. If QC access, compute nodes, logs, ObjectStore, or data coverage block the run, say so plainly and recommend the exact next technical step.
@@ -323,6 +325,8 @@ def cmd_qc_prompt(args: argparse.Namespace) -> int:
         "qc_cloud_default": True,
         "reports_dir": str(Path(args.reports_dir)),
         "workspace_dir": str(Path(args.workspace_dir)),
+        "shared_projects_dir": str(DEFAULT_SHARED_PROJECTS_DIR),
+        "shared_artifacts_dir": str(DEFAULT_SHARED_ARTIFACTS_DIR),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
@@ -333,6 +337,8 @@ def cmd_qc_lean_setup_plan(args: argparse.Namespace) -> int:
         "ok": True,
         "type": "lean_setup_plan",
         "workspace_dir": str(Path(args.workspace_dir)),
+        "shared_projects_dir": str(DEFAULT_SHARED_PROJECTS_DIR),
+        "shared_artifacts_dir": str(DEFAULT_SHARED_ARTIFACTS_DIR),
         "credential_env": "/etc/trading-agents/secrets/quantconnect/env",
         "commands": lean_setup_commands(Path(args.workspace_dir)),
         "verification": [
@@ -342,6 +348,7 @@ def cmd_qc_lean_setup_plan(args: argparse.Namespace) -> int:
         ],
         "notes": [
             "Run as agent-research with HOME=/home/agent-research.",
+            "Coding/review roles may edit Lean project files but must not receive raw QuantConnect env access.",
             "Do not print QUANTCONNECT_API_TOKEN or the Lean credentials file.",
             "Cloud backtests should use lean cloud backtest <project> --push.",
         ],

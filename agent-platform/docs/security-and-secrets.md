@@ -35,11 +35,20 @@ These include `OPENAI_API_KEY` and Codex access/refresh tokens. They are mode `6
 
 These allow the token helper to mint short-lived GitHub installation tokens for each GitHub App.
 
+### QuantConnect credentials
+
+- `/etc/trading-agents/secrets/quantconnect/env`
+
+This file is owned by `root:agent-quantconnect` and mode `640`. It may contain `QUANTCONNECT_USER_ID` and `QUANTCONNECT_API_TOKEN`. Membership in `agent-quantconnect` is intentionally limited to `agent-orchestrator`, `agent-research`, and `agent-validator`. Do not add prompt-driven coding or review users to this group unless a later design explicitly narrows the workflow and updates tests to prove the boundary.
+
 ### Runtime state and logs
 
 - `/agents/orchestrator/state/orchestrator.db`
 - `/agents/*/logs/`
 - `/agents/*/workspaces/`
+- `/agents/*/lean-workspace/`
+- `/agents/shared/lean-projects/`
+- `/agents/shared/research-artifacts/`
 
 These are not necessarily secrets, but they can contain repo context, issue text, review outputs, and operational history. Do not share them casually.
 
