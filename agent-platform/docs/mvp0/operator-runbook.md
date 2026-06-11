@@ -47,6 +47,28 @@ Failed worker artifacts are preserved in the per-issue/per-PR workspaces:
 /agents/review/workspaces/pr-*/
 ```
 
+Lean/QuantConnect project files are split between role-private workspaces and shared platform directories:
+
+```text
+/agents/coding/lean-workspace
+/agents/review/lean-workspace
+/agents/research/lean-workspace
+/agents/validator/lean-workspace
+/agents/shared/lean-projects
+/agents/shared/research-artifacts
+```
+
+These shared directories are collaborative Lean workspaces. Deploy configures them with `agent-lean` setgid permissions and default ACLs when `setfacl` is installed, then validates that one Lean-capable role can create a file and another can modify it. If ACL tooling is not available on a host, any wrapper that writes to these shared trees must set `umask 0002`.
+
+`agent-coding` and `agent-review` may work with Lean files, but they must not have raw QuantConnect token access. Check that boundary without printing secrets:
+
+```bash
+sudo -n -u agent-coding test ! -r /etc/trading-agents/secrets/quantconnect/env
+sudo -n -u agent-review test ! -r /etc/trading-agents/secrets/quantconnect/env
+sudo -n -u agent-research test -r /etc/trading-agents/secrets/quantconnect/env
+sudo -n -u agent-validator test -r /etc/trading-agents/secrets/quantconnect/env
+```
+
 ## Human approval relay
 
 Approval outbox payloads use this shape:

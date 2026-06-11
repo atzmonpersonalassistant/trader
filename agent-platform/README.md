@@ -24,6 +24,8 @@ This repo also includes a research-agent CLI:
 
 The VPS also has an `agent-validator` Linux user, but there is not yet a deployed `trading-validator-agent` CLI. Treat this as a placeholder for a future Quant Research Validator Agent. `agent-validator` also has QuantConnect env access for future independent validation.
 
+Lean/QuantConnect workspace support is a platform capability, not a private research-only directory. Bootstrap and deploy create role-scoped workspaces at `/agents/{research,coding,review,validator}/lean-workspace` plus shared platform-owned locations `/agents/shared/lean-projects` and `/agents/shared/research-artifacts`. Shared locations use the `agent-lean` group, setgid directories, and default ACLs when `setfacl` is available so files created by one Lean-capable role remain writable by the other Lean-capable roles. If ACL tooling is unavailable, shared write workflows must run with `umask 0002`. Workspace access stays separate from raw QuantConnect token access: QC env access remains limited to `agent-orchestrator`, `agent-research`, and `agent-validator`; prompt-driven coding/review users can edit Lean project files but cannot read `/etc/trading-agents/secrets/quantconnect/env`.
+
 The goal is that someone can copy `agent-platform/` and understand/adapt the architecture without copying the options trading project.
 
 ## What is reusable

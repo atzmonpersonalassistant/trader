@@ -39,12 +39,26 @@ install_dir() {
   install -d -o "$owner" -g "$group" -m "$mode" "$path"
 }
 
+configure_shared_collab_dir() {
+  local path="$1"
+  install_dir root agent-lean 2770 "$path"
+  chgrp -R agent-lean "$path"
+  chmod -R g+rwX "$path"
+  find "$path" -type d -exec chmod 2770 {} +
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m g:agent-lean:rwx,m::rwx "$path"
+    find "$path" -type d -exec setfacl -m g:agent-lean:rwx,d:g:agent-lean:rwx,d:m::rwx,m::rwx {} +
+  else
+    log "setfacl not found; shared Lean roles should run write workflows with umask 0002"
+  fi
+}
+
 if [[ "$INSTALL_TOOLS" == "1" ]]; then
   if command -v apt-get >/dev/null 2>&1; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+      acl ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
     fi
@@ -73,7 +87,13 @@ PY_CHMOD
   fi
 fi
 
-log "creating role users and QuantConnect access group"
+log "creating role users and Lean/QuantConnect access groups"
+if getent group agent-lean >/dev/null 2>&1; then
+  log "group exists: agent-lean"
+else
+  log "creating group: agent-lean"
+  groupadd --system agent-lean
+fi
 if getent group agent-quantconnect >/dev/null 2>&1; then
   log "group exists: agent-quantconnect"
 else
@@ -89,6 +109,13 @@ ensure_user agent-research
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
 usermod -aG agent-review agent-orchestrator
+# Lean workspaces are a platform capability across research, coding, review,
+# and validator roles. This group grants access only to shared project/artifact
+# directories; raw QuantConnect credentials remain scoped separately below.
+usermod -aG agent-lean agent-research
+usermod -aG agent-lean agent-coding
+usermod -aG agent-lean agent-review
+usermod -aG agent-lean agent-validator
 # QuantConnect credentials are shared from a single root-owned env file, readable
 # only by roles in agent-quantconnect.
 usermod -aG agent-quantconnect agent-orchestrator
@@ -105,12 +132,14 @@ install_dir agent-orchestrator agent-orchestrator 750 /agents/orchestrator/backu
 install_dir agent-coding agent-coding 750 /agents/coding
 install_dir agent-coding agent-coding 750 /agents/coding/state
 install_dir agent-coding agent-coding 2770 /agents/coding/workspaces
+install_dir agent-coding agent-coding 750 /agents/coding/lean-workspace
 install_dir agent-coding agent-coding 755 /agents/coding/logs
 install_dir agent-coding agent-coding 750 /agents/coding/controller
 
 install_dir agent-review agent-review 750 /agents/review
 install_dir agent-review agent-review 750 /agents/review/state
 install_dir agent-review agent-review 2770 /agents/review/workspaces
+install_dir agent-review agent-review 750 /agents/review/lean-workspace
 install_dir agent-review agent-review 750 /agents/review/logs
 
 install_dir agent-research agent-research 750 /agents/research
@@ -125,6 +154,11 @@ install_dir agent-validator agent-validator 750 /agents/validator
 install_dir agent-validator agent-validator 750 /agents/validator/state
 install_dir agent-validator agent-validator 750 /agents/validator/logs
 install_dir agent-validator agent-validator 755 /agents/validator/workspaces
+install_dir agent-validator agent-validator 750 /agents/validator/lean-workspace
+
+install_dir root agent-lean 750 /agents/shared
+configure_shared_collab_dir /agents/shared/lean-projects
+configure_shared_collab_dir /agents/shared/research-artifacts
 
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 755 /etc/trading-agents
@@ -209,7 +243,7 @@ Next manual steps:
 1. Install real GitHub App private keys under /etc/trading-agents/secrets/*/private-key.pem.
 2. Replace /etc/trading-agents/github-apps.json placeholder IDs with real App/installation IDs.
 3. Install Codex/OpenAI auth for agent-coding and agent-review if those roles run Codex on the VPS.
-4. Confirm Lean CLI is available for agent-research and run Lean login from the QuantConnect env file.
+4. Confirm Lean CLI is available for agent-research/agent-validator and run Lean login from the QuantConnect env file only for roles with QuantConnect env access.
 5. Update GitHub Actions secrets: VPS_HOST, VPS_USER, VPS_SSH_PRIVATE_KEY, VPS_SSH_HOST_KEY.
 6. Run the vps-deploy workflow and then the validation checklist in server-migration.md.
 NEXT
