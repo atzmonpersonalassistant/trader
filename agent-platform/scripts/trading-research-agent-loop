@@ -31,7 +31,7 @@ fi
 
 while true; do
   if [ "$DISABLE_SEED" != "1" ]; then
-    trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 >> "$LOG_DIR/loop.log" 2>&1 || true
+    trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 --reports-dir "$REPORTS_DIR" >> "$LOG_DIR/loop.log" 2>&1 || true
   fi
   RUN_ID="research-pass-$(date -u +%Y%m%d-%H%M%S)"
   RUN_DIR="$REPORTS_DIR/$RUN_ID"
