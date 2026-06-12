@@ -664,8 +664,10 @@ def ai_generated_research_ideas(existing: list[dict[str, Any]], *, limit: int, m
     return candidates
 
 
-def _write_text_no_follow(path: Path, text: str) -> None:
+def _write_text_no_follow(path: Path, text: str, *, exclusive: bool = False) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if exclusive:
+        flags |= os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)
@@ -743,7 +745,7 @@ def codex_generated_research_ideas(
         + "Do not read secrets, credentials, home directories, or files outside the current working directory. "
         + "Use the configured Codex model passed by the wrapper. "
     )
-    task_file.write_text(prompt, encoding="utf-8")
+    _write_text_no_follow(task_file, prompt, exclusive=True)
     _make_runner_readable(task_file, runner_user=runner_user)
     try:
         result = subprocess.run(

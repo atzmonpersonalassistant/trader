@@ -160,6 +160,11 @@ class MVP0AgentTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 research._write_text_no_follow(link, "overwrite")
             self.assertEqual(target.read_text(), "original")
+            existing = Path(tmp) / "existing.txt"
+            existing.write_text("exists")
+            with self.assertRaises(FileExistsError):
+                research._write_text_no_follow(existing, "new", exclusive=True)
+            self.assertEqual(existing.read_text(), "exists")
 
     def test_research_codex_generator_invokes_locked_runner_and_parses_ideas_json(self):
         research = load("trading_research_agent_codex_ideas", "agent-platform/tools/trading_research_agent.py")
@@ -418,6 +423,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("_grant_runner_traversal", research_tool)
         self.assertIn("_write_text_no_follow", research_tool)
         self.assertIn("O_NOFOLLOW", research_tool)
+        self.assertIn("exclusive=True", research_tool)
         self.assertIn("setfacl", research_tool)
         self.assertIn("trading-research-runner-codex", research_tool)
         self.assertIn("OPENAI_API_KEY", research_tool)
