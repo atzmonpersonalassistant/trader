@@ -211,12 +211,12 @@ fi
 TASK_FILE="$1"
 OUTPUT_DIR="$2"
 case "$TASK_FILE" in
-  /agents/research-runner/handoff/research-pass-*-task.txt) ;;
-  *) echo "ERROR: task file must be under /agents/research-runner/handoff" >&2; exit 65 ;;
+  /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+  *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
 esac
 case "$OUTPUT_DIR" in
-  /agents/research/reports/research-pass-*) ;;
-  *) echo "ERROR: output dir must be under /agents/research/reports/research-pass-*" >&2; exit 67 ;;
+  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
+  *) echo "ERROR: output dir must be an approved research reports directory" >&2; exit 67 ;;
 esac
 if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
   echo "ERROR: task/output permissions are not usable" >&2
@@ -225,11 +225,11 @@ fi
 TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
 OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
 case "$TASK_REAL" in
-  /agents/research-runner/handoff/research-pass-*-task.txt) ;;
+  /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
   *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
 esac
 case "$OUT_REAL" in
-  /agents/research/reports/research-pass-*) ;;
+  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
   *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
 esac
 cd "$OUT_REAL"
