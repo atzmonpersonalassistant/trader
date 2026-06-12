@@ -149,6 +149,18 @@ class MVP0AgentTests(unittest.TestCase):
 
 
 
+
+    def test_research_no_follow_writer_rejects_symlink_logs(self):
+        research = load("trading_research_agent_no_follow", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target.txt"
+            target.write_text("original")
+            link = Path(tmp) / "codex_stdout.log"
+            link.symlink_to(target)
+            with self.assertRaises(OSError):
+                research._write_text_no_follow(link, "overwrite")
+            self.assertEqual(target.read_text(), "original")
+
     def test_research_codex_generator_invokes_locked_runner_and_parses_ideas_json(self):
         research = load("trading_research_agent_codex_ideas", "agent-platform/tools/trading_research_agent.py")
         with TemporaryDirectory() as tmp:
@@ -404,6 +416,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("TRADING_RESEARCH_IDEA_GENERATOR", research_tool)
         self.assertIn("codex_generated_research_ideas", research_tool)
         self.assertIn("_grant_runner_traversal", research_tool)
+        self.assertIn("_write_text_no_follow", research_tool)
+        self.assertIn("O_NOFOLLOW", research_tool)
         self.assertIn("setfacl", research_tool)
         self.assertIn("trading-research-runner-codex", research_tool)
         self.assertIn("OPENAI_API_KEY", research_tool)

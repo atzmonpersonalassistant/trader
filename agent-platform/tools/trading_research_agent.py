@@ -664,6 +664,20 @@ def ai_generated_research_ideas(existing: list[dict[str, Any]], *, limit: int, m
     return candidates
 
 
+def _write_text_no_follow(path: Path, text: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+    finally:
+        if fd != -1:
+            os.close(fd)
+
+
 def _runner_gid(runner_user: str = DEFAULT_RUNNER_USER) -> int | None:
     try:
         return grp.getgrnam(runner_user).gr_gid
@@ -745,8 +759,8 @@ def codex_generated_research_ideas(
             task_file.unlink()
         except FileNotFoundError:
             pass
-    (output_dir / "codex_stdout.log").write_text(result.stdout or "", encoding="utf-8")
-    (output_dir / "codex_stderr.log").write_text(result.stderr or "", encoding="utf-8")
+    _write_text_no_follow(output_dir / "codex_stdout.log", result.stdout or "")
+    _write_text_no_follow(output_dir / "codex_stderr.log", result.stderr or "")
     if result.returncode != 0:
         detail = ((result.stderr or "") + "\n" + (result.stdout or ""))[-800:]
         raise RuntimeError(f"Codex idea generation failed rc={result.returncode}: {detail}")
