@@ -551,6 +551,7 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         if not str(payload.get(field, "")).strip():
             return None
         payload[field] = str(payload[field])
+    payload["family"] = safe_token(slugify_id(payload["family"]).replace("-", "_"), max_len=48)
     if not isinstance(payload.get("quantconnect_test_spec"), dict) or not payload["quantconnect_test_spec"]:
         return None
     if contains_unsafe_ai_text(payload):

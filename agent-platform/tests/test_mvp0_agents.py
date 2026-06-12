@@ -270,6 +270,11 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate.id, "ai-momentum-calendar-spread")
         self.assertEqual(candidate.priority, 20)
+        family_variant = dict(parsed[0])
+        family_variant["family"] = "Call Calendar Spread"
+        normalized_variant = research.normalize_candidate_payload(family_variant, priority_floor=20)
+        self.assertIsNotNone(normalized_variant)
+        self.assertEqual(normalized_variant.family, "call_calendar_spread")
         invalid = dict(parsed[0])
         invalid["entry_rules"] = ["", "   "]
         self.assertIsNone(research.normalize_candidate_payload(invalid, priority_floor=20))
