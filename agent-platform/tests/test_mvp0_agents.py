@@ -148,6 +148,93 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(len(research.load_queue(queue)), len(items))
 
 
+
+
+    def test_research_no_follow_writer_rejects_symlink_logs(self):
+        research = load("trading_research_agent_no_follow", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target.txt"
+            target.write_text("original")
+            link = Path(tmp) / "codex_stdout.log"
+            link.symlink_to(target)
+            with self.assertRaises(OSError):
+                research._write_text_no_follow(link, "overwrite")
+            self.assertEqual(target.read_text(), "original")
+            existing = Path(tmp) / "existing.txt"
+            existing.write_text("exists")
+            with self.assertRaises(FileExistsError):
+                research._write_text_no_follow(existing, "new", exclusive=True)
+            self.assertEqual(existing.read_text(), "exists")
+
+    def test_research_codex_generator_invokes_locked_runner_and_parses_ideas_json(self):
+        research = load("trading_research_agent_codex_ideas", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            reports = Path(tmp) / "reports"
+            handoff = Path(tmp) / "handoff"
+            calls = []
+
+            class Result:
+                returncode = 0
+                stdout = '{"ideas": []}'
+                stderr = ""
+
+            original_run = research.subprocess.run
+            original_chown = research.os.chown
+            original_getgrnam = research.grp.getgrnam
+            try:
+                research.os.chown = lambda *args, **kwargs: None
+                research.grp.getgrnam = lambda name: type("Group", (), {"gr_gid": 1234})()
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    if cmd and cmd[0] == "sudo":
+                        output_dir = Path(cmd[-2])
+                        (output_dir / "ideas.json").write_text(json.dumps({"ideas": [{
+                            "id": "Codex Vol Calendar",
+                            "name": "Codex vol calendar",
+                            "priority": 7,
+                            "family": "calendar",
+                            "thesis": "Options calendar hypothesis from Codex runner.",
+                            "structure": "Buy later expiry and sell nearer expiry for defined debit risk.",
+                            "universe": ["SPY"],
+                            "entry_rules": ["term structure supportive"],
+                            "exit_rules": ["exit before front expiry"],
+                            "risk_controls": ["max loss limited to debit"],
+                            "required_data": ["option chain", "IV term structure"],
+                            "llm_value": "Codex proposes non-duplicate option structure.",
+                            "pitfalls": ["poor fills"],
+                            "minimum_viability": ["positive expectancy after costs"],
+                            "quantconnect_test_spec": {"strategy": "calendar", "underlying": "SPY"},
+                        }]}))
+                        return Result()
+                    return type("AclResult", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+                research.subprocess.run = fake_run
+                candidates = research.codex_generated_research_ideas(
+                    [],
+                    limit=1,
+                    model="gpt-5.5",
+                    timeout_seconds=30,
+                    reports_dir=reports,
+                    handoff_dir=handoff,
+                    runner_user="agent-research-runner",
+                )
+            finally:
+                research.subprocess.run = original_run
+                research.os.chown = original_chown
+                research.grp.getgrnam = original_getgrnam
+
+            sudo_calls = [call for call in calls if call[0] and call[0][0] == "sudo"]
+            self.assertEqual(len(sudo_calls), 1)
+            cmd = sudo_calls[0][0]
+            self.assertEqual(cmd[:5], ["sudo", "-n", "-u", "agent-research-runner", "/usr/local/bin/trading-research-runner-codex"])
+            self.assertEqual(cmd[-1], "gpt-5.5")
+            self.assertTrue(str(cmd[-3]).startswith(str(handoff)))
+            self.assertTrue(str(cmd[-2]).startswith(str(reports)))
+            self.assertFalse(Path(cmd[-3]).exists())
+            self.assertEqual(candidates[0].id, "codex-vol-calendar")
+            self.assertEqual(candidates[0].priority, 20)
+
     def test_research_ai_generator_uses_official_openai_endpoint_and_ideas_wrapper(self):
         text = Path("agent-platform/tools/trading_research_agent.py").read_text()
         self.assertIn('"https://api.openai.com/v1/responses"', text)
@@ -319,14 +406,27 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('setfacl -m "u:$RUNNER_USER:rwx" "$RUN_DIR"', text)
         self.assertIn("--sandbox workspace-write", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn('approval_policy="never"', Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
-        self.assertIn("os.path.realpath", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
+        bootstrap_text = Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text()
+        deploy_text = Path(".github/workflows/vps-deploy.yml").read_text()
+        self.assertIn("os.path.realpath", bootstrap_text)
+        self.assertIn("idea-generation-*-task.txt", bootstrap_text)
+        self.assertIn("/agents/research/reports/idea-generation-*", bootstrap_text)
+        self.assertIn("idea-generation-*-task.txt", deploy_text)
+        self.assertIn("/agents/research/reports/idea-generation-*", deploy_text)
         self.assertIn("claim --run-id", text)
         self.assertIn("generate-ideas --min-queued 3", text)
         self.assertIn('TRADING_RESEARCH_ENV_FILE', text)
         self.assertIn('/etc/trading-agents/secrets/research/env', text)
-        self.assertIn("TRADING_RESEARCH_IDEA_GENERATOR", Path("agent-platform/tools/trading_research_agent.py").read_text())
-        self.assertIn("ai_idea_generator", Path("agent-platform/tools/trading_research_agent.py").read_text())
-        self.assertIn("OPENAI_API_KEY", Path("agent-platform/tools/trading_research_agent.py").read_text())
+        research_tool = Path("agent-platform/tools/trading_research_agent.py").read_text()
+        self.assertIn("TRADING_RESEARCH_IDEA_GENERATOR", research_tool)
+        self.assertIn("codex_generated_research_ideas", research_tool)
+        self.assertIn("_grant_runner_traversal", research_tool)
+        self.assertIn("_write_text_no_follow", research_tool)
+        self.assertIn("O_NOFOLLOW", research_tool)
+        self.assertIn("exclusive=True", research_tool)
+        self.assertIn("setfacl", research_tool)
+        self.assertIn("trading-research-runner-codex", research_tool)
+        self.assertIn("OPENAI_API_KEY", research_tool)
         self.assertLess(text.index("generate-ideas --min-queued 3"), text.index("claim --run-id"))
         self.assertGreater(text.index("generate-ideas --min-queued 3"), text.index("while true; do"))
         self.assertIn("complete --candidate-id", text)

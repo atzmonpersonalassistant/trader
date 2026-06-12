@@ -297,19 +297,23 @@ jobs:
           sudo tee /usr/local/bin/trading-research-runner-codex >/dev/null <<'RUNNER_CODEX'
           #!/usr/bin/env bash
           set -euo pipefail
-          if [[ "$#" -ne 2 ]]; then
-            echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR" >&2
+          if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
+            echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
             exit 64
           fi
           TASK_FILE="$1"
           OUTPUT_DIR="$2"
+          MODEL="${3:-gpt-5.4-mini}"
+          case "$MODEL" in
+            *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
+          esac
           case "$TASK_FILE" in
-            /agents/research-runner/handoff/research-pass-*-task.txt) ;;
-            *) echo "ERROR: task file must be under /agents/research-runner/handoff" >&2; exit 65 ;;
+            /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+            *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
           esac
           case "$OUTPUT_DIR" in
-            /agents/research/reports/research-pass-*) ;;
-            *) echo "ERROR: output dir must be under /agents/research/reports/research-pass-*" >&2; exit 67 ;;
+            /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
+            *) echo "ERROR: output dir must be an approved research reports directory" >&2; exit 67 ;;
           esac
           if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
             echo "ERROR: task/output permissions are not usable" >&2
@@ -318,18 +322,18 @@ jobs:
           TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
           OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
           case "$TASK_REAL" in
-            /agents/research-runner/handoff/research-pass-*-task.txt) ;;
+            /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
             *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
           esac
           case "$OUT_REAL" in
-            /agents/research/reports/research-pass-*) ;;
+            /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
             *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
           esac
           cd "$OUT_REAL"
           export HOME=/home/agent-research-runner
           export PATH=/usr/local/bin:/usr/bin:/bin
           export PYTHONDONTWRITEBYTECODE=1
-          exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model gpt-5.4-mini "$(cat "$TASK_REAL")"
+          exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
           RUNNER_CODEX
           sudo chown root:root /usr/local/bin/trading-research-runner-codex
           sudo chmod 755 /usr/local/bin/trading-research-runner-codex
