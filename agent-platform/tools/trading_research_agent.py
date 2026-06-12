@@ -681,8 +681,19 @@ def _make_runner_readable(path: Path, *, runner_user: str = DEFAULT_RUNNER_USER)
     path.chmod(0o640)
 
 
+def _grant_runner_traversal(paths: list[Path], *, runner_user: str = DEFAULT_RUNNER_USER) -> None:
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            subprocess.run(["setfacl", "-m", f"u:{runner_user}:--x", str(path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+
 def _make_runner_writable_dir(path: Path, *, runner_user: str = DEFAULT_RUNNER_USER) -> None:
     runner_gid = _runner_gid(runner_user)
+    _grant_runner_traversal([Path("/agents"), DEFAULT_REPORTS_DIR.parent, path.parent], runner_user=runner_user)
     try:
         subprocess.run(["setfacl", "-m", f"u:{runner_user}:rwx", str(path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:

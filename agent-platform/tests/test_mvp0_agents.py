@@ -333,6 +333,8 @@ class MVP0AgentTests(unittest.TestCase):
         research_tool = Path("agent-platform/tools/trading_research_agent.py").read_text()
         self.assertIn("TRADING_RESEARCH_IDEA_GENERATOR", research_tool)
         self.assertIn("codex_generated_research_ideas", research_tool)
+        self.assertIn("_grant_runner_traversal", research_tool)
+        self.assertIn("setfacl", research_tool)
         self.assertIn("trading-research-runner-codex", research_tool)
         self.assertIn("OPENAI_API_KEY", research_tool)
         self.assertLess(text.index("generate-ideas --min-queued 3"), text.index("claim --run-id"))
