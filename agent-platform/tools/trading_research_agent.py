@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import grp
 import os
 import re
 import shlex
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -29,6 +31,8 @@ DEFAULT_SHARED_ARTIFACTS_DIR = Path("/agents/shared/research-artifacts")
 DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
 DEFAULT_IDEA_CONTEXT_LIMIT = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_LIMIT", "8"))
 DEFAULT_IDEA_CONTEXT_CHARS = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_CHARS", "1200"))
+DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research-runner/handoff"))
+DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research-runner")
 
 
 
@@ -660,6 +664,97 @@ def ai_generated_research_ideas(existing: list[dict[str, Any]], *, limit: int, m
     return candidates
 
 
+def _runner_gid(runner_user: str = DEFAULT_RUNNER_USER) -> int | None:
+    try:
+        return grp.getgrnam(runner_user).gr_gid
+    except KeyError:
+        return None
+
+
+def _make_runner_readable(path: Path, *, runner_user: str = DEFAULT_RUNNER_USER) -> None:
+    runner_gid = _runner_gid(runner_user)
+    try:
+        if runner_gid is not None:
+            os.chown(path, -1, runner_gid)
+    except (PermissionError, OSError):
+        pass
+    path.chmod(0o640)
+
+
+def _make_runner_writable_dir(path: Path, *, runner_user: str = DEFAULT_RUNNER_USER) -> None:
+    runner_gid = _runner_gid(runner_user)
+    try:
+        subprocess.run(["setfacl", "-m", f"u:{runner_user}:rwx", str(path)], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+    try:
+        if runner_gid is not None:
+            os.chown(path, -1, runner_gid)
+            path.chmod(0o770)
+    except (PermissionError, OSError):
+        path.chmod(0o750)
+
+
+def codex_generated_research_ideas(
+    existing: list[dict[str, Any]],
+    *,
+    limit: int,
+    model: str,
+    timeout_seconds: int,
+    reports_dir: Path = DEFAULT_REPORTS_DIR,
+    handoff_dir: Path = DEFAULT_RUNNER_HANDOFF_DIR,
+    runner_user: str = DEFAULT_RUNNER_USER,
+) -> list[StrategyCandidate]:
+    payload = build_ai_idea_payload(existing, limit=limit, reports_dir=reports_dir)
+    run_id = f"idea-generation-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{os.getpid()}"
+    output_dir = reports_dir / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _make_runner_writable_dir(output_dir, runner_user=runner_user)
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    task_file = handoff_dir / f"{run_id}-task.txt"
+    prompt = (
+        build_ai_idea_prompt(payload)
+        + "\n\nWrite the exact same JSON object to ./ideas.json, then print the JSON object only. "
+        + "Do not read secrets, credentials, home directories, or files outside the current working directory. "
+        + f"Use model hint: {safe_token(model, max_len=64)}."
+    )
+    task_file.write_text(prompt, encoding="utf-8")
+    _make_runner_readable(task_file, runner_user=runner_user)
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "-u", runner_user, "/usr/local/bin/trading-research-runner-codex", str(task_file), str(output_dir)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+        )
+    finally:
+        try:
+            task_file.unlink()
+        except FileNotFoundError:
+            pass
+    (output_dir / "codex_stdout.log").write_text(result.stdout or "", encoding="utf-8")
+    (output_dir / "codex_stderr.log").write_text(result.stderr or "", encoding="utf-8")
+    if result.returncode != 0:
+        detail = ((result.stderr or "") + "\n" + (result.stdout or ""))[-800:]
+        raise RuntimeError(f"Codex idea generation failed rc={result.returncode}: {detail}")
+    ideas_file = output_dir / "ideas.json"
+    raw_text = ideas_file.read_text(encoding="utf-8") if ideas_file.exists() and ideas_file.stat().st_size else result.stdout
+    raw_items = parse_llm_json_array(raw_text)
+    candidates: list[StrategyCandidate] = []
+    seen = {item.get("id") for item in existing}
+    for raw in raw_items:
+        candidate = normalize_candidate_payload(raw, priority_floor=20)
+        if not candidate or candidate.id in seen:
+            continue
+        seen.add(candidate.id)
+        candidates.append(candidate)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
 def merge_candidates(queue: list[dict[str, Any]], candidates: list[StrategyCandidate], *, source: str) -> tuple[list[dict[str, Any]], int]:
     existing = {item["id"]: item for item in queue}
     added = 0
@@ -778,25 +873,28 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "queue": str(queue_path), "count": len(initial_queue), "queued": queued_count, "added": 0, "reason": "min_queued_satisfied"}, ensure_ascii=False, sort_keys=True))
         return 0
 
-    generator = getattr(args, "generator", "ai")
-    source = "ai_idea_generator"
+    generator = getattr(args, "generator", "codex")
+    source = f"{generator}_idea_generator"
     if generator == "deterministic":
         source = "deterministic_idea_generator"
         generated = generated_research_ideas(initial_queue, limit=args.limit)
     else:
         try:
-            generated = ai_generated_research_ideas(
-                initial_queue,
-                limit=args.limit,
-                model=getattr(args, "model", os.environ.get("TRADING_RESEARCH_IDEA_MODEL", "gpt-5.5")),
-                timeout_seconds=getattr(args, "timeout_seconds", int(os.environ.get("TRADING_RESEARCH_IDEA_TIMEOUT", "180"))),
-                reports_dir=Path(args.reports_dir),
-            )
+            common_kwargs = {
+                "limit": args.limit,
+                "model": getattr(args, "model", os.environ.get("TRADING_RESEARCH_IDEA_MODEL", "gpt-5.4-mini")),
+                "timeout_seconds": getattr(args, "timeout_seconds", int(os.environ.get("TRADING_RESEARCH_IDEA_TIMEOUT", "600"))),
+                "reports_dir": Path(args.reports_dir),
+            }
+            if generator == "ai":
+                generated = ai_generated_research_ideas(initial_queue, **common_kwargs)
+            else:
+                generated = codex_generated_research_ideas(initial_queue, **common_kwargs)
             if not generated:
-                raise RuntimeError("ai_generation_returned_no_usable_candidates")
+                raise RuntimeError(f"{generator}_generation_returned_no_usable_candidates")
         except Exception as exc:
             if not getattr(args, "fallback", True):
-                print(json.dumps({"ok": False, "queue": str(queue_path), "error": "ai_generation_failed", "detail": str(exc)}, ensure_ascii=False, sort_keys=True))
+                print(json.dumps({"ok": False, "queue": str(queue_path), "error": f"{generator}_generation_failed", "detail": str(exc)}, ensure_ascii=False, sort_keys=True))
                 return 1
             source = "deterministic_idea_generator_fallback"
             generated = generated_research_ideas(initial_queue, limit=args.limit)
@@ -891,9 +989,9 @@ def build_parser() -> argparse.ArgumentParser:
     ideas.add_argument("--min-queued", type=int, default=3)
     ideas.add_argument("--limit", type=int, default=6)
     ideas.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
-    ideas.add_argument("--generator", choices=["ai", "deterministic"], default=os.environ.get("TRADING_RESEARCH_IDEA_GENERATOR", "ai"))
-    ideas.add_argument("--model", default=os.environ.get("TRADING_RESEARCH_IDEA_MODEL", "gpt-5.5"))
-    ideas.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("TRADING_RESEARCH_IDEA_TIMEOUT", "180")))
+    ideas.add_argument("--generator", choices=["codex", "ai", "deterministic"], default=os.environ.get("TRADING_RESEARCH_IDEA_GENERATOR", "codex"))
+    ideas.add_argument("--model", default=os.environ.get("TRADING_RESEARCH_IDEA_MODEL", "gpt-5.4-mini"))
+    ideas.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("TRADING_RESEARCH_IDEA_TIMEOUT", "600")))
     ideas.add_argument("--fallback", dest="fallback", action="store_true", default=True)
     ideas.add_argument("--no-fallback", dest="fallback", action="store_false")
     ideas.set_defaults(func=cmd_generate_ideas)
