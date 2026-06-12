@@ -564,7 +564,6 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
     }
     family_is_option_like = (
         payload["family"] in option_families
-        or payload["family"].endswith("_spread")
         or "calendar" in payload["family"]
         or "diagonal" in payload["family"]
         or "butterfly" in payload["family"]
