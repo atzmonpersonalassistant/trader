@@ -148,6 +148,76 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(len(research.load_queue(queue)), len(items))
 
 
+
+    def test_research_codex_generator_invokes_locked_runner_and_parses_ideas_json(self):
+        research = load("trading_research_agent_codex_ideas", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            reports = Path(tmp) / "reports"
+            handoff = Path(tmp) / "handoff"
+            calls = []
+
+            class Result:
+                returncode = 0
+                stdout = '{"ideas": []}'
+                stderr = ""
+
+            original_run = research.subprocess.run
+            original_chown = research.os.chown
+            original_getgrnam = research.grp.getgrnam
+            try:
+                research.os.chown = lambda *args, **kwargs: None
+                research.grp.getgrnam = lambda name: type("Group", (), {"gr_gid": 1234})()
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    if cmd and cmd[0] == "sudo":
+                        output_dir = Path(cmd[-2])
+                        (output_dir / "ideas.json").write_text(json.dumps({"ideas": [{
+                            "id": "Codex Vol Calendar",
+                            "name": "Codex vol calendar",
+                            "priority": 7,
+                            "family": "calendar",
+                            "thesis": "Options calendar hypothesis from Codex runner.",
+                            "structure": "Buy later expiry and sell nearer expiry for defined debit risk.",
+                            "universe": ["SPY"],
+                            "entry_rules": ["term structure supportive"],
+                            "exit_rules": ["exit before front expiry"],
+                            "risk_controls": ["max loss limited to debit"],
+                            "required_data": ["option chain", "IV term structure"],
+                            "llm_value": "Codex proposes non-duplicate option structure.",
+                            "pitfalls": ["poor fills"],
+                            "minimum_viability": ["positive expectancy after costs"],
+                            "quantconnect_test_spec": {"strategy": "calendar", "underlying": "SPY"},
+                        }]}))
+                        return Result()
+                    return type("AclResult", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+                research.subprocess.run = fake_run
+                candidates = research.codex_generated_research_ideas(
+                    [],
+                    limit=1,
+                    model="gpt-5.5",
+                    timeout_seconds=30,
+                    reports_dir=reports,
+                    handoff_dir=handoff,
+                    runner_user="agent-research-runner",
+                )
+            finally:
+                research.subprocess.run = original_run
+                research.os.chown = original_chown
+                research.grp.getgrnam = original_getgrnam
+
+            sudo_calls = [call for call in calls if call[0] and call[0][0] == "sudo"]
+            self.assertEqual(len(sudo_calls), 1)
+            cmd = sudo_calls[0][0]
+            self.assertEqual(cmd[:5], ["sudo", "-n", "-u", "agent-research-runner", "/usr/local/bin/trading-research-runner-codex"])
+            self.assertEqual(cmd[-1], "gpt-5.5")
+            self.assertTrue(str(cmd[-3]).startswith(str(handoff)))
+            self.assertTrue(str(cmd[-2]).startswith(str(reports)))
+            self.assertFalse(Path(cmd[-3]).exists())
+            self.assertEqual(candidates[0].id, "codex-vol-calendar")
+            self.assertEqual(candidates[0].priority, 20)
+
     def test_research_ai_generator_uses_official_openai_endpoint_and_ideas_wrapper(self):
         text = Path("agent-platform/tools/trading_research_agent.py").read_text()
         self.assertIn('"https://api.openai.com/v1/responses"', text)
