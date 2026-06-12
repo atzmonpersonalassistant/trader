@@ -562,13 +562,7 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         "call_calendar_spread", "put_calendar_spread", "call_diagonal_spread",
         "put_diagonal_spread", "iron_butterfly", "call_calendar", "put_calendar",
     }
-    family_is_option_like = (
-        payload["family"] in option_families
-        or "calendar" in payload["family"]
-        or "diagonal" in payload["family"]
-        or "butterfly" in payload["family"]
-        or "condor" in payload["family"]
-    )
+    family_is_option_like = payload["family"] in option_families
     if "option" not in " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower() and not family_is_option_like:
         return None
     allowed = {field: payload[field] for field in REQUIRED_CANDIDATE_FIELDS if field in payload}

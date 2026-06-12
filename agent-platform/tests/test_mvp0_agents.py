@@ -294,6 +294,11 @@ class MVP0AgentTests(unittest.TestCase):
         non_option_spread["thesis"] = "Mean reversion between two equities."
         non_option_spread["structure"] = "Long one equity and short another equity."
         self.assertIsNone(research.normalize_candidate_payload(non_option_spread, priority_floor=20))
+        non_option_calendar = dict(parsed[0])
+        non_option_calendar["family"] = "Earnings Calendar"
+        non_option_calendar["thesis"] = "Equity event timing around earnings announcements."
+        non_option_calendar["structure"] = "Buy shares before an earnings date and exit afterward."
+        self.assertIsNone(research.normalize_candidate_payload(non_option_calendar, priority_floor=20))
         self.assertNotIn("trading-research-idea-codex", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("call_openai_responses_api", Path("agent-platform/tools/trading_research_agent.py").read_text())
         self.assertNotIn('"--sandbox", "workspace-write"', Path("agent-platform/tools/trading_research_agent.py").read_text())
