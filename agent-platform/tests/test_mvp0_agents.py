@@ -272,6 +272,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(candidate.priority, 20)
         family_variant = dict(parsed[0])
         family_variant["family"] = "Call Calendar Spread"
+        family_variant["thesis"] = "Term structure setup with favorable front volatility."
+        family_variant["structure"] = "Buy a longer dated call and sell a shorter dated call at the same strike."
         normalized_variant = research.normalize_candidate_payload(family_variant, priority_floor=20)
         self.assertIsNotNone(normalized_variant)
         self.assertEqual(normalized_variant.family, "call_calendar_spread")

@@ -556,9 +556,21 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
     if contains_unsafe_ai_text(payload):
         return None
     payload["family"] = safe_token(slugify_id(payload["family"]).replace("-", "_"), max_len=48)
-    if "option" not in " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower() and payload["family"] not in {
-        "bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread", "iron_condor", "long_call", "long_put", "calendar", "diagonal", "butterfly"
-    }:
+    option_families = {
+        "bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread",
+        "iron_condor", "long_call", "long_put", "calendar", "diagonal", "butterfly",
+        "call_calendar_spread", "put_calendar_spread", "call_diagonal_spread",
+        "put_diagonal_spread", "iron_butterfly", "call_calendar", "put_calendar",
+    }
+    family_is_option_like = (
+        payload["family"] in option_families
+        or payload["family"].endswith("_spread")
+        or "calendar" in payload["family"]
+        or "diagonal" in payload["family"]
+        or "butterfly" in payload["family"]
+        or "condor" in payload["family"]
+    )
+    if "option" not in " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower() and not family_is_option_like:
         return None
     allowed = {field: payload[field] for field in REQUIRED_CANDIDATE_FIELDS if field in payload}
     allowed["status"] = "queued"
