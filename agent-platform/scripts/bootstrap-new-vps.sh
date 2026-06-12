@@ -237,7 +237,7 @@ chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RESEARCH_RUNNER'
-# Allow the research loop to execute only the fixed, root-owned Codex wrapper as the non-secret-bearing runner.
+# Allow the research loop to execute only the fixed, root-owned research runner wrapper.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
 SUDOERS_RESEARCH_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
