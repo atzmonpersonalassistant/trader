@@ -195,6 +195,12 @@ jobs:
           sudo usermod -aG agent-quantconnect agent-validator
           sudo usermod -aG agent-quantconnect agent-research
           if id -nG agent-research-runner | grep -qw agent-quantconnect; then sudo gpasswd -d agent-research-runner agent-quantconnect; fi
+          sudo install -d -o root -g agent-research -m 750 /etc/trading-agents/secrets/research
+          if ! sudo test -e /etc/trading-agents/secrets/research/env; then
+            sudo install -o root -g agent-research -m 640 /dev/null /etc/trading-agents/secrets/research/env
+          fi
+          sudo chown root:agent-research /etc/trading-agents/secrets/research/env
+          sudo chmod 640 /etc/trading-agents/secrets/research/env
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token

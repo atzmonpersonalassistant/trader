@@ -6,6 +6,13 @@ export HOME=/home/agent-research
 RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research-runner}
 RUNNER_HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research-runner}
 export PATH=/usr/local/bin:/usr/bin:/bin
+RESEARCH_ENV=${TRADING_RESEARCH_ENV_FILE:-/etc/trading-agents/secrets/research/env}
+if [ -r "$RESEARCH_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$RESEARCH_ENV"
+  set +a
+fi
 mkdir -p /agents/research/tmp
 cd /agents/research/tmp
 

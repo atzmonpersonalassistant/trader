@@ -175,6 +175,11 @@ for role in orchestrator coding review validator research; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
 install_dir root agent-research 750 /etc/trading-agents/secrets/research
+if [[ ! -e /etc/trading-agents/secrets/research/env ]]; then
+  touch /etc/trading-agents/secrets/research/env
+fi
+chown root:agent-research /etc/trading-agents/secrets/research/env
+chmod 640 /etc/trading-agents/secrets/research/env
 install_dir root agent-quantconnect 750 /etc/trading-agents/secrets/quantconnect
 if [[ -e /etc/trading-agents/secrets/quantconnect/env ]]; then
   chown root:agent-quantconnect /etc/trading-agents/secrets/quantconnect/env
