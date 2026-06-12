@@ -727,13 +727,13 @@ def codex_generated_research_ideas(
         build_ai_idea_prompt(payload)
         + "\n\nWrite the exact same JSON object to ./ideas.json, then print the JSON object only. "
         + "Do not read secrets, credentials, home directories, or files outside the current working directory. "
-        + f"Use model hint: {safe_token(model, max_len=64)}."
+        + "Use the configured Codex model passed by the wrapper. "
     )
     task_file.write_text(prompt, encoding="utf-8")
     _make_runner_readable(task_file, runner_user=runner_user)
     try:
         result = subprocess.run(
-            ["sudo", "-n", "-u", runner_user, "/usr/local/bin/trading-research-runner-codex", str(task_file), str(output_dir)],
+            ["sudo", "-n", "-u", runner_user, "/usr/local/bin/trading-research-runner-codex", str(task_file), str(output_dir), safe_token(model, max_len=64)],
             check=False,
             text=True,
             stdout=subprocess.PIPE,
