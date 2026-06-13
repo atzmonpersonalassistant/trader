@@ -359,7 +359,7 @@ jobs:
           sudo -n -u agent-research rm -f /agents/research/state/deploy-smoke-queue.json
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json seed-cheap-calls >/tmp/trader-research-seed.json
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next >/tmp/trader-research-next.json
-          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 TRADING_RESEARCH_QUEUE=/agents/research/state/deploy-smoke-queue.json TRADING_RESEARCH_LOOP_ONCE=1 TRADING_RESEARCH_LOOP_DISABLE_SEED=1 TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop >/tmp/trader-research-loop-smoke.log
+          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 TRADING_RESEARCH_QUEUE=/agents/research/state/deploy-smoke-queue.json TRADING_RESEARCH_LOCK=/agents/research/state/deploy-smoke-loop.lock TRADING_RESEARCH_LOOP_ONCE=1 TRADING_RESEARCH_LOOP_DISABLE_SEED=1 TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop >/tmp/trader-research-loop-smoke.log
           test -s /tmp/trader-research-loop-smoke.log
           latest_smoke_dir=$(sudo -n -u agent-research bash -lc 'ls -td /agents/research/reports/research-pass-* | head -1')
           sudo -n -u agent-research-runner bash -lc 'test -d /agents/research-runner/handoff && test -w /agents/research-runner/handoff'
