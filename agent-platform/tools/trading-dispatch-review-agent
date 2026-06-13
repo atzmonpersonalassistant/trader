@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Narrow root-owned sudo target for orchestrator -> review-agent dispatch.
+set -euo pipefail
+
+if [[ "$#" -eq 3 && "$1" == "review" && "$2" == "--pr" && "$3" =~ ^[0-9]+$ ]]; then
+  exec sudo -n -u agent-review env HOME=/home/agent-review PYTHONDONTWRITEBYTECODE=1 /usr/local/bin/trading-review-agent review --pr "$3"
+fi
+
+echo "usage: trading-dispatch-review-agent review --pr <number>" >&2
+exit 64
