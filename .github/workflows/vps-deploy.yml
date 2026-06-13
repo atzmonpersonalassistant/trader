@@ -164,7 +164,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
-          for role in coding review validator research research-runner; do
+          for role in coding review validator research; do
             if ! id "agent-$role" >/dev/null 2>&1; then
               sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"
             fi
@@ -180,14 +180,11 @@ jobs:
           sudo usermod -aG agent-lean agent-review
           sudo usermod -aG agent-lean agent-validator
           sudo usermod -aG agent-lean agent-research
-          sudo usermod -aG agent-lean agent-research-runner
-          sudo usermod -aG agent-research-runner agent-research
-          sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace
+                              sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace
           sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace
           sudo install -d -o agent-validator -g agent-validator -m 750 /agents/validator /agents/validator/lean-workspace
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
-          sudo install -d -o agent-research-runner -g agent-research-runner -m 750 /agents/research-runner /agents/research-runner/lean-workspace
-          sudo install -d -o agent-research -g agent-research-runner -m 770 /agents/research-runner/handoff
+          sudo install -d -o agent-research -g agent-research -m 750 /agents/research/handoff
           sudo chown -R agent-research:agent-research /agents/research
           sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
@@ -199,8 +196,7 @@ jobs:
           sudo usermod -aG agent-quantconnect agent-orchestrator
           sudo usermod -aG agent-quantconnect agent-validator
           sudo usermod -aG agent-quantconnect agent-research
-          if id -nG agent-research-runner | grep -qw agent-quantconnect; then sudo gpasswd -d agent-research-runner agent-quantconnect; fi
-          sudo install -d -o root -g agent-research -m 750 /etc/trading-agents/secrets/research
+                    sudo install -d -o root -g agent-research -m 750 /etc/trading-agents/secrets/research
           if ! sudo test -e /etc/trading-agents/secrets/research/env; then
             sudo install -o root -g agent-research -m 640 /dev/null /etc/trading-agents/secrets/research/env
           fi
@@ -256,12 +252,12 @@ jobs:
           sudo -n -u agent-validator bash -lc 'set -a; . /etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"'
           sudo -n -u agent-coding bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-review bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
-          sudo -n -u agent-research-runner bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
+          sudo -n -u agent-research bash -lc 'test -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-coding bash -lc 'test -d /agents/coding/lean-workspace && test -w /agents/coding/lean-workspace && test -w /agents/shared/lean-projects'
           sudo -n -u agent-review bash -lc 'test -d /agents/review/lean-workspace && test -w /agents/review/lean-workspace && test -w /agents/shared/research-artifacts'
           sudo -n -u agent-validator bash -lc 'test -d /agents/validator/lean-workspace && test -w /agents/validator/lean-workspace && test -w /agents/shared/lean-projects'
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts'
-          sudo -n -u agent-research-runner bash -lc 'test -d /agents/research-runner/lean-workspace && test -w /agents/research-runner/lean-workspace && test -w /agents/shared/research-artifacts && test -w /agents/research-runner/handoff'
+          sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts && test -w /agents/research/handoff'
           validate_shared_collab_dir /agents/shared/lean-projects
           validate_shared_collab_dir /agents/shared/research-artifacts
           if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
@@ -291,14 +287,10 @@ jobs:
           sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'
           sudo -n -u agent-validator bash -lc 'command -v lean >/dev/null 2>&1'
           sudo -n -u agent-research bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env; set +a; export HOME=/home/agent-research; mkdir -p /agents/research/lean-workspace; printf "%s\n" "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/tmp/trader-lean-login.log; lean whoami >/tmp/trader-lean-whoami.log'
-          sudo -n -u agent-research-runner bash -lc 'test ! -f /home/agent-research-runner/.lean/credentials && test ! -f /home/agent-research-runner/.lean/lean.json'
-          sudo install -d -o agent-research-runner -g agent-research-runner -m 700 /home/agent-research-runner/.codex
+          sudo -n -u agent-research bash -lc 'lean whoami >/tmp/trader-lean-research-whoami.log'
+          sudo install -d -o agent-research -g agent-research -m 700 /home/agent-research/.codex
           sudo test -s /home/agent-research/.codex/auth.json
-          sudo install -o agent-research-runner -g agent-research-runner -m 600 /home/agent-research/.codex/auth.json /home/agent-research-runner/.codex/auth.json
-          if sudo test -s /home/agent-research/.codex/config.toml; then
-            sudo install -o agent-research-runner -g agent-research-runner -m 600 /home/agent-research/.codex/config.toml /home/agent-research-runner/.codex/config.toml
-          fi
-          sudo -n -u agent-research-runner bash -lc 'test -s /home/agent-research-runner/.codex/auth.json && codex --version >/dev/null'
+          sudo -n -u agent-research bash -lc 'test -s /home/agent-research/.codex/auth.json && codex --version >/dev/null'
           sudo tee /usr/local/bin/trading-research-runner-codex >/dev/null <<'RUNNER_CODEX'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -313,7 +305,7 @@ jobs:
             *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
           esac
           case "$TASK_FILE" in
-            /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+            /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
             *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
           esac
           case "$OUTPUT_DIR" in
@@ -327,7 +319,7 @@ jobs:
           TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
           OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
           case "$TASK_REAL" in
-            /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+            /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
             *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
           esac
           case "$OUT_REAL" in
@@ -335,7 +327,7 @@ jobs:
             *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
           esac
           cd "$OUT_REAL"
-          export HOME=/home/agent-research-runner
+          export HOME=/home/agent-research
           export PATH=/usr/local/bin:/usr/bin:/bin
           export PYTHONDONTWRITEBYTECODE=1
           exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
@@ -349,11 +341,7 @@ jobs:
           EOF_SUDOERS
           sudo chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
           sudo visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
-          sudo tee /etc/sudoers.d/trading-agent-research-runner >/dev/null <<'EOF_RESEARCH_SUDOERS'
-          agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
-          EOF_RESEARCH_SUDOERS
-          sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
-          sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
+          sudo rm -f /etc/sudoers.d/trading-agent-research-runner
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator status >/tmp/trader-orchestrator-status.json
           sudo -n -u agent-orchestrator env PYTHONDONTWRITEBYTECODE=1 trading-orchestrator cleanup-workspaces --older-than-hours 24 >/tmp/trader-cleanup-dry-run.json
           sudo -n -u agent-research rm -f /agents/research/state/deploy-smoke-queue.json
@@ -362,8 +350,8 @@ jobs:
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 TRADING_RESEARCH_QUEUE=/agents/research/state/deploy-smoke-queue.json TRADING_RESEARCH_LOCK=/agents/research/state/deploy-smoke-loop.lock TRADING_RESEARCH_LOOP_ONCE=1 TRADING_RESEARCH_LOOP_DISABLE_SEED=1 TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop >/tmp/trader-research-loop-smoke.log
           test -s /tmp/trader-research-loop-smoke.log
           latest_smoke_dir=$(sudo -n -u agent-research bash -lc 'ls -td /agents/research/reports/research-pass-* | head -1')
-          sudo -n -u agent-research-runner bash -lc 'test -d /agents/research-runner/handoff && test -w /agents/research-runner/handoff'
-          sudo -n -u agent-research-runner bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
+          sudo -n -u agent-research bash -lc 'test -d /agents/research/handoff && test -w /agents/research/handoff'
+          sudo -n -u agent-research bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
           bash -n /usr/local/bin/trading-research-agent-loop
           bash -n /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/sbin/trading-dispatch-review-agent
