@@ -556,6 +556,8 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
     if contains_unsafe_ai_text(payload):
         return None
     payload["family"] = safe_token(slugify_id(payload["family"]).replace("-", "_"), max_len=48)
+    if not payload["family"]:
+        return None
     option_families = {
         "bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread",
         "iron_condor", "long_call", "long_put",
