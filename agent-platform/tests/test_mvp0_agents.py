@@ -34,12 +34,11 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir agent-review agent-review 2770 /agents/review/workspaces', text)
         self.assertIn('install_dir agent-review agent-review 750 /agents/review/lean-workspace', text)
         self.assertIn('ensure_user agent-research', text)
-        self.assertIn('ensure_user agent-research-runner', text)
+        self.assertNotIn('ensure_user agent-research-runner', text)
         self.assertIn('install_dir agent-research agent-research 750 /agents/research', text)
         self.assertIn('install_dir agent-research agent-research 750 /agents/research/lean-workspace', text)
-        self.assertIn('install_dir agent-research-runner agent-research-runner 750 /agents/research-runner', text)
-        self.assertIn('install_dir agent-research agent-research-runner 770 /agents/research-runner/handoff', text)
-        self.assertIn('install_dir agent-research-runner agent-research-runner 700 /home/agent-research-runner/.codex', text)
+        self.assertIn('install_dir agent-research agent-research 750 /agents/research/handoff', text)
+        self.assertNotIn('/agents/research-runner', text)
         self.assertIn('chown -R agent-research:agent-research /agents/research', text)
         self.assertIn('chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace', text)
         self.assertIn('install_dir agent-validator agent-validator 750 /agents/validator/lean-workspace', text)
@@ -59,8 +58,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install_dir root root 711 /etc/trading-agents/secrets', text)
         self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent *', text)
         self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub *', text)
-        self.assertIn('trading-agent-research-runner', text)
-        self.assertIn('agent-research ALL=(agent-research-runner) NOPASSWD:', text)
+        self.assertIn('rm -f /etc/sudoers.d/trading-agent-research-runner', text)
+        self.assertNotIn('agent-research ALL=(agent-research-runner) NOPASSWD:', text)
         self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
         self.assertIn('for role in orchestrator coding review validator research; do', text)
         self.assertIn('"orchestrator": {', text)
@@ -217,7 +216,7 @@ class MVP0AgentTests(unittest.TestCase):
                     timeout_seconds=30,
                     reports_dir=reports,
                     handoff_dir=handoff,
-                    runner_user="agent-research-runner",
+                    runner_user="agent-research",
                 )
             finally:
                 research.subprocess.run = original_run
@@ -227,7 +226,7 @@ class MVP0AgentTests(unittest.TestCase):
             sudo_calls = [call for call in calls if call[0] and call[0][0] == "sudo"]
             self.assertEqual(len(sudo_calls), 1)
             cmd = sudo_calls[0][0]
-            self.assertEqual(cmd[:5], ["sudo", "-n", "-u", "agent-research-runner", "/usr/local/bin/trading-research-runner-codex"])
+            self.assertEqual(cmd[:5], ["sudo", "-n", "-u", "agent-research", "/usr/local/bin/trading-research-runner-codex"])
             self.assertEqual(cmd[-1], "gpt-5.5")
             self.assertTrue(str(cmd[-3]).startswith(str(handoff)))
             self.assertTrue(str(cmd[-2]).startswith(str(reports)))
@@ -482,8 +481,8 @@ class MVP0AgentTests(unittest.TestCase):
         subprocess.run(["bash", "-n", str(script)], check=True)
         text = script.read_text()
         self.assertIn("Option Pricing / Volatility Intelligence", text)
-        self.assertIn("agent-research-runner", text)
-        self.assertIn('sudo -n -u "$RUNNER_USER"', text)
+        self.assertIn("RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research}", text)
+        self.assertIn('if [ "$RUNNER_USER" = "$(id -un)" ]; then', text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn('setfacl -m "u:$RUNNER_USER:rwx" "$RUN_DIR"', text)
         self.assertIn("make_runner_task_inputs_readable", text)
@@ -644,12 +643,14 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("sudo -n -u agent-review bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'", text)
         self.assertIn("sudo -n -u agent-validator bash -lc 'command -v lean >/dev/null 2>&1'", text)
         self.assertIn("trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next", text)
-        self.assertIn("agent-research-runner", text)
+        self.assertNotIn("ALL=(agent-research-runner)", text)
+        self.assertNotIn("/agents/research-runner", text)
+        self.assertNotIn("/home/agent-research-runner", text)
         self.assertNotIn("trader-lean-runner-login.log", text)
         self.assertNotIn("sudo bash -lc 'set -euo pipefail; set -a; . /etc/trading-agents/secrets/quantconnect/env", text)
-        self.assertIn("sudo -n -u agent-research-runner bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'", text)
-        self.assertIn("test ! -f /home/agent-research-runner/.lean/credentials", text)
-        self.assertIn("/home/agent-research-runner/.codex/auth.json", text)
+        self.assertIn("sudo -n -u agent-research bash -lc 'test -r /etc/trading-agents/secrets/quantconnect/env'", text)
+        self.assertIn("lean whoami >/tmp/trader-lean-research-whoami.log", text)
+        self.assertIn("/home/agent-research/.codex/auth.json", text)
         self.assertIn("codex --version >/dev/null", text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn("TRADING_RESEARCH_LOCK=/agents/research/state/deploy-smoke-loop.lock", text)
@@ -659,7 +660,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("test -r '$latest_smoke_dir/mandate.json'", text)
         self.assertIn("test -r '$latest_smoke_dir/qc_prompt.json'", text)
         self.assertIn("test -r '$latest_smoke_dir/task.txt'", text)
-        self.assertIn("/agents/research-runner/handoff", text)
+        self.assertIn("/agents/research/handoff", text)
 
     def test_coding_agent_prompt_allows_code_and_rejects_docs_only_downgrade(self):
         coding = load("trading_coding_agent_policy", "agent-platform/tools/trading_coding_agent.py")
@@ -1222,7 +1223,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('sudo usermod -aG agent-quantconnect agent-orchestrator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-validator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-research', workflow)
-        self.assertIn('for role in coding review validator research research-runner; do', workflow)
+        self.assertIn('for role in coding review validator research; do', workflow)
+        self.assertNotIn('research-runner; do', workflow)
         self.assertIn('sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"', workflow)
         self.assertIn('sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace', workflow)
         self.assertIn('sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace', workflow)

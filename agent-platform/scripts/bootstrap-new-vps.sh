@@ -105,7 +105,6 @@ ensure_user agent-coding
 ensure_user agent-review
 ensure_user agent-validator
 ensure_user agent-research
-ensure_user agent-research-runner
 # Orchestrator needs group access only for cleanup/traversal of coding/review workspaces.
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
@@ -117,14 +116,11 @@ usermod -aG agent-lean agent-research
 usermod -aG agent-lean agent-coding
 usermod -aG agent-lean agent-review
 usermod -aG agent-lean agent-validator
-usermod -aG agent-lean agent-research-runner
-usermod -aG agent-research-runner agent-research
 # QuantConnect credentials are shared from a single root-owned env file, readable
 # only by roles in agent-quantconnect.
 usermod -aG agent-quantconnect agent-orchestrator
 usermod -aG agent-quantconnect agent-validator
 usermod -aG agent-quantconnect agent-research
-if id -nG agent-research-runner | grep -qw agent-quantconnect; then gpasswd -d agent-research-runner agent-quantconnect; fi
 
 log "creating /agents layout"
 install_dir root root 711 /agents
@@ -151,10 +147,7 @@ install_dir agent-research agent-research 750 /agents/research/state
 install_dir agent-research agent-research 750 /agents/research/logs
 install_dir agent-research agent-research 750 /agents/research/reports
 install_dir agent-research agent-research 750 /agents/research/lean-workspace
-install_dir agent-research-runner agent-research-runner 750 /agents/research-runner
-install_dir agent-research-runner agent-research-runner 750 /agents/research-runner/lean-workspace
-install_dir agent-research agent-research-runner 770 /agents/research-runner/handoff
-install_dir agent-research-runner agent-research-runner 700 /home/agent-research-runner/.codex
+install_dir agent-research agent-research 750 /agents/research/handoff
 chown -R agent-research:agent-research /agents/research
 chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
 
@@ -216,7 +209,7 @@ case "$MODEL" in
   *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
 esac
 case "$TASK_FILE" in
-  /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+  /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
   *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
 esac
 case "$OUTPUT_DIR" in
@@ -230,7 +223,7 @@ fi
 TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
 OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
 case "$TASK_REAL" in
-  /agents/research-runner/handoff/research-pass-*-task.txt|/agents/research-runner/handoff/idea-generation-*-task.txt) ;;
+  /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
   *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
 esac
 case "$OUT_REAL" in
@@ -238,7 +231,7 @@ case "$OUT_REAL" in
   *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
 esac
 cd "$OUT_REAL"
-export HOME=/home/agent-research-runner
+export HOME=/home/agent-research
 export PATH=/usr/local/bin:/usr/bin:/bin
 export PYTHONDONTWRITEBYTECODE=1
 exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
@@ -246,11 +239,7 @@ RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
-cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RESEARCH_RUNNER'
-agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
-SUDOERS_RESEARCH_RUNNER
-chmod 440 /etc/sudoers.d/trading-agent-research-runner
-visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
+rm -f /etc/sudoers.d/trading-agent-research-runner
 
 log "creating placeholder config files if missing"
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then

@@ -3,8 +3,8 @@ set -euo pipefail
 umask 077
 export PYTHONDONTWRITEBYTECODE=1
 export HOME=/home/agent-research
-RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research-runner}
-RUNNER_HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research-runner}
+RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research}
+RUNNER_HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research}
 export PATH=/usr/local/bin:/usr/bin:/bin
 RESEARCH_ENV=${TRADING_RESEARCH_ENV_FILE:-/etc/trading-agents/secrets/research/env}
 if [ -r "$RESEARCH_ENV" ]; then
@@ -19,7 +19,7 @@ cd /agents/research/tmp
 QUEUE=${TRADING_RESEARCH_QUEUE:-/agents/research/state/strategy-queue.json}
 LOG_DIR=${TRADING_RESEARCH_LOG_DIR:-/agents/research/logs}
 REPORTS_DIR=${TRADING_RESEARCH_REPORTS_DIR:-/agents/research/reports}
-RUNNER_HANDOFF_DIR=${TRADING_RESEARCH_RUNNER_HANDOFF_DIR:-/agents/research-runner/handoff}
+RUNNER_HANDOFF_DIR=${TRADING_RESEARCH_RUNNER_HANDOFF_DIR:-/agents/research/handoff}
 LOCK=${TRADING_RESEARCH_LOCK:-/agents/research/state/research-agent-loop.lock}
 LOOP_ONCE=${TRADING_RESEARCH_LOOP_ONCE:-0}
 DISABLE_SEED=${TRADING_RESEARCH_LOOP_DISABLE_SEED:-0}
@@ -89,7 +89,7 @@ Use QuantConnect as default, with QC Research Notebooks / QuantBook as the prefe
 
 Apply Option Pricing / Volatility Intelligence before candidate status: evaluate market mid versus theoretical/model range, IV rank/percentile where available, IV versus realized volatility, skew, term structure, Greeks and net spread exposures, debit/credit versus expected move and max risk, payoff scenarios before/at expiry, and sensitivity to bid/ask, fill, and slippage. Black-Scholes/Merton is only a baseline; use other lenses when useful such as binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo for path-dependent structures, empirical IV/RV, skew, term structure, and scenario simulation. Do not blindly optimize parameters to rescue a weak result; use pricing diagnostics to explain what failed and what is worth refining.
 
-Then run QC-compatible diagnostics and prepare cloud-backtest artifacts only after notebook/diagnostic/pricing evidence justifies them. The autonomous runner is intentionally not logged into QuantConnect and must not request, read, or print raw QuantConnect credentials. If a QC Cloud backtest is required, write the exact artifact and blocker/next-step instead of attempting privileged or live-capable commands. Do not place live trades and do not print secrets.
+Then run QC-compatible diagnostics and prepare cloud-backtest artifacts only after notebook/diagnostic/pricing evidence justifies them. You are running under the merged research role, so authenticated Lean/QuantConnect context may be available through the agent-research environment. Use it only for research diagnostics/backtests, never for live trading, and never print raw credentials or secret file contents.
 
 Save all artifacts, scripts, JSON responses, logs, and final report in the current working directory: $RUN_DIR. End final_report.md with one verdict exactly: discard, refine, retest_after_technical_fix, or candidate_for_validator_review.
 
@@ -105,10 +105,14 @@ EOF
       echo "$(date -u +%FT%TZ) dry-run $RUN_ID" | tee -a "$LOG_DIR/loop.log"
       RC=0
     else
-      # Keep the autonomous agent confined to the per-run workspace. QuantConnect
-      # credentials are not sourced or passed into Codex; the runner is deliberately
-      # not logged into Lean/QC and only receives a one-run task handoff.
-      sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+      # Run the autonomous research pass under the merged research role so the
+      # same user that owns the research environment can access authenticated
+      # Lean/QuantConnect context. Keep execution confined to the per-run workspace.
+      if [ "$RUNNER_USER" = "$(id -un)" ]; then
+        /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+      else
+        sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+      fi
       RC=$?
     fi
     set -e
