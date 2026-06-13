@@ -12,6 +12,7 @@ import fcntl
 import json
 import grp
 import os
+import pwd
 import re
 import shlex
 import subprocess
@@ -31,8 +32,8 @@ DEFAULT_SHARED_ARTIFACTS_DIR = Path("/agents/shared/research-artifacts")
 DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
 DEFAULT_IDEA_CONTEXT_LIMIT = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_LIMIT", "8"))
 DEFAULT_IDEA_CONTEXT_CHARS = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_CHARS", "1200"))
-DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research-runner/handoff"))
-DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research-runner")
+DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research/handoff"))
+DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research")
 
 
 
@@ -799,8 +800,11 @@ def codex_generated_research_ideas(
     _write_text_no_follow(task_file, prompt, exclusive=True)
     _make_runner_readable(task_file, runner_user=runner_user)
     try:
+        cmd = ["/usr/local/bin/trading-research-runner-codex", str(task_file), str(output_dir), safe_token(model, max_len=64)]
+        if runner_user != pwd.getpwuid(os.geteuid()).pw_name:
+            cmd = ["sudo", "-n", "-u", runner_user, *cmd]
         result = subprocess.run(
-            ["sudo", "-n", "-u", runner_user, "/usr/local/bin/trading-research-runner-codex", str(task_file), str(output_dir), safe_token(model, max_len=64)],
+            cmd,
             check=False,
             text=True,
             stdout=subprocess.PIPE,
