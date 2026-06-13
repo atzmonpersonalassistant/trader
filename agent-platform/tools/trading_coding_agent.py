@@ -232,11 +232,11 @@ Issue body:
 {body[:4000]}
 
 Task:
-- Make one safe, minimal documentation-only change that addresses or records this issue.
-- Prefer updating planning/PROJECT_PLAN.md, planning/README.md, or README.md.
-- Do not touch secrets, credentials, deployment files, or generated caches.
-- Keep the diff small.
-- Run a minimal verification command if appropriate.
+- Implement the issue's acceptance criteria directly. If the issue asks for code, change code; if it asks for docs, change docs.
+- Keep the diff as small as practical, but do not downgrade a runtime/code task into a documentation-only note.
+- Preserve guardrails: no secrets, credentials, generated caches, unsafe deployment secrets, live trading, or unbounded-risk trading behavior.
+- Update tests when behavior or expectations change.
+- Run the smallest meaningful verification commands for the files you changed.
 """.strip()
     if fix_context:
         comments = "\n\n".join((c.get("body") or "")[:1500] for c in fix_context.get("comments", [])[-5:])
@@ -304,9 +304,12 @@ def verify(workspace: Path) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     agent_file = workspace / "agent-platform" / "tools" / "trading_coding_agent.py"
     if agent_file.exists():
-        checks.append(run_cmd(["python3", "-m", "py_compile", "agent-platform/tools/trading_coding_agent.py"], cwd=workspace, timeout=60))
-    else:
-        checks.append(run_cmd(["git", "diff", "--check"], cwd=workspace, timeout=30))
+        for rel in sorted(str(path.relative_to(workspace)) for path in (workspace / "agent-platform" / "tools").glob("trading_*.py")):
+            checks.append(run_cmd(["python3", "-m", "py_compile", rel], cwd=workspace, timeout=60))
+    checks.append(run_cmd(["git", "diff", "--check"], cwd=workspace, timeout=30))
+    # Do not execute model-authored tests in the coding-agent process. Full test
+    # execution belongs in CI/review environments with tighter isolation; this
+    # local gate stays syntax/static-only to avoid running untrusted Python.
     return {"checks": checks, "ok": all(c["returncode"] == 0 for c in checks)}
 
 
@@ -317,7 +320,19 @@ def is_allowed_mvp0_change(path: str) -> bool:
         "planning/PROJECT_PLAN.md",
         "planning/ARCHITECTURE.md",
     }
-    return path in allowed_exact or (path.startswith("planning/docs/") and path.endswith(".md"))
+    allowed_tool_files = {
+        "agent-platform/tools/trading_research_agent.py",
+    }
+    allowed_prefixes = (
+        "planning/docs/",
+        "agent-platform/docs/",
+        "agent-platform/tests/",
+    )
+    if path in allowed_exact or path in allowed_tool_files:
+        return True
+    if path.startswith(allowed_prefixes):
+        return path.endswith((".md", ".py"))
+    return False
 
 
 def commit_changes(workspace: Path, issue: int, title: str) -> dict[str, Any]:
@@ -330,7 +345,7 @@ def commit_changes(workspace: Path, issue: int, title: str) -> dict[str, Any]:
     require_ok(run_cmd(["git", "config", "user.name", "trading-coding-agent[bot]"], cwd=workspace))
     require_ok(run_cmd(["git", "config", "user.email", "trading-coding-agent[bot]@users.noreply.github.com"], cwd=workspace))
     require_ok(run_cmd(["git", "add", "--"] + files, cwd=workspace))
-    msg = f"docs: address issue #{issue}"
+    msg = f"agent: address issue #{issue}"
     require_ok(run_cmd(["git", "commit", "-m", msg, "-m", title], cwd=workspace))
     sha = subprocess.check_output(["git", "-C", str(workspace), "rev-parse", "--short", "HEAD"], text=True).strip()
     return {"committed": True, "commit": sha, "files": files, "message": msg}
@@ -367,10 +382,10 @@ def create_pr(config: dict[str, Any], token: str, issue: dict[str, Any], branch:
     if existing:
         return {"created": False, "number": existing["number"], "url": existing["html_url"]}
     owner, repo = repo_parts(config)
-    title = f"docs: address issue #{issue['number']}"
+    title = f"agent: address issue #{issue['number']}"
     body = (
         f"Addresses #{issue['number']}.\n\n"
-        f"Summary:\n- MVP-0 Coding Agent produced a minimal docs/code change for: {issue.get('title') or ''}\n\n"
+        f"Summary:\n- MVP-0 Coding Agent implemented the requested change for: {issue.get('title') or ''}\n\n"
         f"Verification:\n```json\n{json.dumps(verification, indent=2, sort_keys=True)[:3000]}\n```\n"
     )
     pr = github_request(

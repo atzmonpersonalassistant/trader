@@ -188,14 +188,15 @@ fi
 
 log "installing root-owned dispatch wrappers"
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
+install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
 
 log "installing sudoers rules"
 cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
-# Allow orchestrator to dispatch only fixed coding-agent run commands through
-# root-owned validation wrappers. Do not grant wildcard access to the full
-# trading-coding-agent CLI; it accepts config paths and token commands.
+# Allow orchestrator to dispatch only fixed agent run commands through
+# root-owned validation wrappers. Do not grant wildcard access to full agent CLIs.
 agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
+agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-review-agent *
 agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *
 SUDOERS
 chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
@@ -246,7 +247,6 @@ chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RESEARCH_RUNNER'
-# Allow the research loop to execute only the fixed, root-owned research runner wrapper.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex
 SUDOERS_RESEARCH_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner

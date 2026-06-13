@@ -34,6 +34,7 @@ DEFAULT_CLAIMED_LABEL = os.environ.get("TRADING_CLAIMED_LABEL", "agent:claimed")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 DEFAULT_CODING_STUB_CMD = os.environ.get("TRADING_CODING_STUB_CMD", "sudo -n /usr/local/sbin/trading-dispatch-coding-agent-stub")
 DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "sudo -n /usr/local/sbin/trading-dispatch-coding-agent")
+DEFAULT_REVIEW_AGENT_CMD = os.environ.get("TRADING_REVIEW_AGENT_CMD", "sudo -n /usr/local/sbin/trading-dispatch-review-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
 DEFAULT_REVIEW_APP_SLUG = os.environ.get("TRADING_REVIEW_APP_SLUG", "trading-review-agent")
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
@@ -163,6 +164,14 @@ def redact_text(text: str) -> str:
     text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
     text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
     return text
+
+
+def normalize_subprocess_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -1156,8 +1165,8 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 stderr = proc.stderr
             except subprocess.TimeoutExpired as exc:
                 returncode = 124
-                stdout = exc.stdout or ""
-                stderr = (exc.stderr or "") + "\nCommand timed out"
+                stdout = normalize_subprocess_output(exc.stdout)
+                stderr = normalize_subprocess_output(exc.stderr) + "\nCommand timed out"
             finished = now_iso()
             state = "succeeded" if returncode == 0 else "failed"
             result = {"returncode": returncode, "stdout": redact_text(stdout), "stderr": redact_text(stderr), "command": cmd, "check": check}
@@ -1199,6 +1208,106 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "command": "route-review-failures", "results": results}, indent=2, sort_keys=True))
     return 0
 
+
+
+def cmd_dispatch_missing_reviews(args: argparse.Namespace) -> int:
+    init_db(args.db)
+    gh_auth = mint_github_token(args.token_cmd)
+    results: list[dict[str, Any]] = []
+    with connect(args.db) as conn:
+        rows = conn.execute(
+            """
+            SELECT external_id, number, branch, state, labels, payload_json
+            FROM pull_requests
+            WHERE state='open'
+            ORDER BY number ASC
+            """
+        ).fetchall()
+        for row in rows:
+            pr_number = int(row["number"])
+            current_pr = fetch_pr(args.owner, args.repo, pr_number, gh_auth)
+            branch = ((current_pr.get("head") or {}).get("ref")) or str(row["branch"] or "")
+            live_labels = fetch_issue_labels(args.owner, args.repo, pr_number, gh_auth)
+            stored_labels = json.loads(row["labels"] or "[]")
+            labels = sorted(set(live_labels) | set(stored_labels))
+            head_sha = ((current_pr.get("head") or {}).get("sha") or "")
+            current_state = current_pr.get("state") or "unknown"
+            conn.execute(
+                "UPDATE pull_requests SET branch=?, state=?, labels=?, payload_json=?, updated_at=?, last_seen_at=? WHERE external_id=?",
+                (branch, current_state, json.dumps(labels, sort_keys=True), json.dumps(current_pr, sort_keys=True), now_iso(), now_iso(), row["external_id"]),
+            )
+            if current_state != "open":
+                results.append({"pr": pr_number, "dispatched": False, "reason": "pr_not_open", "state": current_state})
+                continue
+            if not is_trusted_agent_pr(current_pr) or "agent:pr-opened" not in labels:
+                results.append({"pr": pr_number, "dispatched": False, "reason": "untrusted_or_not_agent_pr"})
+                continue
+            if "agent:blocked" in labels or "human:rejected" in labels or ("needs:human-approval" in labels and "human:approved" not in labels):
+                results.append({"pr": pr_number, "dispatched": False, "reason": "blocked_or_human_gated"})
+                continue
+            if not head_sha:
+                results.append({"pr": pr_number, "dispatched": False, "reason": "missing_head_sha"})
+                continue
+            review_check = latest_named_check(fetch_check_runs(args.owner, args.repo, head_sha, gh_auth), args.review_check_name, args.review_app_slug)
+            if review_check:
+                results.append({"pr": pr_number, "dispatched": False, "reason": "review_check_exists", "check": {"status": review_check.get("status"), "conclusion": review_check.get("conclusion")}})
+                continue
+            previous_success = conn.execute(
+                """
+                SELECT id FROM events
+                WHERE entity_external_id=? AND event_type='missing_review_dispatched' AND state='succeeded' AND payload_json LIKE ?
+                LIMIT 1
+                """,
+                (row["external_id"], f'%"head_sha": "{head_sha}"%'),
+            ).fetchone()
+            if previous_success:
+                results.append({"pr": pr_number, "dispatched": False, "reason": "already_dispatched_for_head"})
+                continue
+            cmd = command_parts(args.review_agent_cmd) + ["review", "--pr", str(pr_number)]
+            attempt_external_id = f"pr-{pr_number}-review-attempt-{now_iso()}"
+            ts = now_iso()
+            conn.execute(
+                """
+                INSERT INTO attempts(
+                  external_id, entity_type, entity_external_id, state, labels,
+                  created_at, updated_at, last_seen_at, retry_count, started_at
+                ) VALUES (?, 'pull_request', ?, 'started', ?, ?, ?, ?, 0, ?)
+                """,
+                (attempt_external_id, row["external_id"], json.dumps(["review-agent"], sort_keys=True), ts, ts, ts, ts),
+            )
+            # Review runs can take minutes. Commit the started-attempt row before
+            # spawning the subprocess so SQLite writers are not blocked for the
+            # full review duration.
+            conn.commit()
+            try:
+                proc = subprocess.run(cmd, text=True, capture_output=True, timeout=args.timeout_seconds)
+                returncode = proc.returncode
+                stdout = proc.stdout
+                stderr = proc.stderr
+            except subprocess.TimeoutExpired as exc:
+                returncode = 124
+                stdout = normalize_subprocess_output(exc.stdout)
+                stderr = normalize_subprocess_output(exc.stderr) + "\nCommand timed out"
+            finished = now_iso()
+            state = "succeeded" if returncode == 0 else "failed"
+            result = {"returncode": returncode, "stdout": redact_text(stdout), "stderr": redact_text(stderr), "command": cmd, "head_sha": head_sha}
+            conn.execute(
+                """
+                UPDATE attempts SET state=?, updated_at=?, last_seen_at=?, finished_at=?, result_json=? WHERE external_id=?
+                """,
+                (state, finished, finished, finished, json.dumps(result, sort_keys=True), attempt_external_id),
+            )
+            event_id = record_event(
+                conn,
+                event_type="missing_review_dispatched",
+                entity_type="pull_request",
+                entity_external_id=row["external_id"],
+                state=state,
+                payload={"pr": pr_number, "head_sha": head_sha, "attempt": attempt_external_id, "returncode": returncode},
+            )
+            results.append({"pr": pr_number, "dispatched": True, "state": state, "attempt": attempt_external_id, "event": event_id, "returncode": returncode})
+    print(json.dumps({"ok": True, "command": "dispatch-missing-reviews", "results": results}, indent=2, sort_keys=True))
+    return 0
 
 def dispatch_claimed_issue(args: argparse.Namespace, *, command_label: str, cmd: list[str]) -> int:
     init_db(args.db)
@@ -1585,6 +1694,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
     p.add_argument("--coding-stub-cmd", default=DEFAULT_CODING_STUB_CMD)
     p.add_argument("--coding-agent-cmd", default=DEFAULT_CODING_AGENT_CMD)
+    p.add_argument("--review-agent-cmd", default=DEFAULT_REVIEW_AGENT_CMD)
     sub = p.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status")
@@ -1631,6 +1741,11 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch_coding = dispatch_sub.add_parser("coding")
     dispatch_coding.add_argument("--timeout-seconds", type=int, default=900)
     dispatch_coding.set_defaults(func=cmd_dispatch_coding)
+    dispatch_review = dispatch_sub.add_parser("missing-reviews")
+    dispatch_review.add_argument("--review-check-name", default=DEFAULT_REVIEW_CHECK_NAME)
+    dispatch_review.add_argument("--review-app-slug", default=DEFAULT_REVIEW_APP_SLUG)
+    dispatch_review.add_argument("--timeout-seconds", type=int, default=900)
+    dispatch_review.set_defaults(func=cmd_dispatch_missing_reviews)
 
     outbox = sub.add_parser("outbox")
     outbox_sub = outbox.add_subparsers(dest="outbox_command", required=True)
