@@ -304,6 +304,13 @@ class MVP0AgentTests(unittest.TestCase):
         generic_calendar["thesis"] = "Equity event timing around earnings announcements."
         generic_calendar["structure"] = "Buy shares before an earnings date and exit afterward."
         self.assertIsNone(research.normalize_candidate_payload(generic_calendar, priority_floor=20))
+        option_butterfly = dict(parsed[0])
+        option_butterfly["family"] = "Butterfly"
+        option_butterfly["thesis"] = "Range-bound payoff with favorable volatility."
+        option_butterfly["structure"] = "Buy one lower strike call, sell two middle strike calls, and buy one higher strike call before expiry."
+        normalized_butterfly = research.normalize_candidate_payload(option_butterfly, priority_floor=20)
+        self.assertIsNotNone(normalized_butterfly)
+        self.assertEqual(normalized_butterfly.family, "butterfly")
         self.assertNotIn("trading-research-idea-codex", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("call_openai_responses_api", Path("agent-platform/tools/trading_research_agent.py").read_text())
         self.assertNotIn('"--sandbox", "workspace-write"', Path("agent-platform/tools/trading_research_agent.py").read_text())

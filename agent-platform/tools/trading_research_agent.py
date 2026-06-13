@@ -564,8 +564,17 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         "call_butterfly", "put_butterfly", "long_straddle", "short_straddle",
         "long_strangle", "short_strangle", "covered_call", "protective_put",
     }
-    family_is_option_like = payload["family"] in option_families
-    if "option" not in " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower() and not family_is_option_like:
+    option_text = " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower()
+    option_evidence_terms = {
+        "option", "options", "call", "calls", "put", "puts", "strike", "strikes",
+        "expiry", "expiration", "expiry", "dte", "delta", "theta", "vega", "gamma",
+        "iv", "implied volatility", "option chain", "chain", "premium", "debit", "credit",
+        "short leg", "long leg", "legs", "assignment",
+    }
+    has_option_evidence = any(term in option_text for term in option_evidence_terms)
+    generic_option_families = {"calendar", "diagonal", "butterfly"}
+    family_is_option_like = payload["family"] in option_families or (payload["family"] in generic_option_families and has_option_evidence)
+    if not has_option_evidence and not family_is_option_like:
         return None
     allowed = {field: payload[field] for field in REQUIRED_CANDIDATE_FIELDS if field in payload}
     allowed["status"] = "queued"
