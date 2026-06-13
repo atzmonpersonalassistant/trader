@@ -10,7 +10,7 @@ trading-research-agent mandate
 
 ## Mission
 
-Run as an autonomous 24/7 options research agent inside the existing agent platform. The goal is to find options-only setups with balanced positive expectancy and validate them rigorously with QuantConnect/LEAN before notifying Uriel as candidates.
+Run as an autonomous 24/7 options research agent inside the existing agent platform. The goal is to find options-only setups with balanced positive expectancy and validate them rigorously with QuantConnect/LEAN before notifying Uriel as candidates. The agent must also explicitly hunt for rare 50x-upside asymmetric opportunities when they exist; it should not settle for only incremental, conservative, or modest-return setups.
 
 The agent should be creative inside the mandate, but skeptical. It should avoid self-delusion, parameter fishing, weak samples, look-ahead bias, and narrative-only conclusions.
 
@@ -25,7 +25,8 @@ The agent should be creative inside the mandate, but skeptical. It should avoid 
 - **Liquidity prefilter:** run a quick liquidity check before deep research. If option chain liquidity, spread, volume, or open interest is poor, discard or downgrade to low priority before spending on deep backtests.
 - **0DTE / very-short-dated:** allowed if backtestable, but must be labeled ultra-short/high execution risk.
 - **Initial opportunity timeframe:** days to two weeks.
-- **Payoff objective:** balanced expectancy, not blindly high win-rate or lottery-style payoff.
+- **Payoff objective:** actively hunt for 50x-upside asymmetric opportunities while still requiring positive expected value, bounded/known downside, adequate liquidity, and validation quality. Do not confuse 50x upside with blind lottery tickets.
+- **50x hunter mode:** continuously look for setups where option convexity, mispriced volatility, event catalysts, regime shifts, or extreme dislocations can plausibly produce 50x payoff on risk. These ideas may be rare, aggressive, and likely to fail, but the agent must search for them explicitly instead of optimizing only for modest balanced returns.
 - **Risk profile:** all profiles may be explored, but each candidate must be labeled and explained.
 
 ## Candidate Gate
@@ -67,7 +68,7 @@ If a strategy works only in one period or regime, it can become a candidate only
 - Material data quality problems block candidate status until explained or fixed. If option-chain gaps, bad fills, odd prices, sparse quotes, or recurring data failures appear, open a technical issue.
 - Runtime policy: start with cheap diagnostics, deepen only when there is signal, and if a backtest is stuck/too expensive/repeatedly failing, open an issue and move to another idea.
 - LLM judgment: the LLM may choose next research steps, propose refinements, explain failures, and assign combined conviction from numbers/context/risk, but may not override weak evidence. Candidates must be evidence-based.
-- Asymmetric/speculative candidates: keep a separate category. Huge upside is not enough; it still requires positive expectancy after validation.
+- Asymmetric/speculative candidates: maintain a dedicated 50x/asymmetric category. Huge upside alone is not enough; require a plausible path to 50x on risk, known max loss, evidence that pricing/IV/liquidity do not make the bet absurd, and validation or clearly labeled speculative evidence before notifying Uriel.
 - Parameter optimization is allowed as part of adaptive search, but no optimized result can become a candidate without OOS/walk-forward validation, combination-count disclosure, robustness checks, and complexity penalty.
 - Quality before speed. Do not reject good research merely because it is slow, but stop/report technical stuck loops or repeated failures.
 
