@@ -299,6 +299,11 @@ class MVP0AgentTests(unittest.TestCase):
         non_option_calendar["thesis"] = "Equity event timing around earnings announcements."
         non_option_calendar["structure"] = "Buy shares before an earnings date and exit afterward."
         self.assertIsNone(research.normalize_candidate_payload(non_option_calendar, priority_floor=20))
+        generic_calendar = dict(parsed[0])
+        generic_calendar["family"] = "Calendar"
+        generic_calendar["thesis"] = "Equity event timing around earnings announcements."
+        generic_calendar["structure"] = "Buy shares before an earnings date and exit afterward."
+        self.assertIsNone(research.normalize_candidate_payload(generic_calendar, priority_floor=20))
         self.assertNotIn("trading-research-idea-codex", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("call_openai_responses_api", Path("agent-platform/tools/trading_research_agent.py").read_text())
         self.assertNotIn('"--sandbox", "workspace-write"', Path("agent-platform/tools/trading_research_agent.py").read_text())

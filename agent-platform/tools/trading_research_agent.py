@@ -558,9 +558,11 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
     payload["family"] = safe_token(slugify_id(payload["family"]).replace("-", "_"), max_len=48)
     option_families = {
         "bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread",
-        "iron_condor", "long_call", "long_put", "calendar", "diagonal", "butterfly",
+        "iron_condor", "long_call", "long_put",
         "call_calendar_spread", "put_calendar_spread", "call_diagonal_spread",
         "put_diagonal_spread", "iron_butterfly", "call_calendar", "put_calendar",
+        "call_butterfly", "put_butterfly", "long_straddle", "short_straddle",
+        "long_strangle", "short_strangle", "covered_call", "protective_put",
     }
     family_is_option_like = payload["family"] in option_families
     if "option" not in " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower() and not family_is_option_like:
