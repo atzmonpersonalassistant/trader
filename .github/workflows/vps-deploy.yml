@@ -363,6 +363,7 @@ jobs:
           test -s /tmp/trader-research-loop-smoke.log
           latest_smoke_dir=$(sudo -n -u agent-research bash -lc 'ls -td /agents/research/reports/research-pass-* | head -1')
           sudo -n -u agent-research-runner bash -lc 'test -d /agents/research-runner/handoff && test -w /agents/research-runner/handoff'
+          sudo -n -u agent-research-runner bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
           bash -n /usr/local/bin/trading-research-agent-loop
           bash -n /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/sbin/trading-dispatch-review-agent

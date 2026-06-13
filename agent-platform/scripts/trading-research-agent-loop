@@ -26,6 +26,19 @@ DISABLE_SEED=${TRADING_RESEARCH_LOOP_DISABLE_SEED:-0}
 DRY_RUN=${TRADING_RESEARCH_LOOP_DRY_RUN:-0}
 mkdir -p "$LOG_DIR" "$REPORTS_DIR" /agents/research/tmp "$RUNNER_HANDOFF_DIR"
 
+make_runner_task_inputs_readable() {
+  local file
+  for file in "$@"; do
+    [ -e "$file" ] || continue
+    if command -v setfacl >/dev/null 2>&1 && setfacl -m "u:$RUNNER_USER:r--" "$file" 2>/dev/null; then
+      chmod u+rw,o-rwx "$file"
+    else
+      chgrp "$RUNNER_USER" "$file" 2>/dev/null || true
+      chmod u+rw,g+r,o-rwx "$file"
+    fi
+  done
+}
+
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "$(date -u +%FT%TZ) another research loop already running"
@@ -82,6 +95,7 @@ Save all artifacts, scripts, JSON responses, logs, and final report in the curre
 
 If blocked by QC nodes/data/log extraction/tooling, document the exact blocker and next technical step instead of pretending the hypothesis was validated.
 EOF
+    make_runner_task_inputs_readable "$RUN_DIR/candidate.json" "$RUN_DIR/mandate.json" "$RUN_DIR/qc_prompt.json" "$RUN_DIR/task.txt"
     echo "$(date -u +%FT%TZ) starting $RUN_ID" | tee -a "$LOG_DIR/loop.log"
     set +e
     cd "$RUN_DIR"
