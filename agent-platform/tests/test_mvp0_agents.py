@@ -559,6 +559,31 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("latest_smoke_dir=", text)
         self.assertIn("/agents/research-runner/handoff", text)
 
+    def test_coding_agent_prompt_allows_code_and_rejects_docs_only_downgrade(self):
+        coding = load("trading_coding_agent_policy", "agent-platform/tools/trading_coding_agent.py")
+        prompt = coding.build_prompt({"number": 53, "title": "Runtime change", "body": "Change runtime code and tests."})
+        self.assertIn("If the issue asks for code, change code", prompt)
+        self.assertIn("do not downgrade a runtime/code task into a documentation-only note", prompt)
+        self.assertNotIn("documentation-only change", prompt)
+        self.assertTrue(coding.is_allowed_mvp0_change("agent-platform/tools/trading_research_agent.py"))
+        self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
+        self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/tools/trading-dispatch-review-agent"))
+        self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/scripts/trading-orchestrator-tick"))
+        self.assertFalse(coding.is_allowed_mvp0_change(".github/workflows/vps-deploy.yml"))
+        self.assertFalse(coding.is_allowed_mvp0_change("/tmp/escape.py"))
+
+    def test_orchestrator_dispatch_missing_reviews_parser_and_tick_are_wired(self):
+        orch = load("trading_orchestrator_dispatch_review", "agent-platform/tools/trading_orchestrator.py")
+        parser = orch.build_parser()
+        args = parser.parse_args(["dispatch", "missing-reviews", "--timeout-seconds", "1"])
+        self.assertEqual(args.func, orch.cmd_dispatch_missing_reviews)
+        tick = (ROOT / "agent-platform/scripts/trading-orchestrator-tick").read_text()
+        self.assertLess(tick.index("dispatch coding"), tick.index("dispatch missing-reviews"))
+        self.assertLess(tick.index("dispatch missing-reviews"), tick.index("enable-auto-merge"))
+        wrapper = ROOT / "agent-platform/tools/trading-dispatch-review-agent"
+        subprocess.run(["bash", "-n", str(wrapper)], check=True)
+        self.assertEqual(subprocess.run([str(wrapper), "review", "--pr", "abc"]).returncode, 64)
+
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}
@@ -745,6 +770,198 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertTrue((review / "pr-4").exists())
             self.assertFalse(deleted["dry_run"])
 
+    def test_orchestrator_dispatch_missing_reviews_records_attempt_and_dedupes_head(self):
+        orch = load("trading_orchestrator_missing_review", "agent-platform/tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import sqlite3
+
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            pr = {
+                "id": 5500,
+                "number": 55,
+                "state": "open",
+                "title": "Agent PR",
+                "head": {"ref": "agent/issue-55-test", "sha": "abc123", "repo": {"full_name": "atzmonpersonalassistant/trader"}},
+                "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            }
+            with sqlite3.connect(db) as conn:
+                conn.row_factory = sqlite3.Row
+                orch.upsert_pr(conn, pr, None)
+                conn.execute(
+                    "UPDATE pull_requests SET labels=? WHERE number=55",
+                    (json.dumps(["agent:pr-opened", "needs:human-approval", "human:approved"]),),
+                )
+
+            calls = []
+
+            class Proc:
+                returncode = 0
+                stdout = "review ok"
+                stderr = ""
+
+            originals = (orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run)
+            orch.mint_github_token = lambda cmd: "token"
+            orch.fetch_pr = lambda owner, repo, number, token: pr
+            orch.fetch_issue_labels = lambda owner, repo, number, token: []
+            orch.fetch_check_runs = lambda owner, repo, sha, token: []
+
+            def fake_run(cmd, text, capture_output, timeout):
+                # The orchestrator must not hold a SQLite write transaction open
+                # while the long-running review subprocess executes.
+                with sqlite3.connect(db, timeout=0.1) as peer:
+                    peer.execute("INSERT INTO settings(key, value, created_at, updated_at) VALUES ('peer-write-during-review', 'ok', 'now', 'now')")
+                calls.append(cmd)
+                return Proc()
+
+            orch.subprocess.run = fake_run
+            args = argparse.Namespace(**{
+                "db": db,
+                "token_cmd": "test-auth-command",
+                "owner": "atzmonpersonalassistant",
+                "repo": "trader",
+                "review_check_name": "review-agent/pass",
+                "review_app_slug": "trading-review-agent",
+                "review_agent_cmd": "review-wrapper",
+                "timeout_seconds": 10,
+            })
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_dispatch_missing_reviews(args), 0)
+                first = json.loads(out.getvalue())
+                self.assertTrue(first["results"][0]["dispatched"])
+                self.assertEqual(calls, [["review-wrapper", "review", "--pr", "55"]])
+                with sqlite3.connect(db) as conn:
+                    event_count = conn.execute("SELECT COUNT(*) FROM events WHERE event_type='missing_review_dispatched'").fetchone()[0]
+                    attempt_count = conn.execute("SELECT COUNT(*) FROM attempts WHERE entity_type='pull_request'").fetchone()[0]
+                self.assertEqual(event_count, 1)
+                self.assertEqual(attempt_count, 1)
+
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_dispatch_missing_reviews(args), 0)
+                second = json.loads(out.getvalue())
+                self.assertEqual(second["results"][0]["reason"], "already_dispatched_for_head")
+                self.assertEqual(len(calls), 1)
+            finally:
+                orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run = originals
+
+    def test_orchestrator_dispatch_missing_reviews_records_byte_timeout_output(self):
+        orch = load("trading_orchestrator_missing_review_timeout", "agent-platform/tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import json
+        import sqlite3
+        import subprocess
+
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            pr = {
+                "id": 5700,
+                "number": 57,
+                "state": "open",
+                "title": "Timeout Agent PR",
+                "head": {"ref": "agent/issue-57-test", "sha": "abc123", "repo": {"full_name": "atzmonpersonalassistant/trader"}},
+                "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            }
+            with sqlite3.connect(db) as conn:
+                conn.row_factory = sqlite3.Row
+                orch.upsert_pr(conn, pr, None)
+
+            originals = (orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run)
+            orch.mint_github_token = lambda cmd: "test-auth"
+            orch.fetch_pr = lambda owner, repo, number, token: pr
+            orch.fetch_issue_labels = lambda owner, repo, number, token: []
+            orch.fetch_check_runs = lambda owner, repo, sha, token: []
+
+            def timeout_run(cmd, text, capture_output, timeout):
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout, output=b"partial out", stderr=b"partial err")
+
+            orch.subprocess.run = timeout_run
+            args = argparse.Namespace(**{
+                "db": db,
+                "token_cmd": "test-auth-command",
+                "owner": "atzmonpersonalassistant",
+                "repo": "trader",
+                "review_check_name": "review-agent/pass",
+                "review_app_slug": "trading-review-agent",
+                "review_agent_cmd": "review-wrapper",
+                "timeout_seconds": 10,
+            })
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_dispatch_missing_reviews(args), 0)
+                result = json.loads(out.getvalue())
+                self.assertEqual(result["results"][0]["returncode"], 124)
+                with sqlite3.connect(db) as conn:
+                    row = conn.execute("SELECT state, result_json FROM attempts WHERE entity_type='pull_request'").fetchone()
+                self.assertEqual(row[0], "failed")
+                self.assertIn("partial err", row[1])
+                self.assertIn("Command timed out", row[1])
+            finally:
+                orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run = originals
+
+    def test_orchestrator_dispatch_missing_reviews_skips_closed_refreshed_pr(self):
+        orch = load("trading_orchestrator_missing_review_closed", "agent-platform/tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import json
+        import sqlite3
+
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            stored = {
+                "id": 5600,
+                "number": 56,
+                "state": "open",
+                "title": "Closed Agent PR",
+                "head": {"ref": "agent/issue-56-test", "sha": "abc123", "repo": {"full_name": "atzmonpersonalassistant/trader"}},
+                "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            }
+            refreshed = dict(stored, state="closed")
+            with sqlite3.connect(db) as conn:
+                conn.row_factory = sqlite3.Row
+                orch.upsert_pr(conn, stored, None)
+
+            calls = []
+            originals = (orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run)
+            orch.mint_github_token = lambda cmd: "test-auth"
+            orch.fetch_pr = lambda owner, repo, number, token: refreshed
+            orch.fetch_issue_labels = lambda owner, repo, number, token: ["agent:pr-opened"]
+            orch.fetch_check_runs = lambda owner, repo, sha, token: []
+            orch.subprocess.run = lambda *a, **k: calls.append(a)
+            args = argparse.Namespace(**{
+                "db": db,
+                "token_cmd": "test-auth-command",
+                "owner": "atzmonpersonalassistant",
+                "repo": "trader",
+                "review_check_name": "review-agent/pass",
+                "review_app_slug": "trading-review-agent",
+                "review_agent_cmd": "review-wrapper",
+                "timeout_seconds": 10,
+            })
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_dispatch_missing_reviews(args), 0)
+                result = json.loads(out.getvalue())
+                self.assertEqual(result["results"][0]["reason"], "pr_not_open")
+                self.assertEqual(calls, [])
+                with sqlite3.connect(db) as conn:
+                    state = conn.execute("SELECT state FROM pull_requests WHERE number=56").fetchone()[0]
+                self.assertEqual(state, "closed")
+            finally:
+                orch.mint_github_token, orch.fetch_pr, orch.fetch_issue_labels, orch.fetch_check_runs, orch.subprocess.run = originals
+
     def test_orchestrator_notification_outbox_and_ack_sent(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         import argparse
@@ -829,15 +1046,23 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("blocked_pr", rows[0][1])
 
-    def test_coding_agent_enforces_docs_only_changes(self):
+    def test_coding_agent_enforces_safe_agent_platform_changes(self):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         self.assertTrue(agent.is_allowed_mvp0_change("README.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("planning/PROJECT_PLAN.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("planning/ARCHITECTURE.md"))
         self.assertTrue(agent.is_allowed_mvp0_change("planning/docs/quantconnect-agentic-platform-lld.md"))
-        self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/docs/mvp0/task-breakdown.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("agent-platform/docs/mvp0/task-breakdown.md"))
+        self.assertTrue(agent.is_allowed_mvp0_change("agent-platform/tools/trading_research_agent.py"))
         self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
+        self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading-dispatch-review-agent"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
+
+    def test_coding_agent_verify_does_not_execute_model_authored_tests(self):
+        agent = load("trading_coding_agent_verify_safe", "agent-platform/tools/trading_coding_agent.py")
+        source = Path("agent-platform/tools/trading_coding_agent.py").read_text()
+        self.assertNotIn('["python3", "-m", "unittest", "agent-platform/tests/test_mvp0_agents.py"]', source)
+        self.assertIn("Do not execute model-authored tests", source)
 
     def test_coding_agent_skip_codex_writes_current_planning_path(self):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")

@@ -7,6 +7,7 @@ on:
       - "agent-platform/tools/trading-*"
       - "agent-platform/tools/trading_*.py"
       - "agent-platform/scripts/trading-research-agent-loop"
+      - "agent-platform/scripts/trading-orchestrator-tick"
       - ".github/workflows/vps-deploy.yml"
   workflow_dispatch:
 
@@ -97,10 +98,12 @@ jobs:
             agent-platform/tools/trading-orchestrator \
             agent-platform/tools/trading-coding-agent \
             agent-platform/tools/trading-dispatch-coding-agent \
+            agent-platform/tools/trading-dispatch-review-agent \
             agent-platform/tools/trading-dispatch-coding-agent-stub \
             agent-platform/tools/trading-review-agent \
             agent-platform/tools/trading-research-agent \
             agent-platform/scripts/trading-research-agent-loop \
+            agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
             agent-platform/tools/trading_coding_agent.py \
@@ -157,7 +160,9 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent_stub.py" /usr/local/lib/trading_coding_agent_stub.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_research_agent.py" /usr/local/lib/trading_research_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator-tick" /usr/local/bin/trading-orchestrator-tick
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
           for role in coding review validator research research-runner; do
             if ! id "agent-$role" >/dev/null 2>&1; then
@@ -229,7 +234,7 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_research_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-coding-agent-stub
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub
           python3 - <<'PY'
           from pathlib import Path
           for file in [
@@ -339,6 +344,7 @@ jobs:
           sudo chmod 755 /usr/local/bin/trading-research-runner-codex
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
+          agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-review-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent-stub *
           EOF_SUDOERS
           sudo chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
@@ -358,6 +364,9 @@ jobs:
           latest_smoke_dir=$(sudo -n -u agent-research bash -lc 'ls -td /agents/research/reports/research-pass-* | head -1')
           sudo -n -u agent-research-runner bash -lc 'test -d /agents/research-runner/handoff && test -w /agents/research-runner/handoff'
           bash -n /usr/local/bin/trading-research-agent-loop
+          bash -n /usr/local/bin/trading-orchestrator-tick
+          bash -n /usr/local/sbin/trading-dispatch-review-agent
+          grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
           grep -q "Option Pricing / Volatility Intelligence" /usr/local/bin/trading-research-agent-loop
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop

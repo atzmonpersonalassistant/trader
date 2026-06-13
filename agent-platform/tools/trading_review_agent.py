@@ -215,7 +215,7 @@ def has_secret_like_text(diff: str) -> bool:
         value = match.group(2)
         if value.startswith("${{") or value.startswith("<") or value.startswith("***") or "(" in value:
             continue
-        if value.startswith(("os.environ", "str(", "dict(", "json.", "urllib.", "subprocess.", "Path(")):
+        if value.startswith(("os.environ", "str(", "dict(", "json.", "urllib.", "subprocess.", "Path(", "mint_github_token(")):
             continue
         return True
     return False
