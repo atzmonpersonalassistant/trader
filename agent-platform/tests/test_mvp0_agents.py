@@ -486,6 +486,10 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('sudo -n -u "$RUNNER_USER"', text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn('setfacl -m "u:$RUNNER_USER:rwx" "$RUN_DIR"', text)
+        self.assertIn("make_runner_task_inputs_readable", text)
+        self.assertIn('setfacl -m "u:$RUNNER_USER:r--" "$file"', text)
+        self.assertIn('chmod u+rw,g+r,o-rwx "$file"', text)
+        self.assertIn('"$RUN_DIR/candidate.json" "$RUN_DIR/mandate.json" "$RUN_DIR/qc_prompt.json" "$RUN_DIR/task.txt"', text)
         self.assertIn("--sandbox workspace-write", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn('approval_policy="never"', Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         bootstrap_text = Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text()
@@ -650,6 +654,10 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn("TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop", text)
         self.assertIn("latest_smoke_dir=", text)
+        self.assertIn("test -r '$latest_smoke_dir/candidate.json'", text)
+        self.assertIn("test -r '$latest_smoke_dir/mandate.json'", text)
+        self.assertIn("test -r '$latest_smoke_dir/qc_prompt.json'", text)
+        self.assertIn("test -r '$latest_smoke_dir/task.txt'", text)
         self.assertIn("/agents/research-runner/handoff", text)
 
     def test_coding_agent_prompt_allows_code_and_rejects_docs_only_downgrade(self):
