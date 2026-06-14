@@ -8,6 +8,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
 LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
+QC_LEAN_DOCKER_IMAGE=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE:-}
 MODE=${1:-}
 RUN_DIR=${2:-}
 CANDIDATE_JSON=${3:-}
@@ -325,14 +326,16 @@ PY
   fi
 
   docker_status="not_checked"
-  docker_image=""
+  docker_image="$QC_LEAN_DOCKER_IMAGE"
   if [[ "$execution_status" != "extract_written" ]]; then
     if command -v docker >/dev/null 2>&1; then
       if /usr/bin/timeout 20s docker info >"$DOCKER_LOG" 2>&1; then
-        docker_status="running_no_quantconnect_lean_image"
-        docker_image="$(/usr/bin/timeout 20s docker image ls --format '{{.Repository}}:{{.Tag}}' 2>>"$DOCKER_LOG" | grep -E '(^|/)quantconnect/(lean|research|foundation)|lean.*quantconnect' | head -n 1 || true)"
-        if [[ -n "$docker_image" ]]; then
-          docker_status="attempted_existing_quantconnect_lean_image"
+        if [[ -z "$docker_image" ]]; then
+          docker_status="docker_image_not_configured"
+        elif ! /usr/bin/timeout 20s docker image inspect "$docker_image" >>"$DOCKER_LOG" 2>&1; then
+          docker_status="docker_image_missing"
+        else
+          docker_status="attempted_configured_quantconnect_lean_image"
           execution_surface="lean_docker_quantconnect_python_runtime"
           set +e
           /usr/bin/timeout 180s docker run --rm \
@@ -417,9 +420,9 @@ elif auth_status == "lean_cli_missing":
 elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
     status = "quantconnect_python_runtime_missing"
     reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
-elif docker_status in ("docker_missing", "docker_not_running"):
+elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing"):
     status = docker_status
-    reason = "Docker is required for the next local LEAN/QC runtime fallback, but it is missing or unavailable for the broker role."
+    reason = "Docker with an explicitly configured approved QC/LEAN image is required for the next local runtime fallback, but it is missing, unavailable, or not configured for the broker role."
 elif lean_research_status == "non_interactive_research_execution_unsupported":
     status = "non_interactive_research_execution_unsupported"
     reason = "Lean CLI is authenticated, but this installed CLI did not advertise a non-interactive research/notebook execution command."
