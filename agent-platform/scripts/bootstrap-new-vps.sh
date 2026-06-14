@@ -18,6 +18,7 @@ if [[ "${1:-}" == "--install-system-packages" ]]; then
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$(cd -- "${SCRIPT_DIR}/../tools" && pwd)"
+SCRIPTS_DIR="$SCRIPT_DIR"
 
 log() { printf '[bootstrap-new-vps] %s\n' "$*"; }
 
@@ -183,6 +184,10 @@ log "installing root-owned dispatch wrappers"
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
 install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
+
+log "installing research loop scripts"
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke
 
 log "installing sudoers rules"
 cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
