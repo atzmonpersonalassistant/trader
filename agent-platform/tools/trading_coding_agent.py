@@ -324,6 +324,7 @@ def is_allowed_mvp0_change(path: str) -> bool:
         "agent-platform/tools/trading_research_agent.py",
         "agent-platform/scripts/trading-research-agent-loop",
         "agent-platform/scripts/trading-research-qc-broker",
+        "agent-platform/scripts/trading-research-qc-docker-run",
         "agent-platform/scripts/bootstrap-new-vps.sh",
         # Narrow deploy workflow access is needed when research agent runtime
         # changes add installed scripts or deploy smoke checks. Keep this exact
