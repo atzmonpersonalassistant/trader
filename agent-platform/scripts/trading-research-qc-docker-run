@@ -5,6 +5,8 @@ umask 077
 export PATH=/usr/local/bin:/usr/bin:/bin
 export PYTHONDONTWRITEBYTECODE=1
 CONFIG_FILE=/etc/trading-agents/qc-lean-docker-image
+RUN_UID=$(id -u agent-research)
+RUN_GID=$(id -g agent-research)
 
 status_json() {
   python3 - "$1" "$2" <<'PY'
@@ -76,7 +78,14 @@ fi
 set +e
 /usr/bin/timeout 180s docker run --rm \
   --network none \
-  -v "$RUN_REAL:/work" \
+  --user "$RUN_UID:$RUN_GID" \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 256 \
+  --memory 2g \
+  --cpus 2 \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
+  -v "$RUN_REAL:/work:rw" \
   -w /work \
   "$APPROVED_IMAGE" \
   python qc_option_history_probe.py

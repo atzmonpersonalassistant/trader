@@ -416,6 +416,11 @@ jobs:
           grep -q "docker_missing" /usr/local/bin/trading-research-qc-broker
           grep -q "docker_wrapper_unavailable" /usr/local/bin/trading-research-qc-broker
           grep -q -- "--network none" /usr/local/sbin/trading-research-qc-docker-run
+          grep -q -- "--user "$RUN_UID:$RUN_GID"" /usr/local/sbin/trading-research-qc-docker-run
+          grep -q -- "--cap-drop ALL" /usr/local/sbin/trading-research-qc-docker-run
+          grep -q -- "--security-opt no-new-privileges" /usr/local/sbin/trading-research-qc-docker-run
+          grep -q -- "--pids-limit 256" /usr/local/sbin/trading-research-qc-docker-run
+          grep -q -- "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m" /usr/local/sbin/trading-research-qc-docker-run
           grep -q -- "docker run --rm" /usr/local/sbin/trading-research-qc-docker-run
           ! grep -q -- "usermod -aG docker agent-research" /usr/local/sbin/trading-research-qc-docker-run
           grep -q "cost_credit_guardrail_required" /usr/local/bin/trading-research-qc-broker
