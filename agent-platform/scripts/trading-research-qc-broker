@@ -417,12 +417,15 @@ if auth_status == "auth_failure":
 elif auth_status == "lean_cli_missing":
     status = "lean_missing"
     reason = "Lean CLI is not installed or not on PATH for the broker role, so no authenticated QC Research execution surface is available."
-elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
-    status = "quantconnect_python_runtime_missing"
-    reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
+elif docker_status == "attempted_configured_quantconnect_lean_image":
+    status = "lean_docker_execution_failed"
+    reason = "The broker attempted the explicitly configured QC/LEAN Docker image, but it did not produce qc_option_history_extract.json. Inspect docker/stdout/stderr excerpts for the exact runtime failure."
 elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing"):
     status = docker_status
     reason = "Docker with an explicitly configured approved QC/LEAN image is required for the next local runtime fallback, but it is missing, unavailable, or not configured for the broker role."
+elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
+    status = "quantconnect_python_runtime_missing"
+    reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
 elif lean_research_status == "non_interactive_research_execution_unsupported":
     status = "non_interactive_research_execution_unsupported"
     reason = "Lean CLI is authenticated, but this installed CLI did not advertise a non-interactive research/notebook execution command."
