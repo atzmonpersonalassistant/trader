@@ -324,6 +324,10 @@ def is_allowed_mvp0_change(path: str) -> bool:
         "agent-platform/tools/trading_research_agent.py",
         "agent-platform/scripts/trading-research-agent-loop",
         "agent-platform/scripts/trading-research-qc-broker",
+        # Narrow deploy workflow access is needed when research agent runtime
+        # changes add installed scripts or deploy smoke checks. Keep this exact
+        # path only; do not allow arbitrary workflow edits.
+        ".github/workflows/vps-deploy.yml",
     }
     allowed_prefixes = (
         "planning/docs/",
