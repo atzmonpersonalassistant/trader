@@ -1442,6 +1442,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("bash -n /usr/local/sbin/trading-research-qc-docker-run", workflow)
         self.assertIn("docker_wrapper_unavailable", workflow)
         self.assertIn("grep -q -- '--network none'", workflow)
+        self.assertIn("grep -q -- '--user \"$RUN_UID:$RUN_GID\"'", workflow)
         self.assertIn("grep -q -- '--cap-drop ALL'", workflow)
         self.assertIn("grep -q -- '--security-opt no-new-privileges'", workflow)
         self.assertIn("trader-research-qc-artifact-dry-run.txt", workflow)
