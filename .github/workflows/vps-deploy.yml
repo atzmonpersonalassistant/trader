@@ -394,6 +394,8 @@ jobs:
           grep -q "trading-research-qc-broker preflight" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker research-artifact" /usr/local/bin/trading-research-agent-loop
           grep -q "QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN" /usr/local/bin/trading-research-qc-broker
+          grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-agent-loop
+          grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-qc-broker
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
