@@ -132,11 +132,6 @@ manifest = {
             "path": "qc_option_history_probe.py",
             "kind": "quantbook_script",
             "description": "QC Research / QuantBook script for bounded option-chain and equity-history extraction.",
-        },
-        {
-            "path": "qc_research_execution_diagnostic.json",
-            "kind": "structured_execution_diagnostic",
-            "description": "Written when no authenticated non-interactive QuantBook/QC Research execution surface produces the extract.",
         }
     ],
     "security_boundary": {
@@ -390,6 +385,7 @@ else:
     manifest["extraction_reason"] = diag["reason"]
     manifest["extracted_artifacts"] = []
     manifest["capability_gap"] = diag["status"]
+    manifest["artifacts"].append({"path": diag_rel, "kind": "structured_execution_diagnostic", "description": "Non-secret failure details written when no authenticated non-interactive QuantBook/QC Research execution surface produces the extract."})
     status_line = "Status: `execution_diagnostic`"
     detail = "Broker execution did not produce extracted market data; inspect `qc_research_execution_diagnostic.json` for the exact non-secret capability failure."
 for i, line in enumerate(summary):
