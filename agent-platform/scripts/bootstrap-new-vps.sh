@@ -194,6 +194,7 @@ log "installing research loop scripts"
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-broker" /usr/local/bin/trading-research-qc-broker
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
 
 
 log "preparing isolated research runner Codex auth directory"
@@ -269,7 +270,20 @@ SUDOERS_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
 visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
 
+cat > /etc/sudoers.d/trading-agent-research-qc-docker <<'SUDOERS_QC_DOCKER'
+# Allow the research broker to run only the safe QC/LEAN Docker wrapper as root.
+agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-qc-docker-run *
+SUDOERS_QC_DOCKER
+chmod 440 /etc/sudoers.d/trading-agent-research-qc-docker
+visudo -cf /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null
+
 log "creating placeholder config files if missing"
+if [[ ! -e /etc/trading-agents/qc-lean-docker-image ]]; then
+  install -o root -g root -m 644 /dev/null /etc/trading-agents/qc-lean-docker-image
+fi
+chown root:root /etc/trading-agents/qc-lean-docker-image
+chmod 644 /etc/trading-agents/qc-lean-docker-image
+
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
   cat > /etc/trading-agents/github-apps.json <<'JSON'
 {

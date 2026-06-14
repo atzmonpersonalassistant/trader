@@ -8,6 +8,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
 LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
+QC_LEAN_DOCKER_WRAPPER=${TRADING_RESEARCH_QC_LEAN_DOCKER_WRAPPER:-/usr/local/sbin/trading-research-qc-docker-run}
 QC_LEAN_DOCKER_IMAGE=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE:-}
 MODE=${1:-}
 RUN_DIR=${2:-}
@@ -79,10 +80,11 @@ if [[ "$MODE" == "research-artifact" || "$MODE" == "execute-research-artifact" ]
   EXEC_STDERR=""
   PY_IMPORT_STDERR=""
   DOCKER_LOG=""
+  DOCKER_WRAPPER_LOG=""
   LEAN_HELP_LOG=""
   LEAN_WHOAMI_LOG=""
   LEAN_LOGIN_LOG=""
-  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
+  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
 
   python3 - "$CANDIDATE_REAL" "$TMP_JSON" "$TMP_MD" "$TMP_PY" <<'PY'
 import json
@@ -244,6 +246,7 @@ PY
   EXEC_STDERR="$(mktemp)"
   PY_IMPORT_STDERR="$(mktemp)"
   DOCKER_LOG="$(mktemp)"
+  DOCKER_WRAPPER_LOG="$(mktemp)"
   LEAN_HELP_LOG="$(mktemp)"
   LEAN_WHOAMI_LOG="$(mktemp)"
   LEAN_LOGIN_LOG="$(mktemp)"
@@ -328,26 +331,48 @@ PY
   docker_status="not_checked"
   docker_image="$QC_LEAN_DOCKER_IMAGE"
   if [[ "$execution_status" != "extract_written" ]]; then
-    if command -v docker >/dev/null 2>&1; then
-      if /usr/bin/timeout 20s docker info >"$DOCKER_LOG" 2>&1; then
-        if [[ -z "$docker_image" ]]; then
-          docker_status="docker_image_not_configured"
-        elif ! /usr/bin/timeout 20s docker image inspect "$docker_image" >/dev/null 2>>"$DOCKER_LOG"; then
-          docker_status="docker_image_missing"
-        else
-          docker_status="attempted_configured_quantconnect_lean_image"
-          execution_surface="lean_docker_quantconnect_python_runtime"
-          set +e
-          /usr/bin/timeout 180s docker run --rm \
-            -v "$EXEC_DIR:/work" \
-            -w /work \
-            --network none \
-            "$docker_image" \
-            python qc_option_history_probe.py >"$EXEC_STDOUT" 2>>"$EXEC_STDERR"
-          execution_rc=$?
-          set -e
-          if [[ "$execution_rc" == "0" && -s "$EXEC_DIR/qc_option_history_extract.json" ]]; then
-            python3 - "$EXEC_DIR/qc_option_history_extract.json" "$TMP_EXTRACT" <<'PY'
+    if [[ -z "$docker_image" ]]; then
+      docker_status="docker_image_not_configured"
+    elif [[ ! -x "$QC_LEAN_DOCKER_WRAPPER" ]]; then
+      docker_status="docker_wrapper_unavailable"
+    else
+      docker_status="attempted_configured_quantconnect_lean_image"
+      execution_surface="lean_docker_quantconnect_python_runtime"
+      set +e
+      sudo -n "$QC_LEAN_DOCKER_WRAPPER" "$RUN_REAL" "$docker_image" >"$EXEC_STDOUT" 2>"$DOCKER_WRAPPER_LOG"
+      execution_rc=$?
+      set -e
+      cat "$DOCKER_WRAPPER_LOG" >>"$EXEC_STDERR"
+      wrapper_status="$(python3 - "$EXEC_STDOUT" "$DOCKER_WRAPPER_LOG" <<'PY'
+import json, sys
+for path in sys.argv[1:]:
+    try:
+        lines = open(path, errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("type") == "qc_docker_wrapper_status" and payload.get("status"):
+            print(payload["status"])
+            raise SystemExit(0)
+PY
+)"
+      case "$wrapper_status" in
+        docker_missing|docker_not_running|docker_image_not_configured|docker_image_missing|lean_docker_execution_failed|extract_written)
+          docker_status="$wrapper_status"
+          ;;
+        wrapper_not_root|usage_error|invalid_run_dir|probe_missing)
+          docker_status="docker_wrapper_unavailable"
+          ;;
+        "")
+          docker_status="docker_wrapper_unavailable"
+          ;;
+      esac
+      if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
+        python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 payload = json.load(open(src, encoding="utf-8"))
@@ -366,20 +391,14 @@ if len(rows) > max(1, len(underlyings)) * 200:
     raise SystemExit("extract exceeds contract row limit")
 open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 PY
-            mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-            execution_status="extract_written"
-          fi
-        fi
-      else
-        docker_status="docker_not_running"
+        mv "$TMP_EXTRACT" "$OUT_EXTRACT"
+        execution_status="extract_written"
       fi
-    else
-      docker_status="docker_missing"
     fi
   fi
 
   if [[ "$execution_status" != "extract_written" ]]; then
-    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
+    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
 import json, re, sys, time
 (
     path,
@@ -420,9 +439,9 @@ elif auth_status == "lean_cli_missing":
 elif docker_status == "attempted_configured_quantconnect_lean_image":
     status = "lean_docker_execution_failed"
     reason = "The broker attempted the explicitly configured QC/LEAN Docker image, but it did not produce qc_option_history_extract.json. Inspect docker/stdout/stderr excerpts for the exact runtime failure."
-elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing"):
+elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing", "docker_wrapper_unavailable"):
     status = docker_status
-    reason = "Docker with an explicitly configured approved QC/LEAN image is required for the next local runtime fallback, but it is missing, unavailable, or not configured for the broker role."
+    reason = "Docker with an explicitly configured approved QC/LEAN image must run through the narrow root-owned wrapper, but Docker, the image, or the wrapper is missing, unavailable, or not configured for the broker role."
 elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
     status = "quantconnect_python_runtime_missing"
     reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
@@ -441,6 +460,7 @@ payload = {
     "auth_status": auth_status,
     "attempted_surface": surface,
     "attempted_command": "timeout 120s python3 qc_option_history_probe.py",
+    "docker_attempted_command": "sudo -n /usr/local/sbin/trading-research-qc-docker-run RUN_DIR CONFIGURED_IMAGE",
     "exit_code": int(rc),
     "surface_checks": {
         "lean_cli": lean_status,

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+export PATH=/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+CONFIG_FILE=/etc/trading-agents/qc-lean-docker-image
+
+status_json() {
+  python3 - "$1" "$2" <<'PY'
+import json
+import sys
+status, reason = sys.argv[1:3]
+print(json.dumps({"type": "qc_docker_wrapper_status", "status": status, "reason": reason}, sort_keys=True))
+PY
+}
+
+if [[ "${EUID}" -ne 0 ]]; then
+  status_json wrapper_not_root "wrapper must run as root through the narrow sudoers rule" >&2
+  exit 126
+fi
+if [[ "$#" -ne 2 ]]; then
+  status_json usage_error "usage: trading-research-qc-docker-run RUN_DIR APPROVED_IMAGE" >&2
+  exit 64
+fi
+
+RUN_DIR="$1"
+APPROVED_IMAGE="$2"
+CONFIGURED_IMAGE=""
+if [[ -r "$CONFIG_FILE" && ! -L "$CONFIG_FILE" ]]; then
+  CONFIGURED_IMAGE="$(head -n 1 "$CONFIG_FILE" | tr -d '[:space:]')"
+fi
+
+case "$RUN_DIR" in
+  /agents/research/reports/research-pass-*) ;;
+  *) status_json invalid_run_dir "run dir must be an approved research-pass directory" >&2; exit 67 ;;
+esac
+case "$CONFIGURED_IMAGE" in
+  ""|*[!A-Za-z0-9._:@/-]*) status_json docker_image_not_configured "approved QC/LEAN Docker image is not configured safely" >&2; exit 65 ;;
+esac
+case "$APPROVED_IMAGE" in
+  ""|*[!A-Za-z0-9._:@/-]*) status_json docker_image_not_configured "approved QC/LEAN Docker image is not configured safely" >&2; exit 65 ;;
+esac
+if [[ "$APPROVED_IMAGE" != "$CONFIGURED_IMAGE" ]]; then
+  status_json docker_image_not_configured "requested Docker image does not match the root-owned approved QC/LEAN image" >&2
+  exit 65
+fi
+if [[ -L "$RUN_DIR" || ! -d "$RUN_DIR" ]]; then
+  status_json invalid_run_dir "run dir is missing or is a symlink" >&2
+  exit 66
+fi
+
+RUN_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$RUN_DIR")"
+case "$RUN_REAL" in
+  /agents/research/reports/research-pass-*) ;;
+  *) status_json invalid_run_dir "resolved run dir escaped approved reports path" >&2; exit 69 ;;
+esac
+if [[ -L "$RUN_REAL/qc_option_history_probe.py" || ! -r "$RUN_REAL/qc_option_history_probe.py" ]]; then
+  status_json probe_missing "qc_option_history_probe.py is required in the approved run dir" >&2
+  exit 66
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  status_json docker_missing "docker command is not installed" >&2
+  exit 127
+fi
+if ! /usr/bin/timeout 20s docker info >/dev/null 2>&1; then
+  status_json docker_not_running "docker daemon is unavailable to the wrapper" >&2
+  exit 125
+fi
+if ! /usr/bin/timeout 20s docker image inspect "$APPROVED_IMAGE" >/dev/null 2>&1; then
+  status_json docker_image_missing "approved QC/LEAN Docker image is not present locally" >&2
+  exit 65
+fi
+
+set +e
+/usr/bin/timeout 180s docker run --rm \
+  --network none \
+  -v "$RUN_REAL:/work" \
+  -w /work \
+  "$APPROVED_IMAGE" \
+  python qc_option_history_probe.py
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 && -s "$RUN_REAL/qc_option_history_extract.json" ]]; then
+  chown agent-research:agent-research "$RUN_REAL/qc_option_history_extract.json" 2>/dev/null || true
+  chmod 640 "$RUN_REAL/qc_option_history_extract.json" 2>/dev/null || true
+  status_json extract_written "qc_option_history_extract.json was produced"
+  exit 0
+fi
+
+status_json lean_docker_execution_failed "approved QC/LEAN Docker image ran but did not produce qc_option_history_extract.json" >&2
+exit "$rc"
