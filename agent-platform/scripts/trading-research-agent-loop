@@ -87,7 +87,7 @@ Current Uriel mandate updates:
 
 Use QuantConnect as default, with QC Research Notebooks / QuantBook as the preferred diagnostics and exploration layer before cloud backtests. When testing a hypothesis, first create or update a QC-compatible research notebook artifact (research.ipynb or notebook-style script) that documents the signal, option-chain checks, contract filters, liquidity, event counts, and quick charts/tables where possible.
 
-Before deeper QC diagnostics, run the safe authenticated smoke check with trading-research-qc-smoke --json and save its non-secret output. If it fails, report the exact failing check; if it passes, continue to option-chain and backtest diagnostics instead of treating QC auth/connectivity as blocked.
+Before deeper QC diagnostics, inspect qc_auth_smoke.jsonl. The loop runs the safe authenticated smoke check before launching you and saves the non-secret output there. If the smoke output reports QC_AUTH_OK, continue to option-chain and backtest diagnostics instead of treating QC auth/connectivity as blocked.
 
 Apply Option Pricing / Volatility Intelligence before candidate status: evaluate market mid versus theoretical/model range, IV rank/percentile where available, IV versus realized volatility, skew, term structure, Greeks and net spread exposures, debit/credit versus expected move and max risk, payoff scenarios before/at expiry, and sensitivity to bid/ask, fill, and slippage. Black-Scholes/Merton is only a baseline; use other lenses when useful such as binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo for path-dependent structures, empirical IV/RV, skew, term structure, and scenario simulation. Do not blindly optimize parameters to rescue a weak result; use pricing diagnostics to explain what failed and what is worth refining.
 
@@ -107,15 +107,37 @@ EOF
       echo "$(date -u +%FT%TZ) dry-run $RUN_ID" | tee -a "$LOG_DIR/loop.log"
       RC=0
     else
-      # Run the autonomous research pass under the merged research role so the
-      # same user that owns the research environment can access authenticated
-      # Lean/QuantConnect context. Keep execution confined to the per-run workspace.
+      # Run an explicit non-secret QuantConnect auth/connectivity smoke before
+      # handing work to the LLM. This prevents the research pass from guessing
+      # whether QC auth works and leaves a durable artifact for diagnosis.
       if [ "$RUNNER_USER" = "$(id -un)" ]; then
-        /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+        trading-research-qc-smoke --json > "$RUN_DIR/qc_auth_smoke.jsonl" 2> "$RUN_DIR/qc_auth_smoke.err"
+        SMOKE_RC=$?
       else
-        sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+        sudo -n -u "$RUNNER_USER" trading-research-qc-smoke --json > "$RUN_DIR/qc_auth_smoke.jsonl" 2> "$RUN_DIR/qc_auth_smoke.err"
+        SMOKE_RC=$?
       fi
-      RC=$?
+      if [ "$SMOKE_RC" != "0" ]; then
+        {
+          echo "# QC auth smoke failed"
+          echo
+          echo "The research loop ran trading-research-qc-smoke before the autonomous pass and it failed."
+          echo "See qc_auth_smoke.jsonl and qc_auth_smoke.err in this run directory for the exact non-secret failing check."
+          echo
+          echo "retest_after_technical_fix"
+        } > "$RUN_DIR/final_report.md"
+        RC=0
+      else
+        # Run the autonomous research pass under the merged research role so the
+        # same user that owns the research environment can access authenticated
+        # Lean/QuantConnect context. Keep execution confined to the per-run workspace.
+        if [ "$RUNNER_USER" = "$(id -un)" ]; then
+          /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+        else
+          sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex "$HANDOFF_TASK" "$RUN_DIR" > "$RUN_DIR/codex.log" 2>&1
+        fi
+        RC=$?
+      fi
     fi
     set -e
     rm -f "$HANDOFF_TASK" 2>/dev/null || true
