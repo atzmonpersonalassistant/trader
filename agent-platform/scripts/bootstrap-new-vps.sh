@@ -234,7 +234,7 @@ cd "$OUT_REAL"
 export HOME=/home/agent-research
 export PATH=/usr/local/bin:/usr/bin:/bin
 export PYTHONDONTWRITEBYTECODE=1
-exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
+exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" -c sandbox_workspace_write.network_access=true --model "$MODEL" "$(cat "$TASK_REAL")"
 RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
