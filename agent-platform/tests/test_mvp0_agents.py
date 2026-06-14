@@ -539,6 +539,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertLess(broker_text.index('docker_status == "attempted_configured_quantconnect_lean_image"'), broker_text.index('python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing")'))
         self.assertIn("TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE", broker_text)
         self.assertIn("docker image inspect", broker_text)
+        self.assertIn('docker image inspect "$docker_image" >/dev/null', broker_text)
+        self.assertNotIn('docker image inspect "$docker_image" >>"$DOCKER_LOG"', broker_text)
         self.assertNotIn("docker image ls", broker_text)
         self.assertNotIn("grep -E '(^|/)quantconnect/(lean|research|foundation)|lean.*quantconnect'", broker_text)
         self.assertIn("quantconnect_python_runtime_missing", broker_text)

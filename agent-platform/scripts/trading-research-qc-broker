@@ -332,7 +332,7 @@ PY
       if /usr/bin/timeout 20s docker info >"$DOCKER_LOG" 2>&1; then
         if [[ -z "$docker_image" ]]; then
           docker_status="docker_image_not_configured"
-        elif ! /usr/bin/timeout 20s docker image inspect "$docker_image" >>"$DOCKER_LOG" 2>&1; then
+        elif ! /usr/bin/timeout 20s docker image inspect "$docker_image" >/dev/null 2>>"$DOCKER_LOG"; then
           docker_status="docker_image_missing"
         else
           docker_status="attempted_configured_quantconnect_lean_image"
