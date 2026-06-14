@@ -379,6 +379,7 @@ jobs:
           sudo -n -u agent-research bash -lc 'set -euo pipefail; f=/agents/research/handoff/deploy-runner-readable.txt; rm -f "$f"; install -o agent-research -g agent-research-runner -m 640 /dev/null "$f"; printf ok > "$f"'
           sudo -n -u agent-research-runner bash -lc 'test "$(cat /agents/research/handoff/deploy-runner-readable.txt)" = ok'
           sudo -n -u agent-research bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
+          sudo -n -u agent-research trading-research-qc-broker research-artifact "$latest_smoke_dir" "$latest_smoke_dir/candidate.json" --dry-run >/tmp/trader-research-qc-artifact-dry-run.txt
           if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service | grep -q '^trading-research-agent\.service'; then
             sudo systemctl restart trading-research-agent.service
           fi
@@ -391,6 +392,8 @@ jobs:
           bash -n /usr/local/bin/trading-research-runner-codex
           grep -q "Option Pricing / Volatility Intelligence" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker preflight" /usr/local/bin/trading-research-agent-loop
+          grep -q "trading-research-qc-broker research-artifact" /usr/local/bin/trading-research-agent-loop
+          grep -q "QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN" /usr/local/bin/trading-research-qc-broker
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
