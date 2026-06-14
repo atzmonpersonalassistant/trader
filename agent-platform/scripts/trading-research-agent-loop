@@ -87,7 +87,7 @@ Current Uriel mandate updates:
 
 Use QuantConnect as default, with QC Research Notebooks / QuantBook as the preferred diagnostics and exploration layer before cloud backtests. When testing a hypothesis, first create or update a QC-compatible research notebook artifact (research.ipynb or notebook-style script) that documents the signal, option-chain checks, contract filters, liquidity, event counts, and quick charts/tables where possible.
 
-Before deeper QC diagnostics, inspect qc_broker_artifacts.json and qc_broker_summary.md. The loop runs a narrow authenticated QuantConnect broker before launching you and saves non-secret artifacts there. If the broker artifact reports ok=true, continue to option-chain/backtest diagnostics from the provided artifacts and QC-compatible scripts. Do not read raw credentials or request direct secret access; if more authenticated QC data is needed, define the next broker artifact needed.
+Before deeper QC diagnostics, inspect qc_broker_artifacts.json, qc_broker_summary.md, qc_research_artifact_manifest.json, qc_research_artifact_summary.md, and qc_option_history_probe.py. The loop runs a narrow authenticated QuantConnect broker before launching you and saves non-secret artifacts there. If the broker preflight reports ok=true, use the provided option-chain/history artifact bundle and QC-compatible scripts before deciding whether deeper backtests are justified. Do not say the broker only confirms auth when qc_research_artifact_manifest.json or qc_option_history_probe.py exists; report the next exact QC/Lean data capability gap instead. Do not read raw credentials or request direct secret access; if more authenticated QC data is needed, define the next broker artifact needed.
 
 Apply Option Pricing / Volatility Intelligence before candidate status: evaluate market mid versus theoretical/model range, IV rank/percentile where available, IV versus realized volatility, skew, term structure, Greeks and net spread exposures, debit/credit versus expected move and max risk, payoff scenarios before/at expiry, and sensitivity to bid/ask, fill, and slippage. Black-Scholes/Merton is only a baseline; use other lenses when useful such as binomial/trinomial trees, finite-difference/QuantLib-style models, Monte Carlo for path-dependent structures, empirical IV/RV, skew, term structure, and scenario simulation. Do not blindly optimize parameters to rescue a weak result; use pricing diagnostics to explain what failed and what is worth refining.
 
@@ -112,13 +112,18 @@ EOF
       # non-secret artifacts for the offline Codex research pass.
       trading-research-qc-broker preflight "$RUN_DIR" "$RUN_DIR/candidate.json" > "$RUN_DIR/qc_broker.log" 2> "$RUN_DIR/qc_broker.err"
       BROKER_RC=$?
-      make_runner_task_inputs_readable "$RUN_DIR/qc_broker_artifacts.json" "$RUN_DIR/qc_broker_summary.md" "$RUN_DIR/qc_broker_candidate_summary.json" "$RUN_DIR/qc_broker.log" "$RUN_DIR/qc_broker.err"
+      if [ "$BROKER_RC" = "0" ]; then
+        trading-research-qc-broker research-artifact "$RUN_DIR" "$RUN_DIR/candidate.json" >> "$RUN_DIR/qc_broker.log" 2>> "$RUN_DIR/qc_broker.err"
+        BROKER_RC=$?
+      fi
+      make_runner_task_inputs_readable "$RUN_DIR/qc_broker_artifacts.json" "$RUN_DIR/qc_broker_summary.md" "$RUN_DIR/qc_broker_candidate_summary.json" "$RUN_DIR/qc_research_artifact_manifest.json" "$RUN_DIR/qc_research_artifact_summary.md" "$RUN_DIR/qc_option_history_probe.py" "$RUN_DIR/qc_broker.log" "$RUN_DIR/qc_broker.err"
       if [ "$BROKER_RC" != "0" ]; then
         {
-          echo "# QC broker preflight failed"
+          echo "# QC broker artifact step blocked"
           echo
-          echo "The research loop ran trading-research-qc-broker before the autonomous pass and it failed."
-          echo "See qc_broker_artifacts.json, qc_broker_summary.md, and qc_broker.err for the exact non-secret failing check."
+          echo "The research loop ran trading-research-qc-broker before the autonomous pass and the broker could not produce extracted option-chain/history data."
+          echo "See qc_broker_artifacts.json, qc_broker_summary.md, qc_research_artifact_manifest.json when present, and qc_broker.err for the exact non-secret failing check."
+          echo "Do not treat generated probe scripts as extracted market data unless qc_option_history_extract.json exists."
           echo
           echo "retest_after_technical_fix"
         } > "$RUN_DIR/final_report.md"
