@@ -335,7 +335,7 @@ jobs:
           export HOME=/home/agent-research
           export PATH=/usr/local/bin:/usr/bin:/bin
           export PYTHONDONTWRITEBYTECODE=1
-          exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" -c sandbox_workspace_write.network_access=true --model "$MODEL" "$(cat "$TASK_REAL")"
+          exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
           RUNNER_CODEX
           sudo chown root:root /usr/local/bin/trading-research-runner-codex
           sudo chmod 755 /usr/local/bin/trading-research-runner-codex
@@ -354,12 +354,12 @@ jobs:
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 trading-research-agent --queue /agents/research/state/deploy-smoke-queue.json next >/tmp/trader-research-next.json
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 TRADING_RESEARCH_QUEUE=/agents/research/state/deploy-smoke-queue.json TRADING_RESEARCH_LOCK=/agents/research/state/deploy-smoke-loop.lock TRADING_RESEARCH_LOOP_ONCE=1 TRADING_RESEARCH_LOOP_DISABLE_SEED=1 TRADING_RESEARCH_LOOP_DRY_RUN=1 trading-research-agent-loop >/tmp/trader-research-loop-smoke.log
           test -s /tmp/trader-research-loop-smoke.log
-          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service | grep -q '^trading-research-agent\.service'; then
-            sudo systemctl restart trading-research-agent.service
-          fi
           latest_smoke_dir=$(sudo -n -u agent-research bash -lc 'ls -td /agents/research/reports/research-pass-* | head -1')
           sudo -n -u agent-research bash -lc 'test -d /agents/research/handoff && test -w /agents/research/handoff'
           sudo -n -u agent-research bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
+          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service | grep -q '^trading-research-agent\.service'; then
+            sudo systemctl restart trading-research-agent.service
+          fi
           bash -n /usr/local/bin/trading-research-agent-loop
           bash -n /usr/local/bin/trading-research-qc-smoke
           bash -n /usr/local/bin/trading-orchestrator-tick
@@ -371,7 +371,6 @@ jobs:
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
-          grep -q -- "sandbox_workspace_write.network_access=true" /usr/local/bin/trading-research-runner-codex
           grep -q -- "approval_policy=\"never\"" /usr/local/bin/trading-research-runner-codex
           ! grep -q -- "--sandbox danger-full-access" /usr/local/bin/trading-research-agent-loop
           ! grep -q -- "/etc/trading-agents/secrets/quantconnect/env" /usr/local/bin/trading-research-agent-loop

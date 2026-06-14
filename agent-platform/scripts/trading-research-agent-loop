@@ -114,7 +114,7 @@ EOF
         trading-research-qc-smoke --json > "$RUN_DIR/qc_auth_smoke.jsonl" 2> "$RUN_DIR/qc_auth_smoke.err"
         SMOKE_RC=$?
       else
-        sudo -n -u "$RUNNER_USER" trading-research-qc-smoke --json > "$RUN_DIR/qc_auth_smoke.jsonl" 2> "$RUN_DIR/qc_auth_smoke.err"
+        sudo -n -u "$RUNNER_USER" bash -lc 'trading-research-qc-smoke --json > "$1/qc_auth_smoke.jsonl" 2> "$1/qc_auth_smoke.err"' bash "$RUN_DIR"
         SMOKE_RC=$?
       fi
       if [ "$SMOKE_RC" != "0" ]; then
