@@ -106,14 +106,19 @@ ensure_user agent-coding
 ensure_user agent-review
 ensure_user agent-validator
 ensure_user agent-research
+ensure_user agent-research-runner
 # Orchestrator needs group access only for cleanup/traversal of coding/review workspaces.
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
 usermod -aG agent-review agent-orchestrator
+# agent-research stages handoff files for the isolated runner; it needs
+# membership in the runner group to chgrp files without gaining runner secrets.
+usermod -aG agent-research-runner agent-research
 # Lean workspaces are a platform capability across research, coding, review,
 # and validator roles. This group grants access only to shared project/artifact
 # directories; raw QuantConnect credentials remain scoped separately below.
 usermod -aG agent-lean agent-research
+usermod -aG agent-lean agent-research-runner
 usermod -aG agent-lean agent-coding
 usermod -aG agent-lean agent-review
 usermod -aG agent-lean agent-validator
@@ -148,9 +153,9 @@ install_dir agent-research agent-research 750 /agents/research/state
 install_dir agent-research agent-research 750 /agents/research/logs
 install_dir agent-research agent-research 750 /agents/research/reports
 install_dir agent-research agent-research 750 /agents/research/lean-workspace
-install_dir agent-research agent-research 750 /agents/research/handoff
 chown -R agent-research:agent-research /agents/research
 chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
+install_dir agent-research agent-research-runner 750 /agents/research/handoff
 
 install_dir agent-validator agent-validator 750 /agents/validator
 install_dir agent-validator agent-validator 750 /agents/validator/state
@@ -165,7 +170,7 @@ configure_shared_collab_dir /agents/shared/research-artifacts
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 755 /etc/trading-agents
 install_dir root root 711 /etc/trading-agents/secrets
-for role in orchestrator coding review validator research; do
+for role in orchestrator coding review validator research research-runner; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
 install_dir root agent-research 750 /etc/trading-agents/secrets/research
@@ -188,6 +193,14 @@ install -o root -g root -m 755 "${TOOLS_DIR}/trading-dispatch-coding-agent-stub"
 log "installing research loop scripts"
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-broker" /usr/local/bin/trading-research-qc-broker
+
+
+log "preparing isolated research runner Codex auth directory"
+install_dir agent-research-runner agent-research-runner 700 /home/agent-research-runner/.codex
+if [[ -s /home/agent-research/.codex/auth.json && ! -s /home/agent-research-runner/.codex/auth.json ]]; then
+  install -o agent-research-runner -g agent-research-runner -m 600 /home/agent-research/.codex/auth.json /home/agent-research-runner/.codex/auth.json
+fi
 
 log "installing sudoers rules"
 cat > /etc/sudoers.d/trading-agent-orchestrator-dispatch <<'SUDOERS'
@@ -236,15 +249,25 @@ case "$OUT_REAL" in
   *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
 esac
 cd "$OUT_REAL"
-export HOME=/home/agent-research
+export HOME=/home/agent-research-runner
 export PATH=/usr/local/bin:/usr/bin:/bin
 export PYTHONDONTWRITEBYTECODE=1
+umask 0007
+if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
+  echo "ERROR: runner user can read QuantConnect secrets" >&2
+  exit 71
+fi
 exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
 RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
-rm -f /etc/sudoers.d/trading-agent-research-runner
+cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
+# Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
+agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+SUDOERS_RUNNER
+chmod 440 /etc/sudoers.d/trading-agent-research-runner
+visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
 
 log "creating placeholder config files if missing"
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
