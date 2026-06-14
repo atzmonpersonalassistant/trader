@@ -396,6 +396,10 @@ jobs:
           grep -q "QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN" /usr/local/bin/trading-research-qc-broker
           grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-agent-loop
           grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-qc-broker
+          grep -q "surface_checks" /usr/local/bin/trading-research-qc-broker
+          grep -q "quantconnect_python_runtime_missing" /usr/local/bin/trading-research-qc-broker
+          grep -q "docker_missing" /usr/local/bin/trading-research-qc-broker
+          grep -q "cost_credit_guardrail_required" /usr/local/bin/trading-research-qc-broker
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
