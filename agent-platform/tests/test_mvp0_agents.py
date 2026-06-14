@@ -519,7 +519,7 @@ class MVP0AgentTests(unittest.TestCase):
         broker_text = Path("agent-platform/scripts/trading-research-qc-broker").read_text()
         subprocess.run(["bash", "-n", "agent-platform/scripts/trading-research-qc-broker"], check=True)
         self.assertIn("QC_BROKER_PREFLIGHT_OK", broker_text)
-        self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", broker_text)
+        self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DIAGNOSTIC", broker_text)
         self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN", broker_text)
         self.assertIn("qc_research_artifact_manifest.json", broker_text)
         self.assertIn("qc_option_history_probe.py", broker_text)
@@ -544,13 +544,24 @@ class MVP0AgentTests(unittest.TestCase):
         text = (ROOT / "agent-platform/scripts/trading-research-qc-broker").read_text()
         self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN", text)
         self.assertIn("--dry-run is only supported for research-artifact", text)
-        self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
-        self.assertIn('"status": "blocked"', text)
+        self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DIAGNOSTIC", text)
+        self.assertIn('"status": "diagnostic_artifact"', text)
+        self.assertIn('"extraction_status": "not_executed_in_local_broker"', text)
         self.assertIn('"required_next_artifact": "qc_option_history_extract.json"', text)
-        self.assertIn("Do not treat this as extracted market data", text)
-        self.assertIn("did not execute authenticated option-chain/history extraction", text)
-        self.assertIn("exit 78", text)
+        self.assertIn('"capability_gap"', text)
+        self.assertIn("Do not treat it as extracted market data", text)
+        self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_OK", text)
+        self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
+
+    def test_research_loop_continues_after_diagnostic_artifact(self):
+        text = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
+        self.assertIn("trading-research-qc-broker preflight", text)
+        self.assertIn("trading-research-qc-broker research-artifact", text)
+        self.assertIn('sudo -n -u "$RUNNER_USER" /usr/local/bin/trading-research-runner-codex', text)
+        self.assertIn("# QC broker preflight failed", text)
+        self.assertNotIn("# QC broker artifact step blocked", text)
+        self.assertNotIn("broker could not produce extracted option-chain/history data", text)
 
     def test_research_qc_smoke_checks_auth_without_secret_output(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-smoke"
