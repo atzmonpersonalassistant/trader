@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+export HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research}
+export PATH=/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+
+QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
+LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
+REPORT_JSON=0
+if [[ "${1:-}" == "--json" ]]; then
+  REPORT_JSON=1
+elif [[ "$#" -gt 0 ]]; then
+  echo "usage: trading-research-qc-smoke [--json]" >&2
+  exit 64
+fi
+
+status() {
+  local key="$1"
+  local value="$2"
+  if [[ "$REPORT_JSON" == "1" ]]; then
+    printf '{"check":"%s","ok":%s}\n' "$key" "$value"
+  fi
+}
+
+require_env() {
+  local key="$1"
+  if [[ -z "${!key:-}" ]]; then
+    echo "ERROR: required QuantConnect env variable is missing: $key" >&2
+    exit 1
+  fi
+}
+
+if [[ ! -r "$QC_ENV" ]]; then
+  echo "ERROR: QuantConnect env file is not readable" >&2
+  exit 1
+fi
+if [[ ! -d "$HOME" || ! -w "$HOME" ]]; then
+  echo "ERROR: agent-research HOME is not writable" >&2
+  exit 1
+fi
+
+if ! getent hosts www.quantconnect.com >/dev/null; then
+  echo "ERROR: QuantConnect DNS resolution failed" >&2
+  exit 1
+fi
+status dns true
+python3 - <<'PY'
+import urllib.error
+import urllib.request
+
+for url in ("https://www.quantconnect.com", "https://www.quantconnect.com/api/v2/"):
+    request = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status >= 500:
+                raise SystemExit(f"{url} returned {response.status}")
+    except urllib.error.HTTPError as exc:
+        if exc.code >= 500:
+            raise SystemExit(f"{url} returned {exc.code}") from exc
+PY
+status https true
+
+set -a
+# shellcheck disable=SC1090
+. "$QC_ENV"
+set +a
+
+require_env QUANTCONNECT_USER_ID
+require_env QUANTCONNECT_API_TOKEN
+status env true
+
+if ! command -v lean >/dev/null 2>&1; then
+  echo "ERROR: Lean CLI is not installed or not on PATH" >&2
+  exit 1
+fi
+mkdir -p "$LEAN_WORKSPACE"
+cd "$LEAN_WORKSPACE"
+login_log=$(mktemp)
+whoami_log=$(mktemp)
+trap 'rm -f "$login_log" "$whoami_log"' EXIT
+if ! printf "%s\n" "$QUANTCONNECT_API_TOKEN" | /usr/bin/timeout 60s lean login --user-id "$QUANTCONNECT_USER_ID" >"$login_log" 2>&1; then
+  echo "ERROR: lean login failed" >&2
+  exit 1
+fi
+if ! /usr/bin/timeout 60s lean whoami >"$whoami_log" 2>&1; then
+  echo "ERROR: lean whoami failed" >&2
+  exit 1
+fi
+unset QUANTCONNECT_USER_ID QUANTCONNECT_API_TOKEN
+if [[ "$REPORT_JSON" == "1" ]]; then
+  printf '{"check":"lean_whoami","ok":true}\n'
+  printf '{"ok":true,"result":"QC_AUTH_OK"}\n'
+else
+  echo QC_AUTH_OK
+fi

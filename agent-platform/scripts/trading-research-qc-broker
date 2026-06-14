@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+export HOME=${TRADING_RESEARCH_RUNNER_HOME:-/home/agent-research}
+export PATH=/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+
+QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
+LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
+MODE=${1:-}
+RUN_DIR=${2:-}
+CANDIDATE_JSON=${3:-}
+
+usage() {
+  echo "usage: trading-research-qc-broker preflight RUN_DIR CANDIDATE_JSON" >&2
+}
+
+if [[ "$MODE" != "preflight" || -z "$RUN_DIR" || -z "$CANDIDATE_JSON" || $# -ne 3 ]]; then
+  usage
+  exit 64
+fi
+
+case "$RUN_DIR" in
+  /agents/research/reports/research-pass-*) ;;
+  *) echo "ERROR: run dir must be an approved research-pass directory" >&2; exit 67 ;;
+esac
+if [[ -L "$RUN_DIR" || ! -d "$RUN_DIR" || ! -w "$RUN_DIR" ]]; then
+  echo "ERROR: run dir is not usable" >&2
+  exit 66
+fi
+if [[ -L "$CANDIDATE_JSON" || ! -r "$CANDIDATE_JSON" ]]; then
+  echo "ERROR: candidate json is not readable" >&2
+  exit 66
+fi
+RUN_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$RUN_DIR")"
+CANDIDATE_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$CANDIDATE_JSON")"
+case "$RUN_REAL" in
+  /agents/research/reports/research-pass-*) ;;
+  *) echo "ERROR: resolved run dir escaped reports" >&2; exit 69 ;;
+esac
+case "$CANDIDATE_REAL" in
+  "$RUN_REAL"/candidate.json) ;;
+  *) echo "ERROR: candidate json must belong to run dir" >&2; exit 68 ;;
+esac
+
+OUT_JSON="$RUN_REAL/qc_broker_artifacts.json"
+OUT_MD="$RUN_REAL/qc_broker_summary.md"
+TMP_JSON="$OUT_JSON.tmp.$$"
+TMP_MD="$OUT_MD.tmp.$$"
+LOGIN_LOG="$(mktemp)"
+WHOAMI_LOG="$(mktemp)"
+trap 'rm -f "$LOGIN_LOG" "$WHOAMI_LOG" "$TMP_JSON" "$TMP_MD"' EXIT
+
+python3 - "$CANDIDATE_REAL" > "$RUN_REAL/qc_broker_candidate_summary.json" <<'PY'
+import json, sys
+payload=json.load(open(sys.argv[1]))
+c=payload.get('candidate') or payload
+safe={
+  'id': c.get('id'),
+  'family': c.get('family'),
+  'universe': c.get('universe') or [],
+  'timeframe': c.get('timeframe'),
+  'thesis': c.get('thesis'),
+  'structure': c.get('structure'),
+}
+print(json.dumps(safe, ensure_ascii=False, indent=2, sort_keys=True))
+PY
+
+status="ok"
+errors=()
+dns_ok=false
+https_ok=false
+env_ok=false
+lean_installed=false
+lean_login_ok=false
+lean_whoami_ok=false
+lean_whoami_redacted=""
+
+if getent hosts www.quantconnect.com >/dev/null; then
+  dns_ok=true
+else
+  status="blocked"
+  errors+=("QuantConnect DNS resolution failed")
+fi
+
+if python3 - <<'PY'
+import urllib.error, urllib.request
+for url in ("https://www.quantconnect.com", "https://www.quantconnect.com/api/v2/"):
+    req=urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            if r.status >= 500:
+                raise SystemExit(1)
+    except urllib.error.HTTPError as exc:
+        if exc.code >= 500:
+            raise SystemExit(1)
+PY
+then
+  https_ok=true
+else
+  status="blocked"
+  errors+=("QuantConnect HTTPS connectivity failed")
+fi
+
+if [[ -r "$QC_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$QC_ENV"
+  set +a
+  if [[ -n "${QUANTCONNECT_USER_ID:-}" && -n "${QUANTCONNECT_API_TOKEN:-}" ]]; then
+    env_ok=true
+  else
+    status="blocked"
+    errors+=("QuantConnect env is missing required variables")
+  fi
+else
+  status="blocked"
+  errors+=("QuantConnect env file is not readable")
+fi
+
+if command -v lean >/dev/null 2>&1; then
+  lean_installed=true
+else
+  status="blocked"
+  errors+=("Lean CLI is not installed or not on PATH")
+fi
+
+if [[ "$env_ok" == true && "$lean_installed" == true ]]; then
+  mkdir -p "$LEAN_WORKSPACE"
+  cd "$LEAN_WORKSPACE"
+  if printf "%s\n" "$QUANTCONNECT_API_TOKEN" | /usr/bin/timeout 60s lean login --user-id "$QUANTCONNECT_USER_ID" >"$LOGIN_LOG" 2>&1; then
+    lean_login_ok=true
+  else
+    status="blocked"
+    errors+=("lean login failed")
+  fi
+  if /usr/bin/timeout 60s lean whoami >"$WHOAMI_LOG" 2>&1; then
+    lean_whoami_ok=true
+    lean_whoami_redacted="$(python3 - "$WHOAMI_LOG" <<'PY'
+import re, sys
+text=open(sys.argv[1], errors='replace').read()
+text=re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '<redacted-email>', text)
+text=re.sub(r'(?i)(token|api[_-]?key|password)\s*[:=]\s*\S+', r'\1=<redacted>', text)
+print(text.strip()[:1000])
+PY
+)"
+  else
+    status="blocked"
+    errors+=("lean whoami failed")
+  fi
+fi
+unset QUANTCONNECT_USER_ID QUANTCONNECT_API_TOKEN || true
+
+python3 - "$TMP_JSON" "$status" "$dns_ok" "$https_ok" "$env_ok" "$lean_installed" "$lean_login_ok" "$lean_whoami_ok" "$lean_whoami_redacted" "${errors[@]}" <<'PY'
+import json, sys, time
+path=sys.argv[1]
+status=sys.argv[2]
+keys=['dns_ok','https_ok','env_ok','lean_installed','lean_login_ok','lean_whoami_ok']
+vals={k: (sys.argv[i+3]=='true') for i,k in enumerate(keys)}
+whoami=sys.argv[9]
+errors=sys.argv[10:]
+payload={
+  'type':'qc_broker_preflight',
+  'ok': status == 'ok',
+  'status': status,
+  'generated_at_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+  'checks': vals,
+  'lean_whoami_redacted': whoami,
+  'errors': errors,
+  'security_boundary': {
+    'raw_quantconnect_credentials_exposed_to_codex': False,
+    'codex_network_required': False,
+    'broker_role': 'authenticated QC/Lean preflight and artifact generation only',
+  },
+  'next_research_instruction': 'Use this artifact to determine QC auth/connectivity status. Do not claim raw credentials are available. If ok=true, proceed with QC-compatible notebook/backtest artifacts; if deeper online QC calls are required, request/define a broker artifact rather than reading secrets.',
+}
+open(path,'w').write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+PY
+
+python3 - "$TMP_JSON" "$TMP_MD" <<'PY'
+import json, sys
+p=json.load(open(sys.argv[1]))
+lines=['# QC broker preflight', '', f"Status: `{p['status']}`", '', '## Checks']
+for k,v in p['checks'].items():
+    lines.append(f"- {k}: {'OK' if v else 'FAIL'}")
+if p.get('lean_whoami_redacted'):
+    lines += ['', '## Lean whoami redacted', '', '```', p['lean_whoami_redacted'], '```']
+if p.get('errors'):
+    lines += ['', '## Errors'] + [f"- {e}" for e in p['errors']]
+lines += ['', 'Raw QC credentials were not written to this artifact.']
+open(sys.argv[2],'w').write('\n'.join(lines)+'\n')
+PY
+
+mv "$TMP_JSON" "$OUT_JSON"
+mv "$TMP_MD" "$OUT_MD"
+chmod 640 "$OUT_JSON" "$OUT_MD" "$RUN_REAL/qc_broker_candidate_summary.json"
+
+if [[ "$status" == "ok" ]]; then
+  echo QC_BROKER_PREFLIGHT_OK
+  exit 0
+fi
+echo QC_BROKER_PREFLIGHT_BLOCKED >&2
+exit 1

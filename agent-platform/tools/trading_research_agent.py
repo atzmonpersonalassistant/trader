@@ -33,7 +33,7 @@ DEFAULT_QUEUE_PATH = DEFAULT_STATE_DIR / "strategy-queue.json"
 DEFAULT_IDEA_CONTEXT_LIMIT = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_LIMIT", "8"))
 DEFAULT_IDEA_CONTEXT_CHARS = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_CHARS", "1200"))
 DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research/handoff"))
-DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research")
+DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research-runner")
 
 
 
