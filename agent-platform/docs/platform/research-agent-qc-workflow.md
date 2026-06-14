@@ -22,6 +22,7 @@ The research agent should treat QuantConnect as the primary research/backtest pl
      - missing Greeks/IV fields,
      - trade counts by symbol/year/regime.
    - If diagnostics cannot be retrieved, mark the research run as technically blocked instead of pretending the hypothesis was validated or rejected.
+   - The broker's bounded option-history probe writes `qc_option_history_extract.json` only after a successful QC/LEAN-compatible execution. Otherwise it writes `qc_research_execution_diagnostic.json` with explicit surface checks for auth, Lean CLI, local `clr`/`QuantConnect` imports, Docker availability, non-interactive research support, and cloud/API credit guardrails.
 
 4. **Use QC primitives deeply**
    - Option universe / option chains.

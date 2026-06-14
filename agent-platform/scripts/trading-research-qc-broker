@@ -76,10 +76,12 @@ if [[ "$MODE" == "research-artifact" || "$MODE" == "execute-research-artifact" ]
   EXEC_DIR=""
   EXEC_STDOUT=""
   EXEC_STDERR=""
+  PY_IMPORT_STDERR=""
+  DOCKER_LOG=""
   LEAN_HELP_LOG=""
   LEAN_WHOAMI_LOG=""
   LEAN_LOGIN_LOG=""
-  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
+  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
 
   python3 - "$CANDIDATE_REAL" "$TMP_JSON" "$TMP_MD" "$TMP_PY" <<'PY'
 import json
@@ -239,13 +241,18 @@ PY
   EXEC_DIR="$(mktemp -d "$LEAN_WORKSPACE/qc-research-artifact.XXXXXX")"
   EXEC_STDOUT="$(mktemp)"
   EXEC_STDERR="$(mktemp)"
+  PY_IMPORT_STDERR="$(mktemp)"
+  DOCKER_LOG="$(mktemp)"
   LEAN_HELP_LOG="$(mktemp)"
   LEAN_WHOAMI_LOG="$(mktemp)"
   LEAN_LOGIN_LOG="$(mktemp)"
   cp "$OUT_PY" "$EXEC_DIR/qc_option_history_probe.py"
 
   auth_status="not_checked"
+  lean_status="lean_missing"
+  lean_research_status="not_checked"
   if command -v lean >/dev/null 2>&1; then
+    lean_status="present"
     if [[ -r "$QC_ENV" ]]; then
       set -a
       # shellcheck disable=SC1090
@@ -262,14 +269,30 @@ PY
       auth_status="auth_failure"
     fi
     /usr/bin/timeout 20s lean --help >"$LEAN_HELP_LOG" 2>&1 || true
+    if grep -Eiq "(research|notebook|quantbook)" "$LEAN_HELP_LOG"; then
+      lean_research_status="detected_but_noninteractive_runner_not_configured"
+    else
+      lean_research_status="non_interactive_research_execution_unsupported"
+    fi
   else
     auth_status="lean_cli_missing"
+    lean_research_status="lean_missing"
   fi
 
   execution_status="extract_unavailable"
   execution_surface="local_python_quantbook_script"
   execution_rc=127
+  local_python_runtime_status="not_checked"
   if command -v python3 >/dev/null 2>&1; then
+    if /usr/bin/timeout 20s python3 - <<'PY' 2>"$PY_IMPORT_STDERR"
+import clr  # noqa: F401
+import QuantConnect  # noqa: F401
+PY
+    then
+      local_python_runtime_status="quantconnect_python_runtime_present"
+    else
+      local_python_runtime_status="quantconnect_python_runtime_missing"
+    fi
     set +e
     (cd "$EXEC_DIR" && /usr/bin/timeout 120s python3 qc_option_history_probe.py >"$EXEC_STDOUT" 2>"$EXEC_STDERR")
     execution_rc=$?
@@ -297,12 +320,81 @@ PY
       mv "$TMP_EXTRACT" "$OUT_EXTRACT"
       execution_status="extract_written"
     fi
+  else
+    local_python_runtime_status="python_missing"
+  fi
+
+  docker_status="not_checked"
+  docker_image=""
+  if [[ "$execution_status" != "extract_written" ]]; then
+    if command -v docker >/dev/null 2>&1; then
+      if /usr/bin/timeout 20s docker info >"$DOCKER_LOG" 2>&1; then
+        docker_status="running_no_quantconnect_lean_image"
+        docker_image="$(/usr/bin/timeout 20s docker image ls --format '{{.Repository}}:{{.Tag}}' 2>>"$DOCKER_LOG" | grep -E '(^|/)quantconnect/(lean|research|foundation)|lean.*quantconnect' | head -n 1 || true)"
+        if [[ -n "$docker_image" ]]; then
+          docker_status="attempted_existing_quantconnect_lean_image"
+          execution_surface="lean_docker_quantconnect_python_runtime"
+          set +e
+          /usr/bin/timeout 180s docker run --rm \
+            -v "$EXEC_DIR:/work" \
+            -w /work \
+            --network none \
+            "$docker_image" \
+            python qc_option_history_probe.py >"$EXEC_STDOUT" 2>>"$EXEC_STDERR"
+          execution_rc=$?
+          set -e
+          if [[ "$execution_rc" == "0" && -s "$EXEC_DIR/qc_option_history_extract.json" ]]; then
+            python3 - "$EXEC_DIR/qc_option_history_extract.json" "$TMP_EXTRACT" <<'PY'
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+payload = json.load(open(src, encoding="utf-8"))
+if payload.get("type") != "qc_option_history_extract":
+    raise SystemExit("unexpected extract type")
+rows = payload.get("option_contract_rows") or []
+underlyings = payload.get("underlyings") or []
+limits = payload.get("limits") or {}
+if len(underlyings) > 3:
+    raise SystemExit("extract exceeds max underlyings")
+if int(limits.get("history_lookback_days", 0)) > 30:
+    raise SystemExit("extract exceeds history lookback")
+if int(limits.get("expiry_window_days", 0)) > 90:
+    raise SystemExit("extract exceeds expiry window")
+if len(rows) > max(1, len(underlyings)) * 200:
+    raise SystemExit("extract exceeds contract row limit")
+open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+PY
+            mv "$TMP_EXTRACT" "$OUT_EXTRACT"
+            execution_status="extract_written"
+          fi
+        fi
+      else
+        docker_status="docker_not_running"
+      fi
+    else
+      docker_status="docker_missing"
+    fi
   fi
 
   if [[ "$execution_status" != "extract_written" ]]; then
-    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
+    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
 import json, re, sys, time
-path, auth_status, surface, rc, stdout_path, stderr_path, help_path, whoami_path = sys.argv[1:]
+(
+    path,
+    auth_status,
+    lean_status,
+    lean_research_status,
+    python_runtime_status,
+    docker_status,
+    docker_image,
+    surface,
+    rc,
+    stdout_path,
+    stderr_path,
+    py_import_stderr_path,
+    docker_log_path,
+    help_path,
+    whoami_path,
+) = sys.argv[1:]
 
 def read_limited(p, limit=2000):
     try:
@@ -320,11 +412,20 @@ if auth_status == "auth_failure":
     status = "auth_failure"
     reason = "Lean CLI authentication check failed for the broker role; no raw credentials were exposed to the runner."
 elif auth_status == "lean_cli_missing":
-    status = "lean_cli_missing"
+    status = "lean_missing"
     reason = "Lean CLI is not installed or not on PATH for the broker role, so no authenticated QC Research execution surface is available."
+elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
+    status = "quantconnect_python_runtime_missing"
+    reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
+elif docker_status in ("docker_missing", "docker_not_running"):
+    status = docker_status
+    reason = "Docker is required for the next local LEAN/QC runtime fallback, but it is missing or unavailable for the broker role."
+elif lean_research_status == "non_interactive_research_execution_unsupported":
+    status = "non_interactive_research_execution_unsupported"
+    reason = "Lean CLI is authenticated, but this installed CLI did not advertise a non-interactive research/notebook execution command."
 else:
-    status = "execution_surface_unavailable"
-    reason = "The broker attempted the bounded QuantBook script through local Python, but this environment did not expose a non-interactive QuantBook/QC Research runtime that produced qc_option_history_extract.json."
+    status = "cost_credit_guardrail_required"
+    reason = "Local Lean/Python/Docker surfaces did not produce an extract. QuantConnect cloud/API execution was not submitted because it may consume credits or cloud resources without an explicit bounded approval path."
 
 payload = {
     "type": "qc_research_execution_diagnostic",
@@ -335,12 +436,22 @@ payload = {
     "attempted_surface": surface,
     "attempted_command": "timeout 120s python3 qc_option_history_probe.py",
     "exit_code": int(rc),
+    "surface_checks": {
+        "lean_cli": lean_status,
+        "lean_research_noninteractive": lean_research_status,
+        "local_python_quantconnect_runtime": python_runtime_status,
+        "docker": docker_status,
+        "docker_image": docker_image or None,
+        "cloud_or_api_research": "cost_credit_guardrail_required",
+    },
     "extract_artifact": "qc_option_history_extract.json",
     "extract_written": False,
     "reason": reason,
     "lean_cli_research_terms_detected": known_research_terms,
     "lean_cli_help_redacted_excerpt": lean_help[:2000],
     "lean_whoami_redacted_excerpt": read_limited(whoami_path, 1000),
+    "python_import_stderr_redacted_excerpt": read_limited(py_import_stderr_path),
+    "docker_redacted_excerpt": read_limited(docker_log_path),
     "stdout_redacted_excerpt": read_limited(stdout_path),
     "stderr_redacted_excerpt": read_limited(stderr_path),
     "bounded_limits": {

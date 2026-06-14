@@ -324,7 +324,7 @@ Next manual steps:
 1. Install real GitHub App private keys under /etc/trading-agents/secrets/*/private-key.pem.
 2. Replace /etc/trading-agents/github-apps.json placeholder IDs with real App/installation IDs.
 3. Install Codex/OpenAI auth for agent-coding and agent-review if those roles run Codex on the VPS.
-4. Confirm Lean CLI is available for agent-research/agent-validator and run Lean login from the QuantConnect env file only for roles with QuantConnect env access.
+4. Confirm Lean CLI is available for agent-research/agent-validator and run Lean login from the QuantConnect env file only for roles with QuantConnect env access. Docker is optional, but if local LEAN/QC research containers are expected, install/start Docker and pre-pull the approved QuantConnect/LEAN image under operator control.
 5. Update GitHub Actions secrets: VPS_HOST, VPS_USER, VPS_SSH_PRIVATE_KEY, VPS_SSH_HOST_KEY.
 6. Run the vps-deploy workflow and then the validation checklist in server-migration.md.
 NEXT
