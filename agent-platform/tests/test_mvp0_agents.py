@@ -735,10 +735,12 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertTrue(coding.is_allowed_mvp0_change("agent-platform/tools/trading_research_agent.py"))
         self.assertTrue(coding.is_allowed_mvp0_change("agent-platform/scripts/trading-research-agent-loop"))
         self.assertTrue(coding.is_allowed_mvp0_change("agent-platform/scripts/trading-research-qc-broker"))
+        self.assertTrue(coding.is_allowed_mvp0_change(".github/workflows/vps-deploy.yml"))
         self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
         self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/tools/trading-dispatch-review-agent"))
         self.assertFalse(coding.is_allowed_mvp0_change("agent-platform/scripts/trading-orchestrator-tick"))
-        self.assertFalse(coding.is_allowed_mvp0_change(".github/workflows/vps-deploy.yml"))
+        self.assertTrue(coding.is_allowed_mvp0_change(".github/workflows/vps-deploy.yml"))
+        self.assertFalse(coding.is_allowed_mvp0_change(".github/workflows/other.yml"))
         self.assertFalse(coding.is_allowed_mvp0_change("/tmp/escape.py"))
 
     def test_orchestrator_dispatch_missing_reviews_parser_and_tick_are_wired(self):
@@ -1225,6 +1227,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertTrue(agent.is_allowed_mvp0_change("agent-platform/tools/trading_research_agent.py"))
         self.assertTrue(agent.is_allowed_mvp0_change("agent-platform/scripts/trading-research-agent-loop"))
         self.assertTrue(agent.is_allowed_mvp0_change("agent-platform/scripts/trading-research-qc-broker"))
+        self.assertTrue(agent.is_allowed_mvp0_change(".github/workflows/vps-deploy.yml"))
         self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading_orchestrator.py"))
         self.assertFalse(agent.is_allowed_mvp0_change("agent-platform/tools/trading-dispatch-review-agent"))
         self.assertFalse(agent.is_allowed_mvp0_change(".env"))
