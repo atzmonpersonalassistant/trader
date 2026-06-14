@@ -608,6 +608,38 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
 
+
+
+    def test_research_qc_run_is_manifest_guarded(self):
+        runner = ROOT / "agent-platform/scripts/trading-research-qc-run"
+        extractor = ROOT / "agent-platform/scripts/trading-research-qc-api-extract"
+        subprocess.run([sys.executable, "-m", "py_compile", str(runner)], check=True)
+        subprocess.run(["bash", "-n", str(extractor)], check=True)
+        text = runner.read_text()
+        self.assertIn("manifest must be a JSON object", text)
+        self.assertIn("asset_class", text)
+        self.assertIn("options-only", text)
+        self.assertIn("naked short options are forbidden", text)
+        self.assertIn("one_backtest_at_a_time", text)
+        self.assertIn("set_runtime_statistic", text)
+        self.assertIn("candidate_status", text)
+        self.assertIn("backtests/read", extractor.read_text())
+
+    def test_research_qc_cloud_run_contract_is_bounded(self):
+        script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"
+        text = script.read_text()
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        self.assertIn("lean cloud push --project", text)
+        self.assertIn("lean cloud backtest", text)
+        self.assertIn("QC_PROJECT_REF", text)
+        self.assertIn("run mode requires explicit --submit", text)
+        self.assertIn("max 3 symbols", text)
+        self.assertIn("one cloud backtest per invocation", text)
+        self.assertIn("live_trading", text)
+        self.assertNotIn("lean cloud live", text)
+        self.assertNotIn("--open", text)
+        self.assertIn("TRADER_QC_EVIDENCE_JSON", text)
+
     def test_research_qc_docker_wrapper_contract_is_narrow(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-docker-run"
         text = script.read_text()
