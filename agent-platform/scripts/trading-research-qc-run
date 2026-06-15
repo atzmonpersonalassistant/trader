@@ -1124,7 +1124,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     for idx, variation in enumerate(variations, start=1):
         var_path = sweep_dir / f"manifest-{idx}.json"
         var_path.write_text(json.dumps(variation, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
-        raw_run_id = f"qc-run-{sweep_id}-{variation['hypothesis']['id']}"
+        raw_run_id = f"qc-run-{sweep_id}-v{idx}-{variation['hypothesis']['id']}"
         run_id = sanitize_run_id(raw_run_id)
         prep = subprocess.run([sys.executable, __file__, "prepare", str(var_path), "--run-id", run_id], text=True, capture_output=True)
         item={"idx": idx, "manifest": str(var_path), "run_id": run_id, "prepare_returncode": prep.returncode, "prepare_stdout": prep.stdout[-4000:], "prepare_stderr": prep.stderr[-4000:]}
