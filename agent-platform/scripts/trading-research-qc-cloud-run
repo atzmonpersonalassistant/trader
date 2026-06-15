@@ -257,16 +257,27 @@ set +a
 : "${QUANTCONNECT_API_TOKEN:?missing QUANTCONNECT_API_TOKEN}"
 
 cd "$LEAN_WORKSPACE"
+QC_BACKTEST_TIMEOUT_SECONDS=${TRADING_QC_BACKTEST_TIMEOUT_SECONDS:-900}
+if ! [[ "$QC_BACKTEST_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$QC_BACKTEST_TIMEOUT_SECONDS" -lt 60 ]]; then
+  echo "ERROR: TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be an integer >= 60" >&2
+  exit 64
+fi
 # Ensure Lean is authenticated. Do not print token.
 printf '%s\n' "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/dev/null 2>>"$OUT_STDERR" || true
 set +e
-lean cloud push --project "$PROJECT_DIR" >"$OUT_STDOUT" 2>"$OUT_STDERR"
+timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud push --project "$PROJECT_DIR" >"$OUT_STDOUT" 2>"$OUT_STDERR"
 push_rc=$?
 if [[ "$push_rc" -eq 0 ]]; then
-  lean cloud backtest "$QC_PROJECT_REF" --push --name "${RUN_ID}-bounded-strategy-evidence" >>"$OUT_STDOUT" 2>>"$OUT_STDERR"
+  timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud backtest "$QC_PROJECT_REF" --push --name "${RUN_ID}-bounded-strategy-evidence" >>"$OUT_STDOUT" 2>>"$OUT_STDERR"
   backtest_rc=$?
 else
   backtest_rc=99
+fi
+if [[ "$push_rc" -eq 124 ]]; then
+  echo "lean cloud push timed out after ${QC_BACKTEST_TIMEOUT_SECONDS}s" >>"$OUT_STDERR"
+fi
+if [[ "$backtest_rc" -eq 124 ]]; then
+  echo "lean cloud backtest timed out after ${QC_BACKTEST_TIMEOUT_SECONDS}s" >>"$OUT_STDERR"
 fi
 set -e
 sanitize_log "$OUT_STDOUT" > "$OUT_STDOUT.redacted"

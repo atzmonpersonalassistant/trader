@@ -639,6 +639,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("run mode requires explicit --submit", text)
         self.assertIn("max 3 symbols", text)
         self.assertIn("one cloud backtest per invocation", text)
+        self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
+        self.assertIn('timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud backtest', text)
         self.assertIn("live_trading", text)
         self.assertNotIn("lean cloud live", text)
         self.assertNotIn("--open", text)
