@@ -624,6 +624,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
+        self.assertIn("_archive_project(project_dir, run_dir / \"qc_cloud_project.tgz\")", text)
+        self.assertIn("Status: `{status}`", text)
         self.assertIn('run_id = f"qc-run-{sweep_id}-{variation[\'hypothesis\'][\'id\']}"', text)
         self.assertIn("set_runtime_statistic", text)
         self.assertIn("candidate_status", text)

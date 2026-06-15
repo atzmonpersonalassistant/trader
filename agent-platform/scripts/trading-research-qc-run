@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import copy
+import tarfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -733,6 +734,12 @@ class TraderBullCallSpreadManifest(QCAlgorithm):
         self.set_runtime_statistic("trader.candidate_gate", "requires_oos_walk_forward_pricing_robustness")
 '''
 
+
+def _archive_project(project_dir: Path, archive_path: Path) -> None:
+    with tarfile.open(archive_path, "w:gz") as tf:
+        tf.add(project_dir, arcname=project_dir.name)
+    archive_path.chmod(0o640)
+
 def parse_backtest_ids(text: str) -> tuple[int | None, str | None]:
     project = None
     backtest = None
@@ -837,6 +844,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
     project_dir = Path(cloud_manifest["project_dir"])
     (project_dir / "main.py").write_text(generate_qc_algorithm(manifest), encoding="utf-8")
+    _archive_project(project_dir, run_dir / "qc_cloud_project.tgz")
     result = {"ok": True, "run_dir": str(run_dir), "project_ref": cloud_manifest.get("project_ref"), "warnings": warnings}
     (run_dir / "qc_run_prepare.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -943,6 +951,26 @@ def cmd_run(args: argparse.Namespace) -> int:
             (run_dir / "verdict.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             result["verdict"] = verdict["status"]
     (run_dir / "qc_run_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary = run_dir / "qc_cloud_run_summary.md"
+    status = "completed" if rc == 0 else "failed"
+    verdict_status = result.get("verdict", "none")
+    summary.write_text(
+        f"# QC Cloud Run\n\n"
+        f"Status: `{status}`\n\n"
+        f"Project ID: `{project_id}`\n"
+        f"Backtest ID: `{backtest_id}`\n"
+        f"Submit rc: `{rc}`\n"
+        f"Verdict: `{verdict_status}`\n\n"
+        "Artifacts:\n"
+        "- research_manifest.json\n"
+        "- qc_cloud_project.tgz\n"
+        "- qc_cloud_backtest_stdout.log\n"
+        "- qc_cloud_backtest_stderr.log\n"
+        "- qc_backtest_extract.json\n"
+        "- verdict.json\n",
+        encoding="utf-8",
+    )
+    summary.chmod(0o640)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return rc
 
