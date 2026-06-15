@@ -143,6 +143,7 @@ class TraderCloudStrategyFinder(QCAlgorithm):
         self.trades = []
         self.signals = []
         self.chain_stats = []
+        self.latest_option_chains = {{}}
         self.stats = {{"signals":0,"entries":0,"entry_fail_no_chain":0,"entry_fail_no_spread":0,"exits":0}}
         for name in self.symbol_names:
             eq = self.add_equity(name, Resolution.HOUR)
@@ -175,10 +176,13 @@ class TraderCloudStrategyFinder(QCAlgorithm):
     def try_enter(self, symbol):
         if self.is_warming_up or self.portfolio.invested or symbol not in self.pending: return
         opt_symbol=self.option_by_equity[symbol]
-        chain=self.option_chain(opt_symbol, flatten=True)
-        if chain is None or len(chain.contracts)==0:
+        chain=self.latest_option_chains.get(opt_symbol)
+        if chain is None:
             self.stats["entry_fail_no_chain"] += 1; self.pending.pop(symbol, None); return
-        contracts=[c for c in chain if c.right == OptionRight.CALL and c.expiry.date() > self.time.date()]
+        contracts = list(chain.contracts.values()) if hasattr(chain.contracts, "values") else list(chain.contracts)
+        if not contracts:
+            self.stats["entry_fail_no_chain"] += 1; self.pending.pop(symbol, None); return
+        contracts=[c for c in contracts if c.right == OptionRight.CALL and c.expiry.date() > self.time.date()]
         if not contracts:
             self.stats["entry_fail_no_spread"] += 1; self.pending.pop(symbol, None); return
         contracts=sorted(contracts, key=lambda c: (abs((c.expiry.date()-self.time.date()).days-45), abs((float(c.greeks.delta) if c.greeks and c.greeks.delta is not None else 0.4)-0.45)))
@@ -206,7 +210,8 @@ class TraderCloudStrategyFinder(QCAlgorithm):
         self.pending.pop(symbol, None)
 
     def on_data(self, data):
-        pass
+        for chain in data.option_chains.values():
+            self.latest_option_chains[chain.symbol] = chain
 
     def on_end_of_algorithm(self):
         result={{

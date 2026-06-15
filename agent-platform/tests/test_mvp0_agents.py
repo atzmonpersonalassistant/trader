@@ -737,6 +737,9 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("lean cloud live", text)
         self.assertNotIn("--open", text)
         self.assertIn("TRADER_QC_EVIDENCE_JSON", text)
+        self.assertIn("self.latest_option_chains", text)
+        self.assertIn("data.option_chains.values()", text)
+        self.assertNotIn("self.option_chain(opt_symbol, flatten=True)", text)
 
     def test_research_qc_docker_wrapper_contract_is_narrow(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-docker-run"
