@@ -843,6 +843,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("lean whoami", text)
         self.assertIn("trading-research-qc-broker preflight", text)
         self.assertIn("trading-research-qc-broker research-artifact", text)
+        self.assertIn("python3 -m py_compile /usr/local/bin/trading-research-qc-run", text)
+        self.assertNotIn("bash -n /usr/local/bin/trading-research-qc-run", text)
         self.assertIn("trader-research-qc-artifact-dry-run.txt", text)
         self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN", text)
         self.assertIn("qc_research_execution_diagnostic.json", text)
