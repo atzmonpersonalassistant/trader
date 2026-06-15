@@ -628,6 +628,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("validation.start must be YYYY-MM-DD", text)
         self.assertIn("payoff_objective.objective_type is required", text)
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60", text)
+        self.assertIn("option_filters.dte_min must be <= dte_max", text)
+        self.assertIn("max(guard_sleep, int(args.sleep_seconds))", text)
         self.assertIn("one_backtest_at_a_time", text)
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
@@ -669,6 +671,7 @@ class MVP0AgentTests(unittest.TestCase):
             "validation": {"start": "2018-01-01", "end": "2025-12-31", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 3},
             "guards": {"no_live_trading": True, "no_naked_shorts": True, "one_backtest_at_a_time": True, "rate_limit_seconds": 60},
             "payoff_objective": {"target_multiple_per_year": 2, "objective_type": "balanced_positive_expectancy", "must_not_override_evidence": True},
+            "option_filters": {"dte_min": 14, "dte_max": 45, "delta_min": -0.30, "delta_max": -0.10, "max_bid_ask_pct": 0.35, "min_open_interest": 10, "min_volume": 0},
             "pivot_policy": {"must_document_deviation": True},
         }
         self.assertEqual(module.validate_manifest(valid_manifest), [])
@@ -684,6 +687,15 @@ class MVP0AgentTests(unittest.TestCase):
         del invalid_payoff["payoff_objective"]["objective_type"]
         with self.assertRaisesRegex(ValueError, "payoff_objective.objective_type is required"):
             module.validate_manifest(invalid_payoff)
+        invalid_filters = json.loads(json.dumps(valid_manifest))
+        invalid_filters["option_filters"]["dte_min"] = 90
+        invalid_filters["option_filters"]["dte_max"] = 30
+        with self.assertRaisesRegex(ValueError, "option_filters.dte_min must be <= dte_max"):
+            module.validate_manifest(invalid_filters)
+        invalid_filters = json.loads(json.dumps(valid_manifest))
+        invalid_filters["option_filters"]["dte_min"] = "bad"
+        with self.assertRaisesRegex(ValueError, "option_filters.dte_min must be an integer"):
+            module.validate_manifest(invalid_filters)
         old_timeout = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS")
         try:
             os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "abc"

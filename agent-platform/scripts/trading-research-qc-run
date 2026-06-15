@@ -103,6 +103,28 @@ def validate_manifest(m: dict[str, Any]) -> list[str]:
     rate = guards.get("rate_limit_seconds")
     require(isinstance(rate, int) and rate >= 60, "rate_limit_seconds must be >= 60")
 
+    opt = m.get("option_filters") or {}
+    require(isinstance(opt, dict), "option_filters must be an object")
+    for key, minimum, maximum in [
+        ("dte_min", 0, 365),
+        ("dte_max", 1, 730),
+        ("min_open_interest", 0, None),
+        ("min_volume", 0, None),
+    ]:
+        if key in opt:
+            value = opt[key]
+            require(isinstance(value, int) and not isinstance(value, bool), f"option_filters.{key} must be an integer")
+            require(value >= minimum and (maximum is None or value <= maximum), f"option_filters.{key} out of range")
+    for key, minimum, maximum in [("delta_min", -1.0, 1.0), ("delta_max", -1.0, 1.0), ("max_bid_ask_pct", 0.0, 1.0)]:
+        if key in opt:
+            value = opt[key]
+            require(isinstance(value, (int, float)) and not isinstance(value, bool), f"option_filters.{key} must be numeric")
+            require(float(value) >= minimum and float(value) <= maximum, f"option_filters.{key} out of range")
+    if "dte_min" in opt and "dte_max" in opt:
+        require(int(opt["dte_min"]) <= int(opt["dte_max"]), "option_filters.dte_min must be <= dte_max")
+    if "delta_min" in opt and "delta_max" in opt:
+        require(float(opt["delta_min"]) <= float(opt["delta_max"]), "option_filters.delta_min must be <= delta_max")
+
     underlyings = universe.get("underlyings")
     require(isinstance(underlyings, list) and 1 <= len(underlyings) <= 3, "universe.underlyings must contain 1-3 symbols")
     for symbol in underlyings:
@@ -1162,7 +1184,8 @@ def cmd_sweep(args: argparse.Namespace) -> int:
             item.update({"run_returncode": runp.returncode, "run_stdout": runp.stdout[-4000:], "run_stderr": runp.stderr[-4000:]})
             item.update(_read_result_summary(run_dir))
             if idx < len(variations):
-                time.sleep(max(0, int(args.sleep_seconds)))
+                guard_sleep = int(manifest.get("guards", {}).get("rate_limit_seconds", 60))
+                time.sleep(max(guard_sleep, int(args.sleep_seconds)))
         elif prep.returncode == 0:
             item.update({"run_dir": str(run_dir), "prepared_only": True})
         summaries.append(item)
