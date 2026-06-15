@@ -629,6 +629,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("payoff_objective.objective_type is required", text)
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60", text)
         self.assertIn("option_filters.dte_min must be <= dte_max", text)
+        self.assertIn("template currently requires exactly one underlying", text)
         self.assertIn("max(guard_sleep, int(args.sleep_seconds))", text)
         self.assertIn("one_backtest_at_a_time", text)
         self.assertIn("_generate_bull_call_spread_algorithm", text)
@@ -687,6 +688,10 @@ class MVP0AgentTests(unittest.TestCase):
         del invalid_payoff["payoff_objective"]["objective_type"]
         with self.assertRaisesRegex(ValueError, "payoff_objective.objective_type is required"):
             module.validate_manifest(invalid_payoff)
+        multi_symbol = json.loads(json.dumps(valid_manifest))
+        multi_symbol["universe"]["underlyings"] = ["SPY", "QQQ"]
+        with self.assertRaisesRegex(ValueError, "requires exactly one underlying"):
+            module.validate_manifest(multi_symbol)
         invalid_filters = json.loads(json.dumps(valid_manifest))
         invalid_filters["option_filters"]["dte_min"] = 90
         invalid_filters["option_filters"]["dte_max"] = 30
@@ -904,7 +909,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("lean whoami", text)
         self.assertIn("trading-research-qc-broker preflight", text)
         self.assertIn("trading-research-qc-broker research-artifact", text)
-        self.assertIn("python3 -m py_compile /usr/local/bin/trading-research-qc-run", text)
+        self.assertIn("ast.parse(Path('/usr/local/bin/trading-research-qc-run').read_text", text)
+        self.assertNotIn("python3 -m py_compile /usr/local/bin/trading-research-qc-run", text)
         self.assertNotIn("bash -n /usr/local/bin/trading-research-qc-run", text)
         self.assertIn("trader-research-qc-artifact-dry-run.txt", text)
         self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN", text)

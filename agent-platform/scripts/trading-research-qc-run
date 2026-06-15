@@ -129,6 +129,8 @@ def validate_manifest(m: dict[str, Any]) -> list[str]:
     require(isinstance(underlyings, list) and 1 <= len(underlyings) <= 3, "universe.underlyings must contain 1-3 symbols")
     for symbol in underlyings:
         require(isinstance(symbol, str) and re.match(r"^[A-Z][A-Z0-9._-]{0,11}$", symbol), f"bad symbol: {symbol!r}")
+    if family in {"bull_put_spread", "bull_call_spread"}:
+        require(len(underlyings) == 1, f"{family} template currently requires exactly one underlying")
 
     start = parse_day(validation.get("start"), "validation.start")
     end = parse_day(validation.get("end"), "validation.end")

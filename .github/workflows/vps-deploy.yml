@@ -410,7 +410,11 @@ jobs:
           bash -n /usr/local/bin/trading-research-qc-smoke
           bash -n /usr/local/bin/trading-research-qc-broker
           bash -n /usr/local/bin/trading-research-qc-cloud-run
-          python3 -m py_compile /usr/local/bin/trading-research-qc-run
+          python3 - <<'PY'
+import ast
+from pathlib import Path
+ast.parse(Path('/usr/local/bin/trading-research-qc-run').read_text(encoding='utf-8'))
+PY
           bash -n /usr/local/bin/trading-research-qc-api-extract
           bash -n /usr/local/sbin/trading-research-qc-docker-run
           bash -n /usr/local/bin/trading-orchestrator-tick
