@@ -735,6 +735,34 @@ class TraderBullCallSpreadManifest(QCAlgorithm):
 '''
 
 
+
+def _algorithm_type_name(manifest: dict[str, Any]) -> str:
+    family = manifest.get("strategy", {}).get("family")
+    if family == "bull_put_spread":
+        return "TraderBullPutSpreadManifest"
+    if family == "bull_call_spread":
+        return "TraderBullCallSpreadManifest"
+    return "TraderManifestDiagnostics"
+
+
+def _update_project_metadata(project_dir: Path, manifest: dict[str, Any]) -> None:
+    algo_name = _algorithm_type_name(manifest)
+    for name in ["lean.json", "config.json"]:
+        path = project_dir / name
+        data = load_json(path) if path.exists() else {}
+        data["algorithm-language"] = "Python"
+        data["algorithm-location"] = "main.py"
+        if name == "lean.json":
+            data["algorithm-type-name"] = algo_name
+        data.setdefault("parameters", {})
+        data["parameters"].update({
+            "symbols": ",".join(manifest["universe"]["underlyings"]),
+            "strategy": manifest["strategy"]["family"],
+            "start": manifest["validation"]["start"],
+            "end": manifest["validation"]["end"],
+        })
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
 def _archive_project(project_dir: Path, archive_path: Path) -> None:
     with tarfile.open(archive_path, "w:gz") as tf:
         tf.add(project_dir, arcname=project_dir.name)
@@ -844,6 +872,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
     project_dir = Path(cloud_manifest["project_dir"])
     (project_dir / "main.py").write_text(generate_qc_algorithm(manifest), encoding="utf-8")
+    _update_project_metadata(project_dir, manifest)
     _archive_project(project_dir, run_dir / "qc_cloud_project.tgz")
     result = {"ok": True, "run_dir": str(run_dir), "project_ref": cloud_manifest.get("project_ref"), "warnings": warnings}
     (run_dir / "qc_run_prepare.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")

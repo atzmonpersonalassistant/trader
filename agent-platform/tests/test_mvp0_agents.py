@@ -628,6 +628,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Status: `{status}`", text)
         self.assertIn("_contained_dir(Path(args.run_dir), REPORTS_ROOT)", text)
         self.assertIn("prepared QC project must be under Lean workspace", text)
+        self.assertIn("_update_project_metadata(project_dir, manifest)", text)
+        self.assertIn('return "TraderBullCallSpreadManifest"', text)
         self.assertIn('x.get("run_returncode") == 0', text)
         self.assertIn('run_id = f"qc-run-{sweep_id}-{variation[\'hypothesis\'][\'id\']}"', text)
         self.assertIn("set_runtime_statistic", text)
