@@ -93,10 +93,12 @@ def validate_manifest(m: dict[str, Any]) -> list[str]:
     require(guards.get("no_naked_shorts") is True, "guard required: no_naked_shorts=true")
     require(guards.get("one_backtest_at_a_time") is True, "guard required: one_backtest_at_a_time=true")
     target_multiple = payoff.get("target_multiple_per_year")
+    objective_type = payoff.get("objective_type")
     require(isinstance(target_multiple, (int, float)) and target_multiple >= 1, "payoff_objective.target_multiple_per_year is required")
+    require(objective_type in {"asymmetric_hunter", "balanced_positive_expectancy", "income", "hedge"}, "payoff_objective.objective_type is required")
     require(payoff.get("must_not_override_evidence") is True, "50x/payoff objective must not override evidence gates")
     if target_multiple >= 50:
-        require(payoff.get("objective_type") == "asymmetric_hunter", "50x/year target must be labeled objective_type=asymmetric_hunter")
+        require(objective_type == "asymmetric_hunter", "50x/year target must be labeled objective_type=asymmetric_hunter")
         warnings.append("50x/year is an aggressive asymmetric research objective, not a promise; candidate status still requires evidence, bounded risk, liquidity, pricing sanity, OOS/walk-forward, and parameter robustness")
     rate = guards.get("rate_limit_seconds")
     require(isinstance(rate, int) and rate >= 60, "rate_limit_seconds must be >= 60")
@@ -917,6 +919,16 @@ def _sanitize_text(text: str, env: dict[str, str] | None = None) -> str:
     return text[:12000]
 
 
+def qc_backtest_timeout_seconds() -> int:
+    raw = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", "900")
+    try:
+        timeout_seconds = int(raw)
+    except ValueError as exc:
+        raise ManifestError("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be an integer >= 60") from exc
+    require(timeout_seconds >= 60, "TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60")
+    return timeout_seconds
+
+
 def _run_prepared_qc_project(run_dir: Path) -> int:
     cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
     project_dir = Path(cloud_manifest["project_dir"]).resolve(strict=True)
@@ -925,7 +937,7 @@ def _run_prepared_qc_project(run_dir: Path) -> int:
     project_ref = str(cloud_manifest.get("project_ref") or f"cloud-runs/{run_dir.name}/{cloud_manifest['project_name']}")
     require(project_dir.exists() and (project_dir / "main.py").exists(), "prepared QC project missing main.py")
     env = _load_qc_env()
-    timeout_seconds = int(os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", "900"))
+    timeout_seconds = qc_backtest_timeout_seconds()
     stdout_path = run_dir / "qc_cloud_backtest_stdout.log"
     stderr_path = run_dir / "qc_cloud_backtest_stderr.log"
     login = subprocess.run(["lean", "login", "--user-id", env["QUANTCONNECT_USER_ID"]], input=env["QUANTCONNECT_API_TOKEN"] + "\n", text=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, cwd=str(LEAN_WORKSPACE), check=False)

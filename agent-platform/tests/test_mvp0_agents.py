@@ -2,6 +2,7 @@ import argparse
 import importlib.machinery
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -624,6 +625,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("hypothesis.title is required", text)
         self.assertIn("strategy.structure is required", text)
         self.assertIn("validation.start must be YYYY-MM-DD", text)
+        self.assertIn("payoff_objective.objective_type is required", text)
+        self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60", text)
         self.assertIn("one_backtest_at_a_time", text)
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
@@ -662,7 +665,7 @@ class MVP0AgentTests(unittest.TestCase):
             "universe": {"underlyings": ["SPY"]},
             "validation": {"start": "2018-01-01", "end": "2025-12-31", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 3},
             "guards": {"no_live_trading": True, "no_naked_shorts": True, "one_backtest_at_a_time": True, "rate_limit_seconds": 60},
-            "payoff_objective": {"target_multiple_per_year": 2, "must_not_override_evidence": True},
+            "payoff_objective": {"target_multiple_per_year": 2, "objective_type": "balanced_positive_expectancy", "must_not_override_evidence": True},
             "pivot_policy": {"must_document_deviation": True},
         }
         self.assertEqual(module.validate_manifest(valid_manifest), [])
@@ -670,6 +673,25 @@ class MVP0AgentTests(unittest.TestCase):
         del invalid_manifest["hypothesis"]["title"]
         with self.assertRaisesRegex(ValueError, "hypothesis.title is required"):
             module.validate_manifest(invalid_manifest)
+        invalid_payoff = json.loads(json.dumps(valid_manifest))
+        del invalid_payoff["payoff_objective"]["objective_type"]
+        with self.assertRaisesRegex(ValueError, "payoff_objective.objective_type is required"):
+            module.validate_manifest(invalid_payoff)
+        old_timeout = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS")
+        try:
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "abc"
+            with self.assertRaisesRegex(ValueError, "must be an integer"):
+                module.qc_backtest_timeout_seconds()
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "30"
+            with self.assertRaisesRegex(ValueError, "must be >= 60"):
+                module.qc_backtest_timeout_seconds()
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "60"
+            self.assertEqual(module.qc_backtest_timeout_seconds(), 60)
+        finally:
+            if old_timeout is None:
+                os.environ.pop("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", None)
+            else:
+                os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = old_timeout
 
     def test_research_qc_cloud_run_contract_is_bounded(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"
