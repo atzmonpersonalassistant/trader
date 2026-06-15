@@ -1032,8 +1032,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         if log_path.exists():
             text += "\n" + log_path.read_text(encoding="utf-8", errors="replace")
     project_id, backtest_id = parse_backtest_ids(text)
-    result: dict[str, Any] = {"ok": rc == 0, "submit_returncode": rc, "run_dir": str(run_dir), "projectId": project_id, "backtestId": backtest_id}
-    if project_id and backtest_id:
+    result: dict[str, Any] = {"ok": False, "submit_returncode": rc, "run_dir": str(run_dir), "projectId": project_id, "backtestId": backtest_id}
+    final_rc = rc
+    evidence_ok = False
+    if rc == 0 and not (project_id and backtest_id):
+        result["evidence_error"] = "missing project/backtest ids; evidence extraction was not possible"
+        final_rc = 1
+    elif project_id and backtest_id:
         extract_path = run_dir / "qc_backtest_extract.json"
         erc = run([QC_EXTRACT, "backtest", str(project_id), backtest_id, str(extract_path)], stdout=run_dir / "qc_extract_stdout.log", stderr=run_dir / "qc_extract_stderr.log")
         result["extract_returncode"] = erc
@@ -1042,6 +1047,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             verdict = verdict_from_extract(extract, warnings)
             (run_dir / "verdict.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             result["verdict"] = verdict["status"]
+            evidence_ok = True
+        elif rc == 0:
+            result["evidence_error"] = "backtest extract failed or did not create qc_backtest_extract.json"
+            final_rc = 1
+    result["ok"] = rc == 0 and evidence_ok
     (run_dir / "qc_run_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = run_dir / "qc_cloud_run_summary.md"
     status = "completed" if rc == 0 else "failed"
@@ -1064,7 +1074,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     summary.chmod(0o640)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return rc
+    return final_rc
 
 
 
