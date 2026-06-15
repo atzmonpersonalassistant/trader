@@ -881,7 +881,9 @@ def _sanitize_text(text: str, env: dict[str, str] | None = None) -> str:
 
 def _run_prepared_qc_project(run_dir: Path) -> int:
     cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
-    project_dir = Path(cloud_manifest["project_dir"])
+    project_dir = Path(cloud_manifest["project_dir"]).resolve(strict=True)
+    lean_root = LEAN_WORKSPACE.resolve(strict=False)
+    require(lean_root == project_dir or lean_root in project_dir.parents, "prepared QC project must be under Lean workspace")
     project_ref = str(cloud_manifest.get("project_ref") or f"cloud-runs/{run_dir.name}/{cloud_manifest['project_name']}")
     require(project_dir.exists() and (project_dir / "main.py").exists(), "prepared QC project missing main.py")
     env = _load_qc_env()
@@ -923,9 +925,16 @@ def _run_prepared_qc_project(run_dir: Path) -> int:
     return 0 if push.returncode == 0 and backtest_rc == 0 else 1
 
 
+def _contained_dir(path: Path, root: Path) -> Path:
+    real_root = root.resolve(strict=False)
+    real_path = path.resolve(strict=True)
+    require(real_path.is_dir(), "run_dir must be a directory")
+    require(real_root == real_path or real_root in real_path.parents, "run_dir must be under reports root")
+    return real_path
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    run_dir = Path(args.run_dir)
-    require(run_dir.is_dir() and str(run_dir).startswith(str(REPORTS_ROOT)), "run_dir must be under reports root")
+    run_dir = _contained_dir(Path(args.run_dir), REPORTS_ROOT)
     manifest = load_json(run_dir / "research_manifest.json")
     warnings = validate_manifest(manifest)
     candidate = run_dir / "candidate.json"
@@ -1087,7 +1096,11 @@ def cmd_sweep(args: argparse.Namespace) -> int:
             item.update({"run_dir": str(run_dir), "prepared_only": True})
         summaries.append(item)
     ranked = sorted(summaries, key=_score_summary, reverse=True)
-    result={"ok": all(x.get("prepare_returncode") == 0 for x in summaries), "type":"qc_run_sweep", "sweep_id": sweep_id, "execute": bool(args.execute), "warnings": warnings, "count": len(summaries), "runs": summaries, "ranking": ranked}
+    if args.execute:
+        ok = all(x.get("prepare_returncode") == 0 and x.get("run_returncode") == 0 and (x.get("qc_run_result") or {}).get("ok") is True for x in summaries)
+    else:
+        ok = all(x.get("prepare_returncode") == 0 for x in summaries)
+    result={"ok": ok, "type":"qc_run_sweep", "sweep_id": sweep_id, "execute": bool(args.execute), "warnings": warnings, "count": len(summaries), "runs": summaries, "ranking": ranked}
     (sweep_dir / "sweep_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if result["ok"] else 1
