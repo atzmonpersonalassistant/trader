@@ -659,6 +659,8 @@ class MVP0AgentTests(unittest.TestCase):
         long_hypothesis = "h" * 90
         ids = [module.sanitize_run_id(f"qc-run-{long_sweep}-v{i}-{long_hypothesis}") for i in range(1, 4)]
         self.assertEqual(len(set(ids)), 3)
+        self.assertLessEqual(len(module._sweep_hypothesis_id("h" * 80, 1)), 80)
+        self.assertRegex(module._sweep_hypothesis_id("h" * 80, 1), r"-sweep-1$")
         valid_manifest = {
             "version": 1,
             "hypothesis": {"id": "h01", "title": "Pullback bull put", "description": "Test defined risk options hypothesis"},

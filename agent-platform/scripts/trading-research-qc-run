@@ -1044,6 +1044,17 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 
+def _sweep_hypothesis_id(base_id: str, index: int) -> str:
+    suffix = f"-sweep-{index}"
+    safe_base = re.sub(r"[^A-Za-z0-9._-]", "-", str(base_id or "hypothesis"))
+    if len(safe_base) + len(suffix) > 80:
+        safe_base = safe_base[: 80 - len(suffix)]
+    safe_base = safe_base.strip("-._") or "hypothesis"
+    if len(safe_base) < 3:
+        safe_base = safe_base.ljust(3, "x")
+    return safe_base + suffix
+
+
 def _sweep_variations(manifest: dict[str, Any], max_runs: int) -> list[dict[str, Any]]:
     family = manifest.get("strategy", {}).get("family")
     base_filters = manifest.get("option_filters") or {}
@@ -1071,7 +1082,7 @@ def _sweep_variations(manifest: dict[str, Any], max_runs: int) -> list[dict[str,
         merged=dict(base_filters)
         merged.update(filters)
         m["option_filters"] = merged
-        m["hypothesis"]["id"] = f"{manifest['hypothesis']['id']}-sweep-{i}"
+        m["hypothesis"]["id"] = _sweep_hypothesis_id(manifest["hypothesis"]["id"], i)
         m["hypothesis"]["title"] = f"{manifest['hypothesis']['title']} sweep {i}"
         m.setdefault("pivot_policy", {})["must_document_deviation"] = True
         out.append(m)
