@@ -622,6 +622,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("asset_class", text)
         self.assertIn("options-only", text)
         self.assertIn("naked short options are forbidden", text)
+        self.assertIn("hypothesis.id must be 3-80 safe characters", text)
         self.assertIn("hypothesis.title is required", text)
         self.assertIn("strategy.structure is required", text)
         self.assertIn("validation.start must be YYYY-MM-DD", text)
@@ -660,7 +661,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(len(set(ids)), 3)
         valid_manifest = {
             "version": 1,
-            "hypothesis": {"id": "h1", "title": "Pullback bull put", "description": "Test defined risk options hypothesis"},
+            "hypothesis": {"id": "h01", "title": "Pullback bull put", "description": "Test defined risk options hypothesis"},
             "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "defined risk vertical spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
             "universe": {"underlyings": ["SPY"]},
             "validation": {"start": "2018-01-01", "end": "2025-12-31", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 3},
@@ -673,6 +674,10 @@ class MVP0AgentTests(unittest.TestCase):
         del invalid_manifest["hypothesis"]["title"]
         with self.assertRaisesRegex(ValueError, "hypothesis.title is required"):
             module.validate_manifest(invalid_manifest)
+        invalid_id = json.loads(json.dumps(valid_manifest))
+        invalid_id["hypothesis"]["id"] = "h1"
+        with self.assertRaisesRegex(ValueError, "hypothesis.id must be 3-80 safe characters"):
+            module.validate_manifest(invalid_id)
         invalid_payoff = json.loads(json.dumps(valid_manifest))
         del invalid_payoff["payoff_objective"]["objective_type"]
         with self.assertRaisesRegex(ValueError, "payoff_objective.objective_type is required"):
