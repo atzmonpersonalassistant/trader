@@ -374,7 +374,7 @@ class TraderBullPutSpreadManifest(QCAlgorithm):
             self.fail_no_spread += 1
             return
         strategy = OptionStrategies.bull_put_spread(self.option_symbol, float(short_put.strike), float(long_put.strike), short_put.expiry)
-        tickets = self.sell(strategy, 1, asynchronous=False, tag="manifest bull put spread")
+        tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull put spread")
         if tickets:
             dte = (short_put.expiry.date() - self.time.date()).days
             short_delta = abs(float(short_put.greeks.delta)) if short_put.greeks and short_put.greeks.delta is not None else 0.0

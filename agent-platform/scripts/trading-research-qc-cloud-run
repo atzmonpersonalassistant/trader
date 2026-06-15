@@ -8,6 +8,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
 LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
+REPORTS_ROOT=${TRADING_RESEARCH_REPORTS_DIR:-/agents/research/reports}
 MODE=${1:-}
 RUN_DIR=${2:-}
 CANDIDATE_JSON=${3:-}
@@ -37,12 +38,13 @@ if [[ "$MODE" == "run" && "$SUBMIT" != "--submit" ]]; then
   exit 64
 fi
 
-case "$RUN_DIR" in /agents/research/reports/research-pass-*|/agents/research/reports/qc-run-*) ;; *) echo "ERROR: run dir must be /agents/research/reports/research-pass-* or /agents/research/reports/qc-run-*" >&2; exit 67 ;; esac
+REPORTS_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$REPORTS_ROOT")"
+case "$RUN_DIR" in "$REPORTS_ROOT"/research-pass-*|"$REPORTS_ROOT"/qc-run-*) ;; *) echo "ERROR: run dir must be under reports root as research-pass-* or qc-run-*" >&2; exit 67 ;; esac
 if [[ -L "$RUN_DIR" || ! -d "$RUN_DIR" || ! -w "$RUN_DIR" ]]; then echo "ERROR: unusable run dir" >&2; exit 66; fi
 if [[ -L "$CANDIDATE_JSON" || ! -r "$CANDIDATE_JSON" ]]; then echo "ERROR: unreadable candidate json" >&2; exit 66; fi
 RUN_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$RUN_DIR")"
 CANDIDATE_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$CANDIDATE_JSON")"
-case "$RUN_REAL" in /agents/research/reports/research-pass-*|/agents/research/reports/qc-run-*) ;; *) echo "ERROR: resolved run dir escaped reports" >&2; exit 69 ;; esac
+case "$RUN_REAL" in "$REPORTS_REAL"/research-pass-*|"$REPORTS_REAL"/qc-run-*) ;; *) echo "ERROR: resolved run dir escaped reports" >&2; exit 69 ;; esac
 case "$CANDIDATE_REAL" in "$RUN_REAL"/*) ;; *) echo "ERROR: candidate must be under run dir" >&2; exit 68 ;; esac
 
 OUT_MANIFEST="$RUN_REAL/qc_cloud_run_manifest.json"
