@@ -142,6 +142,10 @@ def run(cmd: list[str], *, cwd: Path | None = None, stdout: Path | None = None, 
             err.close()
 
 
+def sanitize_run_id(run_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "-", run_id)[:120]
+
+
 def write_candidate_from_manifest(manifest: dict[str, Any], path: Path) -> None:
     candidate = {
         "type": "candidate",
@@ -772,14 +776,14 @@ def _archive_project(project_dir: Path, archive_path: Path) -> None:
 def parse_backtest_ids(text: str) -> tuple[int | None, str | None]:
     project = None
     backtest = None
-    m = re.search(r"Project ID:\s*(\d+)", text)
+    m = re.search(r"Project\s+(?:id|ID|Id):\s*(\d+)", text, re.IGNORECASE)
     if m:
         project = int(m.group(1))
     u = re.search(r"quantconnect\.com/project/(\d+)/([A-Za-z0-9_-]+)", text)
     if u:
         project = int(u.group(1))
         backtest = u.group(2)
-    b = re.search(r"Backtest\s+(?:id|ID):\s*([A-Za-z0-9_-]+)", text)
+    b = re.search(r"Backtest\s+(?:id|ID|Id):\s*([A-Za-z0-9_-]+)", text, re.IGNORECASE)
     if b:
         backtest = b.group(1)
     return project, backtest
@@ -859,7 +863,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     manifest = load_json(manifest_path)
     warnings = validate_manifest(manifest)
     run_id = args.run_id or f"qc-run-{manifest['hypothesis']['id']}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
-    safe_id = re.sub(r"[^A-Za-z0-9._-]", "-", run_id)[:120]
+    safe_id = sanitize_run_id(run_id)
     run_dir = REPORTS_ROOT / safe_id
     run_dir.mkdir(parents=True, exist_ok=False)
     os.chmod(run_dir, 0o750)
@@ -1120,7 +1124,8 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     for idx, variation in enumerate(variations, start=1):
         var_path = sweep_dir / f"manifest-{idx}.json"
         var_path.write_text(json.dumps(variation, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
-        run_id = f"qc-run-{sweep_id}-{variation['hypothesis']['id']}"
+        raw_run_id = f"qc-run-{sweep_id}-{variation['hypothesis']['id']}"
+        run_id = sanitize_run_id(raw_run_id)
         prep = subprocess.run([sys.executable, __file__, "prepare", str(var_path), "--run-id", run_id], text=True, capture_output=True)
         item={"idx": idx, "manifest": str(var_path), "run_id": run_id, "prepare_returncode": prep.returncode, "prepare_stdout": prep.stdout[-4000:], "prepare_stderr": prep.stderr[-4000:]}
         run_dir = REPORTS_ROOT / run_id

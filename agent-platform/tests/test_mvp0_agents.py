@@ -634,7 +634,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("_update_project_metadata(project_dir, manifest)", text)
         self.assertIn('return "TraderBullCallSpreadManifest"', text)
         self.assertIn('x.get("run_returncode") == 0', text)
-        self.assertIn('run_id = f"qc-run-{sweep_id}-{variation[\'hypothesis\'][\'id\']}"', text)
+        self.assertIn("def sanitize_run_id", text)
+        self.assertIn('raw_run_id = f"qc-run-{sweep_id}-{variation[\'hypothesis\'][\'id\']}"', text)
         self.assertIn("set_runtime_statistic", text)
         self.assertIn("candidate_status", text)
         self.assertIn("backtests/read", extractor.read_text())
@@ -643,8 +644,9 @@ class MVP0AgentTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(module)
-        self.assertEqual(module.parse_backtest_ids("Backtest ID: ABC123"), (None, "ABC123"))
-        self.assertEqual(module.parse_backtest_ids("Backtest id: xyz789"), (None, "xyz789"))
+        self.assertEqual(module.parse_backtest_ids("Project ID: 123\nBacktest ID: ABC123"), (123, "ABC123"))
+        self.assertEqual(module.parse_backtest_ids("Project Id: 456\nBacktest Id: xyz789"), (456, "xyz789"))
+        self.assertLessEqual(len(module.sanitize_run_id("qc-run-" + "x" * 200)), 120)
 
     def test_research_qc_cloud_run_contract_is_bounded(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"
