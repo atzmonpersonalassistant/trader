@@ -621,6 +621,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("options-only", text)
         self.assertIn("naked short options are forbidden", text)
         self.assertIn("one_backtest_at_a_time", text)
+        self.assertIn('run_id = f"qc-run-{sweep_id}-{variation[\'hypothesis\'][\'id\']}"', text)
         self.assertIn("set_runtime_statistic", text)
         self.assertIn("candidate_status", text)
         self.assertIn("backtests/read", extractor.read_text())
