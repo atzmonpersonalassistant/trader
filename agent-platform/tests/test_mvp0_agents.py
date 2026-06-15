@@ -1,4 +1,5 @@
 import argparse
+import importlib.machinery
 import importlib.util
 import json
 import subprocess
@@ -628,6 +629,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Status: `{status}`", text)
         self.assertIn("_contained_dir(Path(args.run_dir), REPORTS_ROOT)", text)
         self.assertIn("prepared QC project must be under Lean workspace", text)
+        self.assertIn("fcntl.LOCK_EX | fcntl.LOCK_NB", text)
+        self.assertIn("another qc run is already active", text)
         self.assertIn("_update_project_metadata(project_dir, manifest)", text)
         self.assertIn('return "TraderBullCallSpreadManifest"', text)
         self.assertIn('x.get("run_returncode") == 0', text)
@@ -635,6 +638,13 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("set_runtime_statistic", text)
         self.assertIn("candidate_status", text)
         self.assertIn("backtests/read", extractor.read_text())
+        loader = importlib.machinery.SourceFileLoader("qc_run_script", str(runner))
+        spec = importlib.util.spec_from_loader("qc_run_script", loader)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertEqual(module.parse_backtest_ids("Backtest ID: ABC123"), (None, "ABC123"))
+        self.assertEqual(module.parse_backtest_ids("Backtest id: xyz789"), (None, "xyz789"))
 
     def test_research_qc_cloud_run_contract_is_bounded(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"

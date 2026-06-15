@@ -18,6 +18,7 @@ import sys
 import time
 import copy
 import tarfile
+import fcntl
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -778,7 +779,7 @@ def parse_backtest_ids(text: str) -> tuple[int | None, str | None]:
     if u:
         project = int(u.group(1))
         backtest = u.group(2)
-    b = re.search(r"Backtest id:\s*([A-Za-z0-9_-]+)", text)
+    b = re.search(r"Backtest\s+(?:id|ID):\s*([A-Za-z0-9_-]+)", text)
     if b:
         backtest = b.group(1)
     return project, backtest
@@ -964,6 +965,14 @@ def _contained_dir(path: Path, root: Path) -> Path:
 
 def cmd_run(args: argparse.Namespace) -> int:
     run_dir = _contained_dir(Path(args.run_dir), REPORTS_ROOT)
+    lock_path = REPORTS_ROOT / ".qc-run.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(json.dumps({"ok": False, "error": "another qc run is already active", "run_dir": str(run_dir)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 75
     manifest = load_json(run_dir / "research_manifest.json")
     warnings = validate_manifest(manifest)
     candidate = run_dir / "candidate.json"
