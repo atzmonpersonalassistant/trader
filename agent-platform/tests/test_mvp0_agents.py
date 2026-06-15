@@ -635,6 +635,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
         self.assertIn('tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull put spread")', text)
+        self.assertLess(text.index('self.liquidate(short_symbol, "exit bull call short leg")'), text.index('self.liquidate(long_symbol, "exit bull call long leg")'))
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
         self.assertIn("_archive_project(project_dir, run_dir / \"qc_cloud_project.tgz\")", text)
         self.assertIn("Status: `{status}`", text)

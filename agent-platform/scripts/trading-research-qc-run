@@ -737,8 +737,8 @@ class TraderBullCallSpreadManifest(QCAlgorithm):
             self.expiry_exits += 1
             should_exit = True
         if should_exit:
-            self.liquidate(long_symbol, "exit bull call long leg")
             self.liquidate(short_symbol, "exit bull call short leg")
+            self.liquidate(long_symbol, "exit bull call long leg")
             self.current_trade = None
             self.exit_count += 1
             self.publish_trade_stats()
