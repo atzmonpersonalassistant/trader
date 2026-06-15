@@ -621,6 +621,9 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("asset_class", text)
         self.assertIn("options-only", text)
         self.assertIn("naked short options are forbidden", text)
+        self.assertIn("hypothesis.title is required", text)
+        self.assertIn("strategy.structure is required", text)
+        self.assertIn("validation.start must be YYYY-MM-DD", text)
         self.assertIn("one_backtest_at_a_time", text)
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
@@ -652,6 +655,21 @@ class MVP0AgentTests(unittest.TestCase):
         long_hypothesis = "h" * 90
         ids = [module.sanitize_run_id(f"qc-run-{long_sweep}-v{i}-{long_hypothesis}") for i in range(1, 4)]
         self.assertEqual(len(set(ids)), 3)
+        valid_manifest = {
+            "version": 1,
+            "hypothesis": {"id": "h1", "title": "Pullback bull put", "description": "Test defined risk options hypothesis"},
+            "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "defined risk vertical spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"]},
+            "validation": {"start": "2018-01-01", "end": "2025-12-31", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 3},
+            "guards": {"no_live_trading": True, "no_naked_shorts": True, "one_backtest_at_a_time": True, "rate_limit_seconds": 60},
+            "payoff_objective": {"target_multiple_per_year": 2, "must_not_override_evidence": True},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        self.assertEqual(module.validate_manifest(valid_manifest), [])
+        invalid_manifest = json.loads(json.dumps(valid_manifest))
+        del invalid_manifest["hypothesis"]["title"]
+        with self.assertRaisesRegex(ValueError, "hypothesis.title is required"):
+            module.validate_manifest(invalid_manifest)
 
     def test_research_qc_cloud_run_contract_is_bounded(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"
@@ -665,6 +683,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("one cloud backtest per invocation", text)
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
         self.assertIn("TRADING_RESEARCH_REPORTS_DIR", text)
+        self.assertIn("json.dumps(strategy)", text)
+        self.assertIn("re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}'", text)
         self.assertIn('timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud backtest', text)
         self.assertIn("live_trading", text)
         self.assertNotIn("lean cloud live", text)

@@ -101,6 +101,15 @@ symbols=(symbols or ['SPY','QQQ'])[:3]
 strategy=str(c.get('strategy') or c.get('hypothesis') or 'pullback_bull_call_spread')[:80]
 start=str(c.get('start') or '2018-01-01')
 end=str(c.get('end') or '2026-01-01')
+if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', start):
+    start='2018-01-01'
+if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', end):
+    end='2026-01-01'
+symbols_csv=','.join(symbols)
+start_literal=json.dumps(start)
+end_literal=json.dumps(end)
+symbols_csv_literal=json.dumps(symbols_csv)
+strategy_literal=json.dumps(strategy)
 
 main = f'''# region imports
 from AlgorithmImports import *
@@ -117,13 +126,13 @@ class TraderCloudStrategyFinder(QCAlgorithm):
     """
 
     def initialize(self):
-        self.set_start_date(*map(int, self.get_parameter("start", "{start}").split("-")))
-        self.set_end_date(*map(int, self.get_parameter("end", "{end}").split("-")))
+        self.set_start_date(*map(int, self.get_parameter("start", {start_literal}).split("-")))
+        self.set_end_date(*map(int, self.get_parameter("end", {end_literal}).split("-")))
         self.set_cash(100000)
         self.set_brokerage_model(BrokerageName.INTERACTIVE_BROKERS_BROKERAGE, AccountType.MARGIN)
         self.universe_settings.resolution = Resolution.HOUR
-        self.symbol_names = [x.strip().upper() for x in self.get_parameter("symbols", "{','.join(symbols)}").split(",") if x.strip()][:3]
-        self.strategy_name = self.get_parameter("strategy", "{strategy}")
+        self.symbol_names = [x.strip().upper() for x in self.get_parameter("symbols", {symbols_csv_literal}).split(",") if x.strip()][:3]
+        self.strategy_name = self.get_parameter("strategy", {strategy_literal})
         self.equities = []
         self.option_by_equity = {{}}
         self.sma200 = {{}}

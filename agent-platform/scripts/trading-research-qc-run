@@ -125,7 +125,11 @@ def validate_manifest(m: dict[str, Any]) -> list[str]:
     require(pivot.get("must_document_deviation", True) is True, "pivot policy must document deviations")
     if family in SHORT_PREMIUM_DEFINED_RISK:
         require("spread" in str(strat.get("structure", "")).lower() or family in {"iron_condor", "butterfly", "calendar", "diagonal"}, "short-premium families must remain defined-risk structures")
+    require(len(str(hyp.get("title", ""))) >= 3, "hypothesis.title is required")
     require(len(str(hyp.get("description", ""))) >= 10, "hypothesis.description is required")
+    require(len(str(strat.get("structure", ""))) >= 3, "strategy.structure is required")
+    require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(validation.get("start", ""))) is not None, "validation.start must be YYYY-MM-DD")
+    require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(validation.get("end", ""))) is not None, "validation.end must be YYYY-MM-DD")
     return warnings
 
 
