@@ -56,7 +56,7 @@ RUN_ID="$(basename "$RUN_REAL")"
 PROJECT_ROOT="$LEAN_WORKSPACE/cloud-runs/$RUN_ID"
 PROJECT_NAME="trader-${RUN_ID}-qc-cloud"
 PROJECT_DIR="$PROJECT_ROOT/$PROJECT_NAME"
-QC_PROJECT_REF="$PROJECT_NAME"
+QC_PROJECT_REF="$PROJECT_DIR"
 
 sanitize_log() {
   python3 - "$1" <<'PY'

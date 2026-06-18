@@ -966,7 +966,7 @@ def _run_prepared_qc_project(run_dir: Path) -> int:
     project_dir = Path(cloud_manifest["project_dir"]).resolve(strict=True)
     lean_root = LEAN_WORKSPACE.resolve(strict=False)
     require(lean_root == project_dir or lean_root in project_dir.parents, "prepared QC project must be under Lean workspace")
-    project_ref = str(cloud_manifest.get("project_ref") or f"cloud-runs/{run_dir.name}/{cloud_manifest['project_name']}")
+    project_ref = str(project_dir)
     require(project_dir.exists() and (project_dir / "main.py").exists(), "prepared QC project missing main.py")
     env = _load_qc_env()
     timeout_seconds = qc_backtest_timeout_seconds()
