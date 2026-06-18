@@ -56,7 +56,7 @@ RUN_ID="$(basename "$RUN_REAL")"
 PROJECT_ROOT="$LEAN_WORKSPACE/cloud-runs/$RUN_ID"
 PROJECT_NAME="trader-${RUN_ID}-qc-cloud"
 PROJECT_DIR="$PROJECT_ROOT/$PROJECT_NAME"
-QC_PROJECT_REF="cloud-runs/$RUN_ID/$PROJECT_NAME"
+QC_PROJECT_REF="$PROJECT_NAME"
 
 sanitize_log() {
   python3 - "$1" <<'PY'
@@ -278,8 +278,18 @@ if ! [[ "$QC_BACKTEST_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$QC_BACKTEST_TIMEOU
   echo "ERROR: TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be an integer >= 60" >&2
   exit 64
 fi
-# Ensure Lean is authenticated. Do not print token.
-printf '%s\n' "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/dev/null 2>>"$OUT_STDERR" || true
+# Ensure Lean is authenticated. Do not print token or continue with stale cached credentials.
+set +e
+printf '%s\n' "$QUANTCONNECT_API_TOKEN" | lean login --user-id "$QUANTCONNECT_USER_ID" >/dev/null 2>>"$OUT_STDERR"
+login_rc=$?
+set -e
+if [[ "$login_rc" -ne 0 ]]; then
+  echo "lean login failed; refusing to use cached QuantConnect credentials" >>"$OUT_STDERR"
+  sanitize_log "$OUT_STDERR" > "$OUT_STDERR.redacted"
+  mv "$OUT_STDERR.redacted" "$OUT_STDERR"
+  chmod 640 "$OUT_STDERR"
+  exit "$login_rc"
+fi
 set +e
 timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud push --project "$PROJECT_DIR" >"$OUT_STDOUT" 2>"$OUT_STDERR"
 push_rc=$?
