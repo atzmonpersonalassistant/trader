@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+export PYTHONDONTWRITEBYTECODE=1
+
+QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
+OUT=${4:-}
+if [[ $# -lt 3 || $# -gt 4 || ${1:-} != "backtest" ]]; then
+  echo "usage: trading-research-qc-api-extract backtest PROJECT_ID BACKTEST_ID [OUT_JSON]" >&2
+  exit 64
+fi
+PROJECT_ID=$2
+BACKTEST_ID=$3
+if [[ ! "$PROJECT_ID" =~ ^[0-9]+$ || ! "$BACKTEST_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "ERROR: invalid project/backtest id" >&2
+  exit 64
+fi
+if [[ ! -r "$QC_ENV" || -L "$QC_ENV" ]]; then
+  echo "ERROR: QC env missing/unreadable" >&2
+  exit 70
+fi
+set -a
+# shellcheck disable=SC1090
+. "$QC_ENV"
+set +a
+: "${QUANTCONNECT_USER_ID:?missing QUANTCONNECT_USER_ID}"
+: "${QUANTCONNECT_API_TOKEN:?missing QUANTCONNECT_API_TOKEN}"
+
+python3 - "$PROJECT_ID" "$BACKTEST_ID" "$OUT" <<'PY'
+import hashlib, json, os, re, sys, time
+from pathlib import Path
+import requests
+project_id=int(sys.argv[1])
+backtest_id=sys.argv[2]
+out_path=sys.argv[3]
+user=os.environ["QUANTCONNECT_USER_ID"]
+token=os.environ["QUANTCONNECT_API_TOKEN"]
+ts=str(int(time.time()))
+pw=hashlib.sha256(f"{token}:{ts}".encode()).hexdigest()
+# Match Lean CLI BacktestClient.get: GET /backtests/read with query params.
+r=requests.get(
+    "https://www.quantconnect.com/api/v2/backtests/read",
+    params={"projectId": project_id, "backtestId": backtest_id},
+    headers={"Timestamp": ts},
+    auth=(user, pw),
+    timeout=90,
+)
+r.raise_for_status()
+data=r.json()
+b=data.get("backtest") or {}
+charts=b.get("charts") or {}
+series_summary={}
+for cname, chart in charts.items():
+    cdict = chart if isinstance(chart, dict) else {}
+    series = cdict.get("series") or cdict.get("Series") or {}
+    series_summary[cname] = sorted(series.keys()) if isinstance(series, dict) else []
+rolling=b.get("rollingWindow") or {}
+closed_trades=0
+for window in rolling.values():
+    if isinstance(window, dict):
+        closed_trades += len(window.get("closedTrades") or [])
+summary={
+    "type": "qc_backtest_extract",
+    "ok": data.get("success", True),
+    "projectId": b.get("projectId"),
+    "backtestId": b.get("backtestId"),
+    "name": b.get("name"),
+    "url": f"https://www.quantconnect.com/project/{b.get('projectId')}/{b.get('backtestId')}",
+    "completed": b.get("completed"),
+    "status": b.get("status"),
+    "error": b.get("error"),
+    "stacktrace": b.get("stacktrace"),
+    "tradeableDates": b.get("tradeableDates"),
+    "parameterSet": b.get("parameterSet"),
+    "runtimeStatistics": b.get("runtimeStatistics"),
+    "statistics": b.get("statistics"),
+    "charts": series_summary,
+    "rollingWindowCount": len(rolling),
+    "closedTradesInRollingWindows": closed_trades,
+    "analysisKeys": sorted((b.get("analysis") or {}).keys()) if isinstance(b.get("analysis"), dict) else None,
+}
+text=json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+"\n"
+if out_path:
+    p=Path(out_path)
+    p.write_text(text, encoding="utf-8")
+    try: p.chmod(0o640)
+    except Exception: pass
+else:
+    print(text, end="")
+PY

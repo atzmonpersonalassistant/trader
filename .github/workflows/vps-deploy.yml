@@ -9,6 +9,9 @@ on:
       - "agent-platform/scripts/trading-research-agent-loop"
       - "agent-platform/scripts/trading-research-qc-smoke"
       - "agent-platform/scripts/trading-research-qc-broker"
+      - "agent-platform/scripts/trading-research-qc-cloud-run"
+      - "agent-platform/scripts/trading-research-qc-run"
+      - "agent-platform/scripts/trading-research-qc-api-extract"
       - "agent-platform/scripts/trading-research-qc-docker-run"
       - "agent-platform/scripts/trading-orchestrator-tick"
       - ".github/workflows/vps-deploy.yml"
@@ -108,6 +111,9 @@ jobs:
             agent-platform/scripts/trading-research-agent-loop \
             agent-platform/scripts/trading-research-qc-smoke \
             agent-platform/scripts/trading-research-qc-broker \
+            agent-platform/scripts/trading-research-qc-cloud-run \
+            agent-platform/scripts/trading-research-qc-run \
+            agent-platform/scripts/trading-research-qc-api-extract \
             agent-platform/scripts/trading-research-qc-docker-run \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
@@ -168,6 +174,9 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-broker" /usr/local/bin/trading-research-qc-broker
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-cloud-run" /usr/local/bin/trading-research-qc-cloud-run
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator-tick" /usr/local/bin/trading-orchestrator-tick
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
@@ -400,6 +409,13 @@ jobs:
           bash -n /usr/local/bin/trading-research-agent-loop
           bash -n /usr/local/bin/trading-research-qc-smoke
           bash -n /usr/local/bin/trading-research-qc-broker
+          bash -n /usr/local/bin/trading-research-qc-cloud-run
+          python3 - <<'PY'
+import ast
+from pathlib import Path
+ast.parse(Path('/usr/local/bin/trading-research-qc-run').read_text(encoding='utf-8'))
+PY
+          bash -n /usr/local/bin/trading-research-qc-api-extract
           bash -n /usr/local/sbin/trading-research-qc-docker-run
           bash -n /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/sbin/trading-dispatch-review-agent

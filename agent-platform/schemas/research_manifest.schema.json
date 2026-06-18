@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/atzmonpersonalassistant/trader/agent-platform/schemas/research_manifest.schema.json",
+  "title": "Trader Research Manifest",
+  "type": "object",
+  "required": ["version", "hypothesis", "strategy", "universe", "validation", "guards", "payoff_objective"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "hypothesis": {
+      "type": "object",
+      "required": ["id", "title", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-zA-Z0-9._-]{3,80}$"},
+        "title": {"type": "string", "minLength": 5, "maxLength": 160},
+        "description": {"type": "string", "minLength": 10, "maxLength": 4000},
+        "source": {"type": "string", "maxLength": 500},
+        "asymmetric_50x_thesis": {"type": "string", "maxLength": 2000}
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "required": ["asset_class", "family", "structure", "risk"],
+      "additionalProperties": false,
+      "properties": {
+        "asset_class": {"type": "string", "const": "options"},
+        "family": {"type": "string", "enum": ["bull_put_spread", "bear_call_spread", "bull_call_spread", "bear_put_spread", "iron_condor", "butterfly", "calendar", "diagonal", "long_call", "long_put", "custom_defined_risk"]},
+        "structure": {"type": "string", "minLength": 3, "maxLength": 1000},
+        "risk": {
+          "type": "object",
+          "required": ["bounded", "naked_short_options_allowed"],
+          "additionalProperties": false,
+          "properties": {
+            "bounded": {"type": "boolean", "const": true},
+            "naked_short_options_allowed": {"type": "boolean", "const": false},
+            "max_loss_description": {"type": "string", "maxLength": 1000}
+          }
+        }
+      }
+    },
+    "universe": {
+      "type": "object",
+      "required": ["underlyings"],
+      "additionalProperties": false,
+      "properties": {
+        "underlyings": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9._-]{0,11}$"}},
+        "benchmark": {"type": "string", "default": "SPY"}
+      }
+    },
+    "option_filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dte_min": {"type": "integer", "minimum": 0, "maximum": 365},
+        "dte_max": {"type": "integer", "minimum": 1, "maximum": 730},
+        "delta_min": {"type": "number", "minimum": -1, "maximum": 1},
+        "delta_max": {"type": "number", "minimum": -1, "maximum": 1},
+        "max_bid_ask_pct": {"type": "number", "minimum": 0, "maximum": 1},
+        "min_open_interest": {"type": "integer", "minimum": 0},
+        "min_volume": {"type": "integer", "minimum": 0}
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": ["start", "end", "candidate_requires_2018_present_or_oos", "walk_forward_or_oos_required", "max_variations"],
+      "additionalProperties": false,
+      "properties": {
+        "start": {"type": "string", "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}$"},
+        "end": {"type": "string", "pattern": "^20[0-9]{2}-[0-9]{2}-[0-9]{2}$"},
+        "candidate_requires_2018_present_or_oos": {"type": "boolean", "const": true},
+        "walk_forward_or_oos_required": {"type": "boolean", "const": true},
+        "max_variations": {"type": "integer", "minimum": 1, "maximum": 50},
+        "timeframe_label": {"type": "string", "maxLength": 80}
+      }
+    },
+    "payoff_objective": {
+      "type": "object",
+      "required": ["target_multiple_per_year", "objective_type", "must_not_override_evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "target_multiple_per_year": {"type": "number", "minimum": 1, "maximum": 1000},
+        "objective_type": {"type": "string", "enum": ["asymmetric_hunter", "balanced_positive_expectancy", "income", "hedge"]},
+        "must_not_override_evidence": {"type": "boolean", "const": true},
+        "notes": {"type": "string", "maxLength": 2000}
+      }
+    },
+    "pricing_diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_iv_rv": {"type": "boolean", "default": true},
+        "require_skew": {"type": "boolean", "default": true},
+        "require_term_structure": {"type": "boolean", "default": true},
+        "require_greeks": {"type": "boolean", "default": true},
+        "require_expected_move": {"type": "boolean", "default": true},
+        "require_slippage_sensitivity": {"type": "boolean", "default": true}
+      }
+    },
+    "guards": {
+      "type": "object",
+      "required": ["one_backtest_at_a_time", "no_live_trading", "no_naked_shorts", "rate_limit_seconds"],
+      "additionalProperties": false,
+      "properties": {
+        "one_backtest_at_a_time": {"type": "boolean", "const": true},
+        "no_live_trading": {"type": "boolean", "const": true},
+        "no_naked_shorts": {"type": "boolean", "const": true},
+        "rate_limit_seconds": {"type": "integer", "minimum": 60, "maximum": 3600}
+      }
+    },
+    "pivot_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_parameter_refinement": {"type": "boolean", "default": true},
+        "allow_new_underlying_same_run": {"type": "boolean", "default": false},
+        "allow_new_strategy_family_same_run": {"type": "boolean", "default": false},
+        "must_document_deviation": {"type": "boolean", "const": true}
+      }
+    }
+  }
+}

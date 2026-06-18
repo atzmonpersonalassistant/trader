@@ -1,6 +1,8 @@
 import argparse
+import importlib.machinery
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -608,6 +610,163 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
 
+
+
+    def test_research_qc_run_is_manifest_guarded(self):
+        runner = ROOT / "agent-platform/scripts/trading-research-qc-run"
+        extractor = ROOT / "agent-platform/scripts/trading-research-qc-api-extract"
+        subprocess.run([sys.executable, "-m", "py_compile", str(runner)], check=True)
+        subprocess.run(["bash", "-n", str(extractor)], check=True)
+        text = runner.read_text()
+        self.assertIn("manifest must be a JSON object", text)
+        self.assertIn("asset_class", text)
+        self.assertIn("options-only", text)
+        self.assertIn("naked short options are forbidden", text)
+        self.assertIn("hypothesis.id must be 3-80 safe characters", text)
+        self.assertIn("hypothesis.title is required", text)
+        self.assertIn("strategy.structure is required", text)
+        self.assertIn("validation.start must be YYYY-MM-DD", text)
+        self.assertIn("payoff_objective.objective_type is required", text)
+        self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60", text)
+        self.assertIn("option_filters.dte_min must be <= dte_max", text)
+        self.assertIn("template currently requires exactly one underlying", text)
+        self.assertIn("max(guard_sleep, int(args.sleep_seconds))", text)
+        self.assertIn("one_backtest_at_a_time", text)
+        self.assertIn("_generate_bull_call_spread_algorithm", text)
+        self.assertIn("bull_call_spread_v1", text)
+        self.assertIn('tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull put spread")', text)
+        self.assertLess(text.index('self.liquidate(short_symbol, "exit bull call short leg")'), text.index('self.liquidate(long_symbol, "exit bull call long leg")'))
+        self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
+        self.assertIn("login.returncode != 0", text)
+        self.assertIn("refusing to use cached QuantConnect credentials", text)
+        self.assertIn("_archive_project(project_dir, run_dir / \"qc_cloud_project.tgz\")", text)
+        self.assertIn("Status: `{status}`", text)
+        self.assertIn("_contained_dir(Path(args.run_dir), REPORTS_ROOT)", text)
+        self.assertIn("prepared QC project must be under Lean workspace", text)
+        self.assertIn("fcntl.LOCK_EX | fcntl.LOCK_NB", text)
+        self.assertIn("another qc run is already active", text)
+        self.assertIn("_update_project_metadata(project_dir, manifest)", text)
+        self.assertIn('project_ref = str(cloud_manifest.get("project_ref")', text)
+        self.assertIn('return "TraderBullCallSpreadManifest"', text)
+        self.assertIn('x.get("run_returncode") == 0', text)
+        self.assertIn("missing project/backtest ids; evidence extraction was not possible", text)
+        self.assertIn("backtest_extract_error", text)
+        self.assertIn('extract.get("ok") is not True', text)
+        self.assertIn('result["ok"] = rc == 0 and evidence_ok', text)
+        self.assertIn("return final_rc", text)
+        self.assertIn("def sanitize_run_id", text)
+        self.assertIn("def normalize_qc_run_id", text)
+        self.assertIn('safe_id = normalize_qc_run_id(run_id)', text)
+        self.assertIn('raw_run_id = f"qc-run-{sweep_id}-v{idx}-{variation[\'hypothesis\'][\'id\']}"', text)
+        self.assertIn("set_runtime_statistic", text)
+        self.assertIn("candidate_status", text)
+        extractor_text = extractor.read_text()
+        self.assertIn("backtests/read", extractor_text)
+        self.assertIn("Match Lean CLI BacktestClient.get", extractor_text)
+        self.assertIn("requests.get", extractor_text)
+        self.assertIn('params={"projectId": project_id, "backtestId": backtest_id}', extractor_text)
+        self.assertNotIn("requests.post", extractor_text)
+        loader = importlib.machinery.SourceFileLoader("qc_run_script", str(runner))
+        spec = importlib.util.spec_from_loader("qc_run_script", loader)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertEqual(module.parse_backtest_ids("Project ID: 123\nBacktest ID: ABC123"), (123, "ABC123"))
+        self.assertEqual(module.parse_backtest_ids("Project Id: 456\nBacktest Id: xyz789"), (456, "xyz789"))
+        self.assertLessEqual(len(module.sanitize_run_id("qc-run-" + "x" * 200)), 120)
+        self.assertEqual(module.normalize_qc_run_id("experiment1"), "qc-run-experiment1")
+        self.assertEqual(module.normalize_qc_run_id("research-pass-manual"), "research-pass-manual")
+        self.assertTrue(module.normalize_qc_run_id("qc-run-manual").startswith("qc-run-"))
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": False}), "backtest extract reported failure")
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), None)
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 2, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), "backtest extract project id mismatch")
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt"}, 1, "bt"), "backtest extract missing expected backtest payload")
+        long_sweep = "s" * 90
+        long_hypothesis = "h" * 90
+        ids = [module.sanitize_run_id(f"qc-run-{long_sweep}-v{i}-{long_hypothesis}") for i in range(1, 4)]
+        self.assertEqual(len(set(ids)), 3)
+        self.assertLessEqual(len(module._sweep_hypothesis_id("h" * 80, 1)), 80)
+        self.assertRegex(module._sweep_hypothesis_id("h" * 80, 1), r"-sweep-1$")
+        valid_manifest = {
+            "version": 1,
+            "hypothesis": {"id": "h01", "title": "Pullback bull put", "description": "Test defined risk options hypothesis"},
+            "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "defined risk vertical spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"]},
+            "validation": {"start": "2018-01-01", "end": "2025-12-31", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 3},
+            "guards": {"no_live_trading": True, "no_naked_shorts": True, "one_backtest_at_a_time": True, "rate_limit_seconds": 60},
+            "payoff_objective": {"target_multiple_per_year": 2, "objective_type": "balanced_positive_expectancy", "must_not_override_evidence": True},
+            "option_filters": {"dte_min": 14, "dte_max": 45, "delta_min": -0.30, "delta_max": -0.10, "max_bid_ask_pct": 0.35, "min_open_interest": 10, "min_volume": 0},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        self.assertEqual(module.validate_manifest(valid_manifest), [])
+        invalid_manifest = json.loads(json.dumps(valid_manifest))
+        del invalid_manifest["hypothesis"]["title"]
+        with self.assertRaisesRegex(ValueError, "hypothesis.title is required"):
+            module.validate_manifest(invalid_manifest)
+        invalid_id = json.loads(json.dumps(valid_manifest))
+        invalid_id["hypothesis"]["id"] = "h1"
+        with self.assertRaisesRegex(ValueError, "hypothesis.id must be 3-80 safe characters"):
+            module.validate_manifest(invalid_id)
+        invalid_payoff = json.loads(json.dumps(valid_manifest))
+        del invalid_payoff["payoff_objective"]["objective_type"]
+        with self.assertRaisesRegex(ValueError, "payoff_objective.objective_type is required"):
+            module.validate_manifest(invalid_payoff)
+        multi_symbol = json.loads(json.dumps(valid_manifest))
+        multi_symbol["universe"]["underlyings"] = ["SPY", "QQQ"]
+        with self.assertRaisesRegex(ValueError, "requires exactly one underlying"):
+            module.validate_manifest(multi_symbol)
+        invalid_filters = json.loads(json.dumps(valid_manifest))
+        invalid_filters["option_filters"]["dte_min"] = 90
+        invalid_filters["option_filters"]["dte_max"] = 30
+        with self.assertRaisesRegex(ValueError, "option_filters.dte_min must be <= dte_max"):
+            module.validate_manifest(invalid_filters)
+        invalid_filters = json.loads(json.dumps(valid_manifest))
+        invalid_filters["option_filters"]["dte_min"] = "bad"
+        with self.assertRaisesRegex(ValueError, "option_filters.dte_min must be an integer"):
+            module.validate_manifest(invalid_filters)
+        old_timeout = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS")
+        try:
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "abc"
+            with self.assertRaisesRegex(ValueError, "must be an integer"):
+                module.qc_backtest_timeout_seconds()
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "30"
+            with self.assertRaisesRegex(ValueError, "must be >= 60"):
+                module.qc_backtest_timeout_seconds()
+            os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = "60"
+            self.assertEqual(module.qc_backtest_timeout_seconds(), 60)
+        finally:
+            if old_timeout is None:
+                os.environ.pop("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", None)
+            else:
+                os.environ["TRADING_QC_BACKTEST_TIMEOUT_SECONDS"] = old_timeout
+
+    def test_research_qc_cloud_run_contract_is_bounded(self):
+        script = ROOT / "agent-platform/scripts/trading-research-qc-cloud-run"
+        text = script.read_text()
+        subprocess.run(["bash", "-n", str(script)], check=True)
+        self.assertIn("lean cloud push --project", text)
+        self.assertIn("lean cloud backtest", text)
+        self.assertIn('QC_PROJECT_REF="cloud-runs/$RUN_ID/$PROJECT_NAME"', text)
+        self.assertIn('lean cloud push --project "$PROJECT_DIR"', text)
+        self.assertIn("run mode requires explicit --submit", text)
+        self.assertIn("max 3 symbols", text)
+        self.assertIn("one cloud backtest per invocation", text)
+        self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
+        self.assertIn("TRADING_RESEARCH_REPORTS_DIR", text)
+        self.assertIn("json.dumps(strategy)", text)
+        self.assertIn("re.fullmatch(r'\\d{4}-\\d{2}-\\d{2}'", text)
+        self.assertIn('timeout "$QC_BACKTEST_TIMEOUT_SECONDS" lean cloud backtest', text)
+        self.assertIn("login_rc=$?", text)
+        self.assertIn("refusing to use cached QuantConnect credentials", text)
+        self.assertNotIn('lean login --user-id "$QUANTCONNECT_USER_ID" >/dev/null 2>>"$OUT_STDERR" || true', text)
+        self.assertIn("live_trading", text)
+        self.assertNotIn("lean cloud live", text)
+        self.assertNotIn("--open", text)
+        self.assertIn("TRADER_QC_EVIDENCE_JSON", text)
+        self.assertIn("self.latest_option_chains", text)
+        self.assertIn("data.option_chains.values()", text)
+        self.assertNotIn("self.option_chain(opt_symbol, flatten=True)", text)
+
     def test_research_qc_docker_wrapper_contract_is_narrow(self):
         script = ROOT / "agent-platform/scripts/trading-research-qc-docker-run"
         text = script.read_text()
@@ -780,6 +939,9 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("lean whoami", text)
         self.assertIn("trading-research-qc-broker preflight", text)
         self.assertIn("trading-research-qc-broker research-artifact", text)
+        self.assertIn("ast.parse(Path('/usr/local/bin/trading-research-qc-run').read_text", text)
+        self.assertNotIn("python3 -m py_compile /usr/local/bin/trading-research-qc-run", text)
+        self.assertNotIn("bash -n /usr/local/bin/trading-research-qc-run", text)
         self.assertIn("trader-research-qc-artifact-dry-run.txt", text)
         self.assertIn("QC_BROKER_RESEARCH_ARTIFACT_DRY_RUN", text)
         self.assertIn("qc_research_execution_diagnostic.json", text)

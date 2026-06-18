@@ -194,6 +194,9 @@ log "installing research loop scripts"
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-agent-loop" /usr/local/bin/trading-research-agent-loop
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-broker" /usr/local/bin/trading-research-qc-broker
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-cloud-run" /usr/local/bin/trading-research-qc-cloud-run
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
+install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
 
 
