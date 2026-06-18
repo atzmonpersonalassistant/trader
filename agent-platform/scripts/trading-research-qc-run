@@ -1015,6 +1015,25 @@ def _contained_dir(path: Path, root: Path) -> Path:
     return real_path
 
 
+def backtest_extract_error(extract: dict[str, Any], expected_project_id: int | None = None, expected_backtest_id: str | None = None) -> str | None:
+    if extract.get("type") != "qc_backtest_extract":
+        return "backtest extract has unexpected type"
+    if extract.get("ok") is not True:
+        return "backtest extract reported failure"
+    if expected_project_id is not None and extract.get("projectId") != expected_project_id:
+        return "backtest extract project id mismatch"
+    if expected_backtest_id is not None and extract.get("backtestId") != expected_backtest_id:
+        return "backtest extract backtest id mismatch"
+    if extract.get("error") or extract.get("stacktrace"):
+        return "backtest extract contains QC error or stacktrace"
+    has_statistics = isinstance(extract.get("statistics"), dict) and bool(extract.get("statistics"))
+    has_runtime_statistics = isinstance(extract.get("runtimeStatistics"), dict) and bool(extract.get("runtimeStatistics"))
+    has_charts = isinstance(extract.get("charts"), dict) and bool(extract.get("charts"))
+    if not (has_statistics or has_runtime_statistics or has_charts):
+        return "backtest extract missing expected backtest payload"
+    return None
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     run_dir = _contained_dir(Path(args.run_dir), REPORTS_ROOT)
     lock_path = REPORTS_ROOT / ".qc-run.lock"
@@ -1051,10 +1070,15 @@ def cmd_run(args: argparse.Namespace) -> int:
         result["extract_returncode"] = erc
         if erc == 0 and extract_path.exists():
             extract = load_json(extract_path)
-            verdict = verdict_from_extract(extract, warnings)
-            (run_dir / "verdict.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            result["verdict"] = verdict["status"]
-            evidence_ok = True
+            extract_error = backtest_extract_error(extract, project_id, backtest_id)
+            if extract_error:
+                result["evidence_error"] = extract_error
+                final_rc = 1
+            else:
+                verdict = verdict_from_extract(extract, warnings)
+                (run_dir / "verdict.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                result["verdict"] = verdict["status"]
+                evidence_ok = True
         elif rc == 0:
             result["evidence_error"] = "backtest extract failed or did not create qc_backtest_extract.json"
             final_rc = 1

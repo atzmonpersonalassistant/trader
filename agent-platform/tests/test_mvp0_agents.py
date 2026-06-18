@@ -647,6 +647,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('return "TraderBullCallSpreadManifest"', text)
         self.assertIn('x.get("run_returncode") == 0', text)
         self.assertIn("missing project/backtest ids; evidence extraction was not possible", text)
+        self.assertIn("backtest_extract_error", text)
+        self.assertIn('extract.get("ok") is not True', text)
         self.assertIn('result["ok"] = rc == 0 and evidence_ok', text)
         self.assertIn("return final_rc", text)
         self.assertIn("def sanitize_run_id", text)
@@ -667,6 +669,10 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(module.normalize_qc_run_id("experiment1"), "qc-run-experiment1")
         self.assertEqual(module.normalize_qc_run_id("research-pass-manual"), "research-pass-manual")
         self.assertTrue(module.normalize_qc_run_id("qc-run-manual").startswith("qc-run-"))
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": False}), "backtest extract reported failure")
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), None)
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 2, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), "backtest extract project id mismatch")
+        self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt"}, 1, "bt"), "backtest extract missing expected backtest payload")
         long_sweep = "s" * 90
         long_hypothesis = "h" * 90
         ids = [module.sanitize_run_id(f"qc-run-{long_sweep}-v{i}-{long_hypothesis}") for i in range(1, 4)]
