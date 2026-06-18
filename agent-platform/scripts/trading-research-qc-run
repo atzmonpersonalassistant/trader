@@ -1,0 +1,1279 @@
+#!/usr/bin/env python3
+"""Mandate-aware QuantConnect cloud runner.
+
+This is intentionally a flat executor, not an autonomous agent. It reads a
+research_manifest.json, enforces the research mandate guardrails, prepares a
+bounded QC Cloud run, optionally submits it, extracts results through QC API,
+and writes auditable evidence/verdict artifacts.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import copy
+import tarfile
+import fcntl
+from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+REPORTS_ROOT = Path(os.environ.get("TRADING_RESEARCH_REPORTS_DIR", "/agents/research/reports"))
+LEAN_WORKSPACE = Path(os.environ.get("TRADING_RESEARCH_LEAN_WORKSPACE", "/agents/research/lean-workspace"))
+QC_CLOUD_RUN = os.environ.get("TRADING_QC_CLOUD_RUN", "/usr/local/bin/trading-research-qc-cloud-run")
+QC_EXTRACT = os.environ.get("TRADING_QC_API_EXTRACT", "/usr/local/bin/trading-research-qc-api-extract")
+QC_ENV = Path(os.environ.get("TRADING_QUANTCONNECT_ENV_FILE", "/etc/trading-agents/secrets/quantconnect/env"))
+
+ALLOWED_FAMILIES = {
+    "bull_put_spread",
+    "bear_call_spread",
+    "bull_call_spread",
+    "bear_put_spread",
+    "iron_condor",
+    "butterfly",
+    "calendar",
+    "diagonal",
+    "long_call",
+    "long_put",
+    "custom_defined_risk",
+}
+SHORT_PREMIUM_DEFINED_RISK = {"bull_put_spread", "bear_call_spread", "iron_condor", "butterfly", "calendar", "diagonal"}
+
+
+class ManifestError(ValueError):
+    pass
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ManifestError(f"invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestError("manifest must be a JSON object")
+    return data
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ManifestError(message)
+
+
+def parse_day(value: str, name: str) -> date:
+    require(isinstance(value, str) and re.match(r"^20\d\d-\d\d-\d\d$", value), f"{name} must be YYYY-MM-DD")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ManifestError(f"{name} invalid date: {value}") from exc
+
+
+def validate_manifest(m: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    require(m.get("version") == 1, "version must be 1")
+    hyp = m.get("hypothesis") or {}
+    strat = m.get("strategy") or {}
+    universe = m.get("universe") or {}
+    validation = m.get("validation") or {}
+    guards = m.get("guards") or {}
+    payoff = m.get("payoff_objective") or {}
+    risk = strat.get("risk") or {}
+
+    require(strat.get("asset_class") == "options", "mandate violation: candidates must be options-only")
+    family = strat.get("family")
+    require(family in ALLOWED_FAMILIES, f"unsupported strategy family: {family}")
+    require(risk.get("bounded") is True, "mandate violation: risk must be bounded/known")
+    require(risk.get("naked_short_options_allowed") is False, "mandate violation: naked short options are forbidden")
+    require(guards.get("no_live_trading") is True, "guard required: no_live_trading=true")
+    require(guards.get("no_naked_shorts") is True, "guard required: no_naked_shorts=true")
+    require(guards.get("one_backtest_at_a_time") is True, "guard required: one_backtest_at_a_time=true")
+    target_multiple = payoff.get("target_multiple_per_year")
+    objective_type = payoff.get("objective_type")
+    require(isinstance(target_multiple, (int, float)) and target_multiple >= 1, "payoff_objective.target_multiple_per_year is required")
+    require(objective_type in {"asymmetric_hunter", "balanced_positive_expectancy", "income", "hedge"}, "payoff_objective.objective_type is required")
+    require(payoff.get("must_not_override_evidence") is True, "50x/payoff objective must not override evidence gates")
+    if target_multiple >= 50:
+        require(objective_type == "asymmetric_hunter", "50x/year target must be labeled objective_type=asymmetric_hunter")
+        warnings.append("50x/year is an aggressive asymmetric research objective, not a promise; candidate status still requires evidence, bounded risk, liquidity, pricing sanity, OOS/walk-forward, and parameter robustness")
+    rate = guards.get("rate_limit_seconds")
+    require(isinstance(rate, int) and rate >= 60, "rate_limit_seconds must be >= 60")
+
+    opt = m.get("option_filters") or {}
+    require(isinstance(opt, dict), "option_filters must be an object")
+    for key, minimum, maximum in [
+        ("dte_min", 0, 365),
+        ("dte_max", 1, 730),
+        ("min_open_interest", 0, None),
+        ("min_volume", 0, None),
+    ]:
+        if key in opt:
+            value = opt[key]
+            require(isinstance(value, int) and not isinstance(value, bool), f"option_filters.{key} must be an integer")
+            require(value >= minimum and (maximum is None or value <= maximum), f"option_filters.{key} out of range")
+    for key, minimum, maximum in [("delta_min", -1.0, 1.0), ("delta_max", -1.0, 1.0), ("max_bid_ask_pct", 0.0, 1.0)]:
+        if key in opt:
+            value = opt[key]
+            require(isinstance(value, (int, float)) and not isinstance(value, bool), f"option_filters.{key} must be numeric")
+            require(float(value) >= minimum and float(value) <= maximum, f"option_filters.{key} out of range")
+    if "dte_min" in opt and "dte_max" in opt:
+        require(int(opt["dte_min"]) <= int(opt["dte_max"]), "option_filters.dte_min must be <= dte_max")
+    if "delta_min" in opt and "delta_max" in opt:
+        require(float(opt["delta_min"]) <= float(opt["delta_max"]), "option_filters.delta_min must be <= delta_max")
+
+    underlyings = universe.get("underlyings")
+    require(isinstance(underlyings, list) and 1 <= len(underlyings) <= 3, "universe.underlyings must contain 1-3 symbols")
+    for symbol in underlyings:
+        require(isinstance(symbol, str) and re.match(r"^[A-Z][A-Z0-9._-]{0,11}$", symbol), f"bad symbol: {symbol!r}")
+    if family in {"bull_put_spread", "bull_call_spread"}:
+        require(len(underlyings) == 1, f"{family} template currently requires exactly one underlying")
+
+    start = parse_day(validation.get("start"), "validation.start")
+    end = parse_day(validation.get("end"), "validation.end")
+    require(start < end, "validation.start must be before validation.end")
+    require(validation.get("candidate_requires_2018_present_or_oos") is True, "candidate gate must require 2018-present or OOS")
+    require(validation.get("walk_forward_or_oos_required") is True, "candidate gate must require walk-forward/OOS")
+    max_variations = validation.get("max_variations")
+    require(isinstance(max_variations, int) and 1 <= max_variations <= 50, "max_variations must be 1..50")
+    if start > date(2018, 1, 2):
+        warnings.append("validation window starts after 2018; this run can be diagnostic/refine only, not candidate status")
+
+    pd = m.get("pricing_diagnostics") or {}
+    for key in ["require_iv_rv", "require_skew", "require_term_structure", "require_greeks", "require_expected_move", "require_slippage_sensitivity"]:
+        if pd.get(key, True) is not True:
+            warnings.append(f"pricing diagnostic disabled: {key}; candidate status should be blocked")
+
+    pivot = m.get("pivot_policy") or {}
+    require(pivot.get("must_document_deviation", True) is True, "pivot policy must document deviations")
+    if family in SHORT_PREMIUM_DEFINED_RISK:
+        require("spread" in str(strat.get("structure", "")).lower() or family in {"iron_condor", "butterfly", "calendar", "diagonal"}, "short-premium families must remain defined-risk structures")
+    require(re.fullmatch(r"[A-Za-z0-9._-]{3,80}", str(hyp.get("id", ""))) is not None, "hypothesis.id must be 3-80 safe characters")
+    require(len(str(hyp.get("title", ""))) >= 5, "hypothesis.title is required")
+    require(len(str(hyp.get("description", ""))) >= 10, "hypothesis.description is required")
+    require(len(str(strat.get("structure", ""))) >= 3, "strategy.structure is required")
+    require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(validation.get("start", ""))) is not None, "validation.start must be YYYY-MM-DD")
+    require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(validation.get("end", ""))) is not None, "validation.end must be YYYY-MM-DD")
+    return warnings
+
+
+def run(cmd: list[str], *, cwd: Path | None = None, stdout: Path | None = None, stderr: Path | None = None) -> int:
+    out = stdout.open("w", encoding="utf-8") if stdout else subprocess.PIPE
+    err = stderr.open("w", encoding="utf-8") if stderr else subprocess.PIPE
+    try:
+        proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, stdout=out, stderr=err, check=False)
+        return int(proc.returncode)
+    finally:
+        if stdout:
+            out.close()
+        if stderr:
+            err.close()
+
+
+def sanitize_run_id(run_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "-", run_id)[:120]
+
+
+def write_candidate_from_manifest(manifest: dict[str, Any], path: Path) -> None:
+    candidate = {
+        "type": "candidate",
+        "id": manifest["hypothesis"]["id"],
+        "title": manifest["hypothesis"]["title"],
+        "hypothesis": manifest["hypothesis"]["description"],
+        "strategy": manifest["strategy"]["family"],
+        "structure": manifest["strategy"]["structure"],
+        "universe": manifest["universe"]["underlyings"],
+        "symbol": manifest["universe"]["underlyings"][0],
+        "start": manifest["validation"]["start"],
+        "end": manifest["validation"]["end"],
+        "payoff_objective": manifest.get("payoff_objective"),
+        "manifest_driven": True,
+    }
+    path.write_text(json.dumps(candidate, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.chmod(0o640)
+
+
+def generate_qc_algorithm(manifest: dict[str, Any]) -> str:
+    symbols = manifest["universe"]["underlyings"][:3]
+    start = manifest["validation"]["start"]
+    end = manifest["validation"]["end"]
+    family = manifest["strategy"]["family"]
+    target_multiple = manifest.get("payoff_objective", {}).get("target_multiple_per_year", 1)
+    opt = manifest.get("option_filters") or {}
+    dte_min = int(opt.get("dte_min", 21))
+    dte_max = int(opt.get("dte_max", 60))
+    min_oi = int(opt.get("min_open_interest", 100))
+    min_vol = int(opt.get("min_volume", 0))
+    max_bid_ask_pct = float(opt.get("max_bid_ask_pct", 0.35))
+    delta_min = abs(float(opt.get("delta_min", -0.35)))
+    delta_max = abs(float(opt.get("delta_max", -0.10)))
+    low_delta = min(delta_min, delta_max)
+    high_delta = max(delta_min, delta_max)
+    if family == "bull_put_spread":
+        return _generate_bull_put_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta)
+    if family == "bull_call_spread":
+        return _generate_bull_call_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta)
+    return _generate_diagnostics_algorithm(symbols, start, end, family, target_multiple, dte_min, dte_max)
+
+
+def _generate_diagnostics_algorithm(symbols: list[str], start: str, end: str, family: str, target_multiple: float, dte_min: int, dte_max: int) -> str:
+    symbols_literal = repr(symbols)
+    return f'''# region imports
+from AlgorithmImports import *
+# endregion
+
+class TraderManifestDiagnostics(QCAlgorithm):
+    def initialize(self):
+        self.set_start_date(*map(int, "{start}".split("-")))
+        self.set_end_date(*map(int, "{end}".split("-")))
+        self.set_cash(100000)
+        self.symbol_names = {symbols_literal}
+        self.strategy_family = "{family}"
+        self.chain_days = 0
+        self.contract_rows = 0
+        self.greeks_rows = 0
+        self.iv_rows = 0
+        self.last_day_by_symbol = {{}}
+        self.option_symbols = {{}}
+        for name in self.symbol_names:
+            eq = self.add_equity(name, Resolution.DAILY)
+            eq.set_data_normalization_mode(DataNormalizationMode.RAW)
+            opt = self.add_option(name, Resolution.DAILY)
+            opt.set_filter(lambda u: u.include_weeklys().expiration({dte_min}, {dte_max}).strikes(-20, 20))
+            self.option_symbols[eq.symbol] = opt.symbol
+        self.set_runtime_statistic("trader.manifest_family", self.strategy_family)
+        self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
+        self.set_runtime_statistic("trader.target_multiple_per_year", str({target_multiple!r}))
+
+    def on_data(self, data):
+        for underlying, option_symbol in self.option_symbols.items():
+            key = str(underlying)
+            d = self.time.date()
+            if self.last_day_by_symbol.get(key) == d:
+                continue
+            chain = data.option_chains.get(option_symbol)
+            if chain is None:
+                continue
+            contracts = list(chain)[:200]
+            if not contracts:
+                continue
+            self.last_day_by_symbol[key] = d
+            greeks = 0
+            ivs = 0
+            for c in contracts:
+                if c.greeks is not None and c.greeks.delta is not None:
+                    greeks += 1
+                if c.implied_volatility is not None and c.implied_volatility > 0:
+                    ivs += 1
+            self.chain_days += 1
+            self.contract_rows += len(contracts)
+            self.greeks_rows += greeks
+            self.iv_rows += ivs
+            self.set_runtime_statistic("trader.chain_days", str(self.chain_days))
+            self.set_runtime_statistic("trader.contract_rows", str(self.contract_rows))
+            self.set_runtime_statistic("trader.greeks_rows", str(self.greeks_rows))
+            self.set_runtime_statistic("trader.iv_rows", str(self.iv_rows))
+
+    def on_end_of_algorithm(self):
+        self.set_runtime_statistic("trader.final_chain_days", str(self.chain_days))
+        self.set_runtime_statistic("trader.final_contract_rows", str(self.contract_rows))
+        self.set_runtime_statistic("trader.final_greeks_rows", str(self.greeks_rows))
+        self.set_runtime_statistic("trader.final_iv_rows", str(self.iv_rows))
+        self.set_runtime_statistic("trader.candidate_gate", "diagnostic_only_until_backtest_pricing_oos")
+'''
+
+
+def _generate_bull_put_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float) -> str:
+    symbols_literal = repr(symbols)
+    return f'''# region imports
+from AlgorithmImports import *
+# endregion
+
+class TraderBullPutSpreadManifest(QCAlgorithm):
+    def initialize(self):
+        self.set_start_date(*map(int, "{start}".split("-")))
+        self.set_end_date(*map(int, "{end}".split("-")))
+        self.set_cash(100000)
+        self.symbol_names = {symbols_literal}
+        self.target_multiple = {target_multiple!r}
+        self.dte_min = {dte_min}
+        self.dte_max = {dte_max}
+        self.min_open_interest = {min_oi}
+        self.min_volume = {min_vol}
+        self.max_bid_ask_pct = {max_bid_ask_pct!r}
+        self.delta_min = {delta_min!r}
+        self.delta_max = {delta_max!r}
+        self.underlying = self.add_equity(self.symbol_names[0], Resolution.DAILY).symbol
+        self.securities[self.underlying].set_data_normalization_mode(DataNormalizationMode.RAW)
+        opt = self.add_option(self.symbol_names[0], Resolution.DAILY)
+        opt.set_filter(lambda u: u.include_weeklys().puts_only().expiration(self.dte_min, self.dte_max).strikes(-30, 5))
+        self.option_symbol = opt.symbol
+        self.sma200 = self.sma(self.underlying, 200, Resolution.DAILY)
+        self.rsi14 = self.rsi(self.underlying, 14, MovingAverageType.WILDERS, Resolution.DAILY)
+        self.set_warmup(220, Resolution.DAILY)
+        self.current_trade = None
+        self.last_entry_date = None
+        self.last_chain_day = None
+        self.chain_days = 0
+        self.contract_rows = 0
+        self.greeks_rows = 0
+        self.iv_rows = 0
+        self.entries = 0
+        self.entry_attempts = 0
+        self.exit_count = 0
+        self.fail_no_chain = 0
+        self.fail_no_spread = 0
+        self.fail_liquidity = 0
+        self.total_credit = 0.0
+        self.total_width = 0.0
+        self.total_bid_ask_pct = 0.0
+        self.selected_delta_sum = 0.0
+        self.selected_dte_sum = 0.0
+        self.max_loss_sum = 0.0
+        self.profit_target_exits = 0
+        self.stop_exits = 0
+        self.expiry_exits = 0
+        self.set_runtime_statistic("trader.manifest_family", "bull_put_spread")
+        self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
+        self.set_runtime_statistic("trader.target_multiple_per_year", str(self.target_multiple))
+        self.set_runtime_statistic("trader.template", "bull_put_spread_v1")
+
+    def on_data(self, data):
+        self.observe_chain(data)
+        if self.is_warming_up:
+            return
+        self.manage_exit()
+        if self.current_trade is not None or self.portfolio.invested:
+            return
+        if self.last_entry_date == self.time.date():
+            return
+        if not (self.sma200.is_ready and self.rsi14.is_ready):
+            return
+        price = float(self.securities[self.underlying].price)
+        if price <= 0 or price <= float(self.sma200.current.value):
+            return
+        if float(self.rsi14.current.value) < 35.0:
+            return
+        self.try_enter(data)
+
+    def observe_chain(self, data):
+        d = self.time.date()
+        if self.last_chain_day == d:
+            return
+        chain = data.option_chains.get(self.option_symbol)
+        if chain is None:
+            return
+        contracts = list(chain)[:200]
+        if not contracts:
+            return
+        greeks = 0
+        ivs = 0
+        for c in contracts:
+            if c.greeks is not None and c.greeks.delta is not None:
+                greeks += 1
+            if c.implied_volatility is not None and c.implied_volatility > 0:
+                ivs += 1
+        self.last_chain_day = d
+        self.chain_days += 1
+        self.contract_rows += len(contracts)
+        self.greeks_rows += greeks
+        self.iv_rows += ivs
+        self.set_runtime_statistic("trader.chain_days", str(self.chain_days))
+        self.set_runtime_statistic("trader.contract_rows", str(self.contract_rows))
+        self.set_runtime_statistic("trader.greeks_rows", str(self.greeks_rows))
+        self.set_runtime_statistic("trader.iv_rows", str(self.iv_rows))
+
+    def try_enter(self, data):
+        self.entry_attempts += 1
+        chain = data.option_chains.get(self.option_symbol)
+        if chain is None:
+            self.fail_no_chain += 1
+            return
+        contracts = [c for c in chain if c.right == OptionRight.PUT and c.expiry.date() > self.time.date()]
+        if not contracts:
+            self.fail_no_chain += 1
+            return
+        selected = self.select_spread(contracts)
+        if selected is None:
+            self.fail_no_spread += 1
+            return
+        short_put, long_put, credit, width, bid_ask_pct = selected
+        if credit <= 0 or width <= 0:
+            self.fail_no_spread += 1
+            return
+        strategy = OptionStrategies.bull_put_spread(self.option_symbol, float(short_put.strike), float(long_put.strike), short_put.expiry)
+        tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull put spread")
+        if tickets:
+            dte = (short_put.expiry.date() - self.time.date()).days
+            short_delta = abs(float(short_put.greeks.delta)) if short_put.greeks and short_put.greeks.delta is not None else 0.0
+            max_loss = width - credit
+            self.current_trade = {{"entry_date": self.time.date(), "expiry": short_put.expiry.date(), "short": short_put.symbol, "long": long_put.symbol, "credit": credit, "width": width, "max_loss": max_loss}}
+            self.last_entry_date = self.time.date()
+            self.entries += 1
+            self.total_credit += credit
+            self.total_width += width
+            self.total_bid_ask_pct += bid_ask_pct
+            self.selected_delta_sum += short_delta
+            self.selected_dte_sum += float(dte)
+            self.max_loss_sum += max_loss
+            self.publish_trade_stats()
+
+    def select_spread(self, contracts):
+        viable = []
+        for c in contracts:
+            if c.greeks is None or c.greeks.delta is None:
+                continue
+            dte = (c.expiry.date() - self.time.date()).days
+            if dte < self.dte_min or dte > self.dte_max:
+                continue
+            delta = abs(float(c.greeks.delta))
+            if delta < self.delta_min or delta > self.delta_max:
+                continue
+            bid = float(c.bid_price)
+            ask = float(c.ask_price)
+            mid = (bid + ask) / 2.0
+            if bid <= 0 or ask <= 0 or mid <= 0:
+                continue
+            width_pct = (ask - bid) / mid
+            if width_pct > self.max_bid_ask_pct:
+                self.fail_liquidity += 1
+                continue
+            oi = int(c.open_interest or 0)
+            vol = int(c.volume or 0)
+            if oi < self.min_open_interest or vol < self.min_volume:
+                self.fail_liquidity += 1
+                continue
+            viable.append(c)
+        target_delta = (self.delta_min + self.delta_max) / 2.0
+        target_dte = (self.dte_min + self.dte_max) / 2.0
+        viable = sorted(viable, key=lambda c: (abs(abs(float(c.greeks.delta)) - target_delta), abs((c.expiry.date() - self.time.date()).days - target_dte)))
+        for short_put in viable[:20]:
+            longs = [c for c in contracts if c.expiry == short_put.expiry and c.strike < short_put.strike]
+            longs = sorted(longs, key=lambda c: abs(float(short_put.strike - c.strike) - 5.0))
+            for long_put in longs[:10]:
+                if long_put.ask_price <= 0 or long_put.bid_price < 0:
+                    continue
+                width = float(short_put.strike - long_put.strike)
+                if width <= 0:
+                    continue
+                credit = float(short_put.bid_price) - float(long_put.ask_price)
+                if credit <= 0.10 or credit > width * 0.45:
+                    continue
+                short_mid = (float(short_put.bid_price) + float(short_put.ask_price)) / 2.0
+                long_mid = (float(long_put.bid_price) + float(long_put.ask_price)) / 2.0
+                spread_mid = max(0.01, short_mid - long_mid)
+                spread_wide = max(0.0, float(short_put.ask_price - short_put.bid_price) + float(long_put.ask_price - long_put.bid_price))
+                bid_ask_pct = spread_wide / max(0.01, spread_mid)
+                return short_put, long_put, credit, width, bid_ask_pct
+        return None
+
+    def manage_exit(self):
+        if self.current_trade is None:
+            return
+        dte = (self.current_trade["expiry"] - self.time.date()).days
+        short_symbol = self.current_trade["short"]
+        long_symbol = self.current_trade["long"]
+        if short_symbol not in self.securities or long_symbol not in self.securities:
+            return
+        short_sec = self.securities[short_symbol]
+        long_sec = self.securities[long_symbol]
+        current_debit = max(0.0, float(short_sec.ask_price) - float(long_sec.bid_price))
+        credit = float(self.current_trade["credit"])
+        max_loss = float(self.current_trade["max_loss"])
+        should_exit = False
+        if current_debit <= credit * 0.35:
+            self.profit_target_exits += 1
+            should_exit = True
+        elif current_debit >= credit + max_loss * 0.60:
+            self.stop_exits += 1
+            should_exit = True
+        elif dte <= 7:
+            self.expiry_exits += 1
+            should_exit = True
+        if should_exit:
+            self.liquidate(short_symbol, "exit bull put short leg")
+            self.liquidate(long_symbol, "exit bull put long leg")
+            self.current_trade = None
+            self.exit_count += 1
+            self.publish_trade_stats()
+
+    def publish_trade_stats(self):
+        entries = max(1, self.entries)
+        self.set_runtime_statistic("trader.entries", str(self.entries))
+        self.set_runtime_statistic("trader.entry_attempts", str(self.entry_attempts))
+        self.set_runtime_statistic("trader.exits", str(self.exit_count))
+        self.set_runtime_statistic("trader.fail_no_chain", str(self.fail_no_chain))
+        self.set_runtime_statistic("trader.fail_no_spread", str(self.fail_no_spread))
+        self.set_runtime_statistic("trader.fail_liquidity", str(self.fail_liquidity))
+        self.set_runtime_statistic("trader.avg_credit", str(round(self.total_credit / entries, 4)))
+        self.set_runtime_statistic("trader.avg_width", str(round(self.total_width / entries, 4)))
+        self.set_runtime_statistic("trader.avg_bid_ask_pct", str(round(self.total_bid_ask_pct / entries, 4)))
+        self.set_runtime_statistic("trader.avg_short_delta", str(round(self.selected_delta_sum / entries, 4)))
+        self.set_runtime_statistic("trader.avg_dte", str(round(self.selected_dte_sum / entries, 2)))
+        self.set_runtime_statistic("trader.avg_max_loss", str(round(self.max_loss_sum / entries, 4)))
+        self.set_runtime_statistic("trader.profit_target_exits", str(self.profit_target_exits))
+        self.set_runtime_statistic("trader.stop_exits", str(self.stop_exits))
+        self.set_runtime_statistic("trader.expiry_exits", str(self.expiry_exits))
+
+    def on_end_of_algorithm(self):
+        self.publish_trade_stats()
+        self.set_runtime_statistic("trader.final_chain_days", str(self.chain_days))
+        self.set_runtime_statistic("trader.final_contract_rows", str(self.contract_rows))
+        self.set_runtime_statistic("trader.final_greeks_rows", str(self.greeks_rows))
+        self.set_runtime_statistic("trader.final_iv_rows", str(self.iv_rows))
+        self.set_runtime_statistic("trader.candidate_gate", "requires_oos_walk_forward_pricing_robustness")
+'''
+
+
+def _generate_bull_call_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float) -> str:
+    symbols_literal = repr(symbols)
+    return f'''# region imports
+from AlgorithmImports import *
+# endregion
+
+class TraderBullCallSpreadManifest(QCAlgorithm):
+    def initialize(self):
+        self.set_start_date(*map(int, "{start}".split("-")))
+        self.set_end_date(*map(int, "{end}".split("-")))
+        self.set_cash(100000)
+        self.symbol_names = {symbols_literal}
+        self.target_multiple = {target_multiple!r}
+        self.dte_min = {dte_min}
+        self.dte_max = {dte_max}
+        self.min_open_interest = {min_oi}
+        self.min_volume = {min_vol}
+        self.max_bid_ask_pct = {max_bid_ask_pct!r}
+        self.delta_min = {delta_min!r}
+        self.delta_max = {delta_max!r}
+        self.underlying = self.add_equity(self.symbol_names[0], Resolution.DAILY).symbol
+        self.securities[self.underlying].set_data_normalization_mode(DataNormalizationMode.RAW)
+        opt = self.add_option(self.symbol_names[0], Resolution.DAILY)
+        opt.set_filter(lambda u: u.include_weeklys().calls_only().expiration(self.dte_min, self.dte_max).strikes(-5, 30))
+        self.option_symbol = opt.symbol
+        self.sma50 = self.sma(self.underlying, 50, Resolution.DAILY)
+        self.sma200 = self.sma(self.underlying, 200, Resolution.DAILY)
+        self.rsi14 = self.rsi(self.underlying, 14, MovingAverageType.WILDERS, Resolution.DAILY)
+        self.set_warmup(220, Resolution.DAILY)
+        self.current_trade = None
+        self.last_entry_date = None
+        self.last_chain_day = None
+        self.chain_days = 0
+        self.contract_rows = 0
+        self.greeks_rows = 0
+        self.iv_rows = 0
+        self.entries = 0
+        self.entry_attempts = 0
+        self.exit_count = 0
+        self.fail_no_chain = 0
+        self.fail_no_spread = 0
+        self.fail_liquidity = 0
+        self.total_debit = 0.0
+        self.total_width = 0.0
+        self.total_bid_ask_pct = 0.0
+        self.selected_delta_sum = 0.0
+        self.selected_dte_sum = 0.0
+        self.max_gain_sum = 0.0
+        self.profit_target_exits = 0
+        self.stop_exits = 0
+        self.expiry_exits = 0
+        self.set_runtime_statistic("trader.manifest_family", "bull_call_spread")
+        self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
+        self.set_runtime_statistic("trader.target_multiple_per_year", str(self.target_multiple))
+        self.set_runtime_statistic("trader.template", "bull_call_spread_v1")
+
+    def on_data(self, data):
+        self.observe_chain(data)
+        if self.is_warming_up:
+            return
+        self.manage_exit()
+        if self.current_trade is not None or self.portfolio.invested:
+            return
+        if self.last_entry_date == self.time.date():
+            return
+        if not (self.sma50.is_ready and self.sma200.is_ready and self.rsi14.is_ready):
+            return
+        price = float(self.securities[self.underlying].price)
+        if price <= 0 or price <= float(self.sma50.current.value) or price <= float(self.sma200.current.value):
+            return
+        if float(self.rsi14.current.value) < 50.0 or float(self.rsi14.current.value) > 78.0:
+            return
+        self.try_enter(data)
+
+    def observe_chain(self, data):
+        d = self.time.date()
+        if self.last_chain_day == d:
+            return
+        chain = data.option_chains.get(self.option_symbol)
+        if chain is None:
+            return
+        contracts = list(chain)[:200]
+        if not contracts:
+            return
+        greeks = 0
+        ivs = 0
+        for c in contracts:
+            if c.greeks is not None and c.greeks.delta is not None:
+                greeks += 1
+            if c.implied_volatility is not None and c.implied_volatility > 0:
+                ivs += 1
+        self.last_chain_day = d
+        self.chain_days += 1
+        self.contract_rows += len(contracts)
+        self.greeks_rows += greeks
+        self.iv_rows += ivs
+        self.set_runtime_statistic("trader.chain_days", str(self.chain_days))
+        self.set_runtime_statistic("trader.contract_rows", str(self.contract_rows))
+        self.set_runtime_statistic("trader.greeks_rows", str(self.greeks_rows))
+        self.set_runtime_statistic("trader.iv_rows", str(self.iv_rows))
+
+    def try_enter(self, data):
+        self.entry_attempts += 1
+        chain = data.option_chains.get(self.option_symbol)
+        if chain is None:
+            self.fail_no_chain += 1
+            return
+        contracts = [c for c in chain if c.right == OptionRight.CALL and c.expiry.date() > self.time.date()]
+        if not contracts:
+            self.fail_no_chain += 1
+            return
+        selected = self.select_spread(contracts)
+        if selected is None:
+            self.fail_no_spread += 1
+            return
+        long_call, short_call, debit, width, bid_ask_pct = selected
+        if debit <= 0 or width <= 0 or debit >= width * 0.80:
+            self.fail_no_spread += 1
+            return
+        strategy = OptionStrategies.bull_call_spread(self.option_symbol, float(long_call.strike), float(short_call.strike), long_call.expiry)
+        tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull call debit spread")
+        if tickets:
+            dte = (long_call.expiry.date() - self.time.date()).days
+            long_delta = abs(float(long_call.greeks.delta)) if long_call.greeks and long_call.greeks.delta is not None else 0.0
+            max_gain = width - debit
+            self.current_trade = {{"entry_date": self.time.date(), "expiry": long_call.expiry.date(), "long": long_call.symbol, "short": short_call.symbol, "debit": debit, "width": width, "max_gain": max_gain}}
+            self.last_entry_date = self.time.date()
+            self.entries += 1
+            self.total_debit += debit
+            self.total_width += width
+            self.total_bid_ask_pct += bid_ask_pct
+            self.selected_delta_sum += long_delta
+            self.selected_dte_sum += float(dte)
+            self.max_gain_sum += max_gain
+            self.publish_trade_stats()
+
+    def select_spread(self, contracts):
+        viable = []
+        for c in contracts:
+            if c.greeks is None or c.greeks.delta is None:
+                continue
+            dte = (c.expiry.date() - self.time.date()).days
+            if dte < self.dte_min or dte > self.dte_max:
+                continue
+            delta = abs(float(c.greeks.delta))
+            if delta < self.delta_min or delta > self.delta_max:
+                continue
+            bid = float(c.bid_price)
+            ask = float(c.ask_price)
+            mid = (bid + ask) / 2.0
+            if bid <= 0 or ask <= 0 or mid <= 0:
+                continue
+            if (ask - bid) / mid > self.max_bid_ask_pct:
+                self.fail_liquidity += 1
+                continue
+            if int(c.open_interest or 0) < self.min_open_interest or int(c.volume or 0) < self.min_volume:
+                self.fail_liquidity += 1
+                continue
+            viable.append(c)
+        target_delta = (self.delta_min + self.delta_max) / 2.0
+        target_dte = (self.dte_min + self.dte_max) / 2.0
+        viable = sorted(viable, key=lambda c: (abs(abs(float(c.greeks.delta)) - target_delta), abs((c.expiry.date() - self.time.date()).days - target_dte)))
+        for long_call in viable[:20]:
+            shorts = [c for c in contracts if c.expiry == long_call.expiry and c.strike > long_call.strike]
+            shorts = sorted(shorts, key=lambda c: abs(float(c.strike - long_call.strike) - 5.0))
+            for short_call in shorts[:10]:
+                if short_call.bid_price <= 0 or short_call.ask_price <= 0:
+                    continue
+                width = float(short_call.strike - long_call.strike)
+                if width <= 0:
+                    continue
+                debit = float(long_call.ask_price) - float(short_call.bid_price)
+                if debit <= 0.10 or debit >= width * 0.80:
+                    continue
+                long_mid = (float(long_call.bid_price) + float(long_call.ask_price)) / 2.0
+                short_mid = (float(short_call.bid_price) + float(short_call.ask_price)) / 2.0
+                spread_mid = max(0.01, long_mid - short_mid)
+                spread_wide = max(0.0, float(long_call.ask_price - long_call.bid_price) + float(short_call.ask_price - short_call.bid_price))
+                bid_ask_pct = spread_wide / max(0.01, spread_mid)
+                if bid_ask_pct > self.max_bid_ask_pct * 2.0:
+                    self.fail_liquidity += 1
+                    continue
+                return long_call, short_call, debit, width, bid_ask_pct
+        return None
+
+    def manage_exit(self):
+        if self.current_trade is None:
+            return
+        dte = (self.current_trade["expiry"] - self.time.date()).days
+        long_symbol = self.current_trade["long"]
+        short_symbol = self.current_trade["short"]
+        if long_symbol not in self.securities or short_symbol not in self.securities:
+            return
+        long_sec = self.securities[long_symbol]
+        short_sec = self.securities[short_symbol]
+        current_value = max(0.0, float(long_sec.bid_price) - float(short_sec.ask_price))
+        debit = float(self.current_trade["debit"])
+        max_gain = float(self.current_trade["max_gain"])
+        should_exit = False
+        if current_value >= debit + max_gain * 0.65:
+            self.profit_target_exits += 1
+            should_exit = True
+        elif current_value <= debit * 0.45:
+            self.stop_exits += 1
+            should_exit = True
+        elif dte <= 7:
+            self.expiry_exits += 1
+            should_exit = True
+        if should_exit:
+            self.liquidate(short_symbol, "exit bull call short leg")
+            self.liquidate(long_symbol, "exit bull call long leg")
+            self.current_trade = None
+            self.exit_count += 1
+            self.publish_trade_stats()
+
+    def publish_trade_stats(self):
+        entries = max(1, self.entries)
+        self.set_runtime_statistic("trader.entries", str(self.entries))
+        self.set_runtime_statistic("trader.entry_attempts", str(self.entry_attempts))
+        self.set_runtime_statistic("trader.exits", str(self.exit_count))
+        self.set_runtime_statistic("trader.fail_no_chain", str(self.fail_no_chain))
+        self.set_runtime_statistic("trader.fail_no_spread", str(self.fail_no_spread))
+        self.set_runtime_statistic("trader.fail_liquidity", str(self.fail_liquidity))
+        self.set_runtime_statistic("trader.avg_debit", str(round(self.total_debit / entries, 4)))
+        self.set_runtime_statistic("trader.avg_width", str(round(self.total_width / entries, 4)))
+        self.set_runtime_statistic("trader.avg_bid_ask_pct", str(round(self.total_bid_ask_pct / entries, 4)))
+        self.set_runtime_statistic("trader.avg_long_delta", str(round(self.selected_delta_sum / entries, 4)))
+        self.set_runtime_statistic("trader.avg_dte", str(round(self.selected_dte_sum / entries, 2)))
+        self.set_runtime_statistic("trader.avg_max_gain", str(round(self.max_gain_sum / entries, 4)))
+        self.set_runtime_statistic("trader.profit_target_exits", str(self.profit_target_exits))
+        self.set_runtime_statistic("trader.stop_exits", str(self.stop_exits))
+        self.set_runtime_statistic("trader.expiry_exits", str(self.expiry_exits))
+
+    def on_end_of_algorithm(self):
+        self.publish_trade_stats()
+        self.set_runtime_statistic("trader.final_chain_days", str(self.chain_days))
+        self.set_runtime_statistic("trader.final_contract_rows", str(self.contract_rows))
+        self.set_runtime_statistic("trader.final_greeks_rows", str(self.greeks_rows))
+        self.set_runtime_statistic("trader.final_iv_rows", str(self.iv_rows))
+        self.set_runtime_statistic("trader.candidate_gate", "requires_oos_walk_forward_pricing_robustness")
+'''
+
+
+
+def _algorithm_type_name(manifest: dict[str, Any]) -> str:
+    family = manifest.get("strategy", {}).get("family")
+    if family == "bull_put_spread":
+        return "TraderBullPutSpreadManifest"
+    if family == "bull_call_spread":
+        return "TraderBullCallSpreadManifest"
+    return "TraderManifestDiagnostics"
+
+
+def _update_project_metadata(project_dir: Path, manifest: dict[str, Any]) -> None:
+    algo_name = _algorithm_type_name(manifest)
+    for name in ["lean.json", "config.json"]:
+        path = project_dir / name
+        data = load_json(path) if path.exists() else {}
+        data["algorithm-language"] = "Python"
+        data["algorithm-location"] = "main.py"
+        if name == "lean.json":
+            data["algorithm-type-name"] = algo_name
+        data.setdefault("parameters", {})
+        data["parameters"].update({
+            "symbols": ",".join(manifest["universe"]["underlyings"]),
+            "strategy": manifest["strategy"]["family"],
+            "start": manifest["validation"]["start"],
+            "end": manifest["validation"]["end"],
+        })
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+def _archive_project(project_dir: Path, archive_path: Path) -> None:
+    with tarfile.open(archive_path, "w:gz") as tf:
+        tf.add(project_dir, arcname=project_dir.name)
+    archive_path.chmod(0o640)
+
+def parse_backtest_ids(text: str) -> tuple[int | None, str | None]:
+    project = None
+    backtest = None
+    m = re.search(r"Project\s+(?:id|ID|Id):\s*(\d+)", text, re.IGNORECASE)
+    if m:
+        project = int(m.group(1))
+    u = re.search(r"quantconnect\.com/project/(\d+)/([A-Za-z0-9_-]+)", text)
+    if u:
+        project = int(u.group(1))
+        backtest = u.group(2)
+    b = re.search(r"Backtest\s+(?:id|ID|Id):\s*([A-Za-z0-9_-]+)", text, re.IGNORECASE)
+    if b:
+        backtest = b.group(1)
+    return project, backtest
+
+
+def verdict_from_extract(extract: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
+    runtime = extract.get("runtimeStatistics") or {}
+    stats = extract.get("statistics") or {}
+    chain_days = int(str(runtime.get("trader.final_chain_days") or runtime.get("trader.chain_days") or "0").replace(",", ""))
+    greeks_rows = int(str(runtime.get("trader.final_greeks_rows") or runtime.get("trader.greeks_rows") or "0").replace(",", ""))
+    iv_rows = int(str(runtime.get("trader.final_iv_rows") or runtime.get("trader.iv_rows") or "0").replace(",", ""))
+    total_orders = int(float(str(stats.get("Total Orders", "0")).replace("%", "").replace(",", "") or 0))
+    entries = int(float(str(runtime.get("trader.entries", "0")).replace(",", "") or 0)) if "trader.entries" in runtime else 0
+    blockers = []
+    if chain_days <= 0:
+        blockers.append("no option-chain evidence returned")
+    if greeks_rows <= 0:
+        blockers.append("no greeks evidence returned")
+    if iv_rows <= 0:
+        blockers.append("no implied-volatility evidence returned")
+    if total_orders <= 0 and entries <= 0:
+        blockers.append("no executed trades/orders returned")
+    def _pct(v: Any) -> float:
+        try:
+            return float(str(v).replace("%", "").replace(",", "").strip())
+        except Exception:
+            return 0.0
+    def _num(v: Any) -> float:
+        try:
+            return float(str(v).replace(",", "").strip())
+        except Exception:
+            return 0.0
+    net_profit_pct = _pct(stats.get("Net Profit"))
+    sharpe = _num(stats.get("Sharpe Ratio"))
+    if total_orders < 30 and entries < 15:
+        blockers.append("too few executed trades for candidate status")
+    status = "technical_blocker" if blockers and total_orders <= 0 and entries <= 0 else "refine"
+    if total_orders >= 30 and net_profit_pct <= 0 and sharpe <= 0:
+        status = "discard"
+    if warnings and status not in {"discard", "technical_blocker"}:
+        status = "refine"
+    return {
+        "type": "qc_run_verdict",
+        "status": status,
+        "candidate_status": False,
+        "reason": "diagnostics/evidence harness completed; strategy-specific trade validation still required" if not blockers else "; ".join(blockers),
+        "blockers": blockers,
+        "warnings": warnings,
+        "metrics": {
+            "chain_days": chain_days,
+            "greeks_rows": greeks_rows,
+            "iv_rows": iv_rows,
+            "total_orders": total_orders,
+            "entries": entries,
+            "return": (extract.get("runtimeStatistics") or {}).get("Return"),
+            "drawdown": (extract.get("statistics") or {}).get("Drawdown"),
+            "sharpe": (extract.get("statistics") or {}).get("Sharpe Ratio"),
+            "net_profit": (extract.get("statistics") or {}).get("Net Profit"),
+            "cagr": (extract.get("statistics") or {}).get("Compounding Annual Return"),
+        },
+        "mandate_notes": [
+            "Options-only/defined-risk guards enforced before QC run.",
+            "Candidate status remains blocked until strategy-specific backtest, pricing diagnostics, OOS/walk-forward, and parameter stability are present.",
+        ],
+    }
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    manifest = load_json(Path(args.manifest))
+    warnings = validate_manifest(manifest)
+    print(json.dumps({"ok": True, "warnings": warnings}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def normalize_qc_run_id(run_id: str) -> str:
+    safe_id = sanitize_run_id(run_id)
+    if safe_id.startswith(("qc-run-", "research-pass-")):
+        return safe_id
+    return sanitize_run_id(f"qc-run-{safe_id}")
+
+
+def cmd_prepare(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest)
+    manifest = load_json(manifest_path)
+    warnings = validate_manifest(manifest)
+    run_id = args.run_id or f"qc-run-{manifest['hypothesis']['id']}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+    safe_id = normalize_qc_run_id(run_id)
+    run_dir = REPORTS_ROOT / safe_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    os.chmod(run_dir, 0o750)
+    (run_dir / "research_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (run_dir / "mandate_warnings.json").write_text(json.dumps({"warnings": warnings}, indent=2) + "\n", encoding="utf-8")
+    write_candidate_from_manifest(manifest, run_dir / "candidate.json")
+    rc = run([QC_CLOUD_RUN, "prepare", str(run_dir), str(run_dir / "candidate.json")], stdout=run_dir / "qc_prepare_stdout.log", stderr=run_dir / "qc_prepare_stderr.log")
+    if rc != 0:
+        print(json.dumps({"ok": False, "run_dir": str(run_dir), "prepare_returncode": rc}, indent=2))
+        return rc
+    cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
+    project_dir = Path(cloud_manifest["project_dir"])
+    (project_dir / "main.py").write_text(generate_qc_algorithm(manifest), encoding="utf-8")
+    _update_project_metadata(project_dir, manifest)
+    _archive_project(project_dir, run_dir / "qc_cloud_project.tgz")
+    result = {"ok": True, "run_dir": str(run_dir), "project_ref": cloud_manifest.get("project_ref"), "warnings": warnings}
+    (run_dir / "qc_run_prepare.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+
+def _load_qc_env() -> dict[str, str]:
+    require(QC_ENV.exists() and QC_ENV.is_file() and not QC_ENV.is_symlink(), "QC env missing/unreadable")
+    env = os.environ.copy()
+    for line in QC_ENV.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            env[key] = value
+    require(bool(env.get("QUANTCONNECT_USER_ID")), "missing QUANTCONNECT_USER_ID")
+    require(bool(env.get("QUANTCONNECT_API_TOKEN")), "missing QUANTCONNECT_API_TOKEN")
+    return env
+
+
+def _sanitize_text(text: str, env: dict[str, str] | None = None) -> str:
+    env = env or {}
+    token = env.get("QUANTCONNECT_API_TOKEN") or os.environ.get("QUANTCONNECT_API_TOKEN")
+    if token:
+        text = text.replace(token, "<redacted>")
+    text = re.sub(r"(?i)(api[_-]?token|token|secret|password)(\s*[=:]\s*)\S+", r"\1\2<redacted>", text)
+    text = re.sub(r"(?i)(Authorization:\s*Bearer\s+)\S+", r"\1<redacted>", text)
+    return text[:12000]
+
+
+def qc_backtest_timeout_seconds() -> int:
+    raw = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", "900")
+    try:
+        timeout_seconds = int(raw)
+    except ValueError as exc:
+        raise ManifestError("TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be an integer >= 60") from exc
+    require(timeout_seconds >= 60, "TRADING_QC_BACKTEST_TIMEOUT_SECONDS must be >= 60")
+    return timeout_seconds
+
+
+def _run_prepared_qc_project(run_dir: Path) -> int:
+    cloud_manifest = load_json(run_dir / "qc_cloud_run_manifest.json")
+    project_dir = Path(cloud_manifest["project_dir"]).resolve(strict=True)
+    lean_root = LEAN_WORKSPACE.resolve(strict=False)
+    require(lean_root == project_dir or lean_root in project_dir.parents, "prepared QC project must be under Lean workspace")
+    project_ref = str(cloud_manifest.get("project_ref") or cloud_manifest.get("project_name") or project_dir.name)
+    require(project_dir.exists() and (project_dir / "main.py").exists(), "prepared QC project missing main.py")
+    env = _load_qc_env()
+    timeout_seconds = qc_backtest_timeout_seconds()
+    stdout_path = run_dir / "qc_cloud_backtest_stdout.log"
+    stderr_path = run_dir / "qc_cloud_backtest_stderr.log"
+    login = subprocess.run(["lean", "login", "--user-id", env["QUANTCONNECT_USER_ID"]], input=env["QUANTCONNECT_API_TOKEN"] + "\n", text=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env, cwd=str(LEAN_WORKSPACE), check=False)
+    err_text = login.stderr or ""
+    if login.returncode != 0:
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text(_sanitize_text("lean login failed; refusing to use cached QuantConnect credentials\n" + err_text, env), encoding="utf-8")
+        return login.returncode
+    try:
+        push = subprocess.run(["lean", "cloud", "push", "--project", str(project_dir)], text=True, capture_output=True, env=env, cwd=str(LEAN_WORKSPACE), check=False, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        stdout_path.write_text(_sanitize_text((exc.stdout or "") if isinstance(exc.stdout, str) else "", env), encoding="utf-8")
+        stderr_path.write_text(_sanitize_text("lean cloud push timed out", env), encoding="utf-8")
+        return 124
+    out_text = push.stdout or ""
+    err_text += "\n" + (push.stderr or "")
+    backtest_rc = 99
+    if push.returncode == 0:
+        try:
+            bt = subprocess.run(["lean", "cloud", "backtest", project_ref, "--push", "--name", f"{run_dir.name}-bounded-strategy-evidence"], text=True, capture_output=True, env=env, cwd=str(LEAN_WORKSPACE), check=False, timeout=timeout_seconds)
+            out_text += "\n" + (bt.stdout or "")
+            err_text += "\n" + (bt.stderr or "")
+            backtest_rc = bt.returncode
+        except subprocess.TimeoutExpired as exc:
+            out_text += "\n" + ((exc.stdout or "") if isinstance(exc.stdout, str) else "")
+            err_text += "\nlean cloud backtest timed out after " + str(timeout_seconds) + " seconds"
+            backtest_rc = 124
+    stdout_path.write_text(_sanitize_text(out_text, env), encoding="utf-8")
+    stderr_path.write_text(_sanitize_text(err_text, env), encoding="utf-8")
+    stdout_path.chmod(0o640); stderr_path.chmod(0o640)
+    cloud_manifest.update({
+        "status": "cloud_backtest_completed" if push.returncode == 0 and backtest_rc == 0 else "cloud_backtest_failed",
+        "push_returncode": push.returncode,
+        "backtest_returncode": backtest_rc,
+        "completed_at_utc": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        "logs": {"stdout": "qc_cloud_backtest_stdout.log", "stderr": "qc_cloud_backtest_stderr.log"},
+    })
+    (run_dir / "qc_cloud_run_manifest.json").write_text(json.dumps(cloud_manifest, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+    return 0 if push.returncode == 0 and backtest_rc == 0 else 1
+
+
+def _contained_dir(path: Path, root: Path) -> Path:
+    real_root = root.resolve(strict=False)
+    real_path = path.resolve(strict=True)
+    require(real_path.is_dir(), "run_dir must be a directory")
+    require(real_root == real_path or real_root in real_path.parents, "run_dir must be under reports root")
+    return real_path
+
+
+def backtest_extract_error(extract: dict[str, Any], expected_project_id: int | None = None, expected_backtest_id: str | None = None) -> str | None:
+    if extract.get("type") != "qc_backtest_extract":
+        return "backtest extract has unexpected type"
+    if extract.get("ok") is not True:
+        return "backtest extract reported failure"
+    if expected_project_id is not None and extract.get("projectId") != expected_project_id:
+        return "backtest extract project id mismatch"
+    if expected_backtest_id is not None and extract.get("backtestId") != expected_backtest_id:
+        return "backtest extract backtest id mismatch"
+    if extract.get("error") or extract.get("stacktrace"):
+        return "backtest extract contains QC error or stacktrace"
+    has_statistics = isinstance(extract.get("statistics"), dict) and bool(extract.get("statistics"))
+    has_runtime_statistics = isinstance(extract.get("runtimeStatistics"), dict) and bool(extract.get("runtimeStatistics"))
+    has_charts = isinstance(extract.get("charts"), dict) and bool(extract.get("charts"))
+    if not (has_statistics or has_runtime_statistics or has_charts):
+        return "backtest extract missing expected backtest payload"
+    return None
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    run_dir = _contained_dir(Path(args.run_dir), REPORTS_ROOT)
+    lock_path = REPORTS_ROOT / ".qc-run.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(json.dumps({"ok": False, "error": "another qc run is already active", "run_dir": str(run_dir)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 75
+    manifest = load_json(run_dir / "research_manifest.json")
+    warnings = validate_manifest(manifest)
+    candidate = run_dir / "candidate.json"
+    stdout = run_dir / "qc_submit_stdout.log"
+    stderr = run_dir / "qc_submit_stderr.log"
+    rc = _run_prepared_qc_project(run_dir)
+    stdout.write_text("QC_PREPARED_PROJECT_RUN_COMPLETED\n" if rc == 0 else "QC_PREPARED_PROJECT_RUN_FAILED\n", encoding="utf-8")
+    stderr.write_text("", encoding="utf-8")
+    text = stdout.read_text(encoding="utf-8", errors="replace") + "\n" + stderr.read_text(encoding="utf-8", errors="replace")
+    for log_name in ["qc_cloud_backtest_stdout.log", "qc_cloud_backtest_stderr.log", "qc_cloud_run_manifest.json"]:
+        log_path = run_dir / log_name
+        if log_path.exists():
+            text += "\n" + log_path.read_text(encoding="utf-8", errors="replace")
+    project_id, backtest_id = parse_backtest_ids(text)
+    result: dict[str, Any] = {"ok": False, "submit_returncode": rc, "run_dir": str(run_dir), "projectId": project_id, "backtestId": backtest_id}
+    final_rc = rc
+    evidence_ok = False
+    if rc == 0 and not (project_id and backtest_id):
+        result["evidence_error"] = "missing project/backtest ids; evidence extraction was not possible"
+        final_rc = 1
+    elif project_id and backtest_id:
+        extract_path = run_dir / "qc_backtest_extract.json"
+        erc = run([QC_EXTRACT, "backtest", str(project_id), backtest_id, str(extract_path)], stdout=run_dir / "qc_extract_stdout.log", stderr=run_dir / "qc_extract_stderr.log")
+        result["extract_returncode"] = erc
+        if erc == 0 and extract_path.exists():
+            extract = load_json(extract_path)
+            extract_error = backtest_extract_error(extract, project_id, backtest_id)
+            if extract_error:
+                result["evidence_error"] = extract_error
+                final_rc = 1
+            else:
+                verdict = verdict_from_extract(extract, warnings)
+                (run_dir / "verdict.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                result["verdict"] = verdict["status"]
+                evidence_ok = True
+        elif rc == 0:
+            result["evidence_error"] = "backtest extract failed or did not create qc_backtest_extract.json"
+            final_rc = 1
+    result["ok"] = rc == 0 and evidence_ok
+    (run_dir / "qc_run_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    summary = run_dir / "qc_cloud_run_summary.md"
+    status = "completed" if rc == 0 else "failed"
+    verdict_status = result.get("verdict", "none")
+    summary.write_text(
+        f"# QC Cloud Run\n\n"
+        f"Status: `{status}`\n\n"
+        f"Project ID: `{project_id}`\n"
+        f"Backtest ID: `{backtest_id}`\n"
+        f"Submit rc: `{rc}`\n"
+        f"Verdict: `{verdict_status}`\n\n"
+        "Artifacts:\n"
+        "- research_manifest.json\n"
+        "- qc_cloud_project.tgz\n"
+        "- qc_cloud_backtest_stdout.log\n"
+        "- qc_cloud_backtest_stderr.log\n"
+        "- qc_backtest_extract.json\n"
+        "- verdict.json\n",
+        encoding="utf-8",
+    )
+    summary.chmod(0o640)
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return final_rc
+
+
+
+def _sweep_hypothesis_id(base_id: str, index: int) -> str:
+    suffix = f"-sweep-{index}"
+    safe_base = re.sub(r"[^A-Za-z0-9._-]", "-", str(base_id or "hypothesis"))
+    if len(safe_base) + len(suffix) > 80:
+        safe_base = safe_base[: 80 - len(suffix)]
+    safe_base = safe_base.strip("-._") or "hypothesis"
+    if len(safe_base) < 3:
+        safe_base = safe_base.ljust(3, "x")
+    return safe_base + suffix
+
+
+def _sweep_variations(manifest: dict[str, Any], max_runs: int) -> list[dict[str, Any]]:
+    family = manifest.get("strategy", {}).get("family")
+    base_filters = manifest.get("option_filters") or {}
+    if family == "bull_call_spread":
+        candidates = [
+            {"dte_min": 14, "dte_max": 45, "delta_min": 0.45, "delta_max": 0.70, "min_open_interest": 50, "min_volume": 0, "max_bid_ask_pct": 0.35},
+            {"dte_min": 7, "dte_max": 30, "delta_min": 0.35, "delta_max": 0.60, "min_open_interest": 25, "min_volume": 0, "max_bid_ask_pct": 0.40},
+            {"dte_min": 21, "dte_max": 60, "delta_min": 0.30, "delta_max": 0.55, "min_open_interest": 0, "min_volume": 0, "max_bid_ask_pct": 0.45},
+        ]
+    elif family == "bull_put_spread":
+        # Conservative autonomous first pass: vary only test mechanics/filters,
+        # not the thesis. Broader pivots should be separate manifests/runs.
+        candidates = [
+            {"dte_min": 14, "dte_max": 45, "delta_min": -0.30, "delta_max": -0.12, "min_open_interest": 50, "min_volume": 0, "max_bid_ask_pct": 0.35},
+            {"dte_min": 7, "dte_max": 30, "delta_min": -0.35, "delta_max": -0.15, "min_open_interest": 25, "min_volume": 0, "max_bid_ask_pct": 0.40},
+            {"dte_min": 21, "dte_max": 60, "delta_min": -0.25, "delta_max": -0.08, "min_open_interest": 0, "min_volume": 0, "max_bid_ask_pct": 0.45},
+            {"dte_min": 30, "dte_max": 75, "delta_min": -0.20, "delta_max": -0.05, "min_open_interest": 0, "min_volume": 0, "max_bid_ask_pct": 0.50},
+        ]
+    else:
+        return [manifest]
+    out=[]
+    for i, filters in enumerate(candidates[:max_runs], start=1):
+        m=copy.deepcopy(manifest)
+        m.setdefault("option_filters", {})
+        merged=dict(base_filters)
+        merged.update(filters)
+        m["option_filters"] = merged
+        m["hypothesis"]["id"] = _sweep_hypothesis_id(manifest["hypothesis"]["id"], i)
+        m["hypothesis"]["title"] = f"{manifest['hypothesis']['title']} sweep {i}"
+        m.setdefault("pivot_policy", {})["must_document_deviation"] = True
+        out.append(m)
+    return out
+
+
+def _read_result_summary(run_dir: Path) -> dict[str, Any]:
+    summary: dict[str, Any] = {"run_dir": str(run_dir)}
+    for name in ["qc_run_result.json", "verdict.json"]:
+        path = run_dir / name
+        if path.exists():
+            try:
+                summary[name.removesuffix(".json")] = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                summary[f"{name}_error"] = str(exc)
+    extract = run_dir / "qc_backtest_extract.json"
+    if extract.exists():
+        try:
+            data = json.loads(extract.read_text(encoding="utf-8"))
+            stats = data.get("statistics", {}) or {}
+            runtime = data.get("runtimeStatistics", {}) or {}
+            summary["metrics"] = {
+                "orders": stats.get("Total Orders"),
+                "return": runtime.get("Return"),
+                "net_profit": stats.get("Net Profit"),
+                "cagr": stats.get("Compounding Annual Return"),
+                "drawdown": stats.get("Drawdown"),
+                "sharpe": stats.get("Sharpe Ratio"),
+                "win_rate": stats.get("Win Rate"),
+            }
+        except Exception as exc:
+            summary["extract_error"] = str(exc)
+    return summary
+
+
+def _score_summary(summary: dict[str, Any]) -> float:
+    metrics = summary.get("metrics") or {}
+    def pct(v: Any) -> float:
+        try:
+            return float(str(v).replace("%", "").replace(",", "").strip())
+        except Exception:
+            return 0.0
+    def num(v: Any) -> float:
+        try:
+            return float(str(v).replace(",", "").strip())
+        except Exception:
+            return 0.0
+    orders = num(metrics.get("orders"))
+    cagr = pct(metrics.get("cagr"))
+    drawdown = pct(metrics.get("drawdown"))
+    sharpe = num(metrics.get("sharpe"))
+    # Bias toward enough evidence; do not let tiny samples win.
+    return orders * 0.5 + cagr * 0.4 + sharpe * 10.0 - drawdown * 0.3
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    manifest = load_json(Path(args.manifest))
+    warnings = validate_manifest(manifest)
+    max_runs = max(1, min(int(args.max_runs), int(manifest.get("validation", {}).get("max_variations", args.max_runs))))
+    sweep_id = args.sweep_id or f"qc-sweep-{manifest['hypothesis']['id']}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
+    sweep_id = re.sub(r"[^A-Za-z0-9._-]", "-", sweep_id)[:100]
+    sweep_dir = REPORTS_ROOT / sweep_id
+    sweep_dir.mkdir(parents=True, exist_ok=False)
+    os.chmod(sweep_dir, 0o750)
+    variations = _sweep_variations(manifest, max_runs)
+    summaries=[]
+    for idx, variation in enumerate(variations, start=1):
+        var_path = sweep_dir / f"manifest-{idx}.json"
+        var_path.write_text(json.dumps(variation, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+        raw_run_id = f"qc-run-{sweep_id}-v{idx}-{variation['hypothesis']['id']}"
+        run_id = sanitize_run_id(raw_run_id)
+        prep = subprocess.run([sys.executable, __file__, "prepare", str(var_path), "--run-id", run_id], text=True, capture_output=True)
+        item={"idx": idx, "manifest": str(var_path), "run_id": run_id, "prepare_returncode": prep.returncode, "prepare_stdout": prep.stdout[-4000:], "prepare_stderr": prep.stderr[-4000:]}
+        run_dir = REPORTS_ROOT / run_id
+        if prep.returncode == 0 and args.execute:
+            runp = subprocess.run([sys.executable, __file__, "run", str(run_dir)], text=True, capture_output=True)
+            item.update({"run_returncode": runp.returncode, "run_stdout": runp.stdout[-4000:], "run_stderr": runp.stderr[-4000:]})
+            item.update(_read_result_summary(run_dir))
+            if idx < len(variations):
+                guard_sleep = int(manifest.get("guards", {}).get("rate_limit_seconds", 60))
+                time.sleep(max(guard_sleep, int(args.sleep_seconds)))
+        elif prep.returncode == 0:
+            item.update({"run_dir": str(run_dir), "prepared_only": True})
+        summaries.append(item)
+    ranked = sorted(summaries, key=_score_summary, reverse=True)
+    if args.execute:
+        ok = all(x.get("prepare_returncode") == 0 and x.get("run_returncode") == 0 and (x.get("qc_run_result") or {}).get("ok") is True for x in summaries)
+    else:
+        ok = all(x.get("prepare_returncode") == 0 for x in summaries)
+    result={"ok": ok, "type":"qc_run_sweep", "sweep_id": sweep_id, "execute": bool(args.execute), "warnings": warnings, "count": len(summaries), "runs": summaries, "ranking": ranked}
+    (sweep_dir / "sweep_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Mandate-aware QC Cloud research runner")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    v = sub.add_parser("validate")
+    v.add_argument("manifest")
+    v.set_defaults(func=cmd_validate)
+    pr = sub.add_parser("prepare")
+    pr.add_argument("manifest")
+    pr.add_argument("--run-id")
+    pr.set_defaults(func=cmd_prepare)
+    rn = sub.add_parser("run")
+    rn.add_argument("run_dir")
+    rn.set_defaults(func=cmd_run)
+    sw = sub.add_parser("sweep")
+    sw.add_argument("manifest")
+    sw.add_argument("--sweep-id")
+    sw.add_argument("--max-runs", type=int, default=3)
+    sw.add_argument("--execute", action="store_true")
+    sw.add_argument("--sleep-seconds", type=int, default=300)
+    sw.set_defaults(func=cmd_sweep)
+    args = p.parse_args()
+    try:
+        return int(args.func(args))
+    except ManifestError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 64
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
