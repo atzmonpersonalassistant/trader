@@ -37,6 +37,7 @@ user=os.environ["QUANTCONNECT_USER_ID"]
 token=os.environ["QUANTCONNECT_API_TOKEN"]
 ts=str(int(time.time()))
 pw=hashlib.sha256(f"{token}:{ts}".encode()).hexdigest()
+# Match Lean CLI BacktestClient.get: GET /backtests/read with query params.
 r=requests.get(
     "https://www.quantconnect.com/api/v2/backtests/read",
     params={"projectId": project_id, "backtestId": backtest_id},
