@@ -202,6 +202,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("exit_latest=rd", multi)
         self.assertIn("after_market_report_day_close_no_hold_through", multi)
 
+    def test_multiyear_outputs_per_window_results(self):
+        multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
+        self.assertIn("window_results", multi)
+        self.assertIn("[1,3,5", multi)
+        self.assertIn("BLOCKED_HISTORICAL_OPTION_WINDOW_GATE", multi)
+
 
 if __name__ == "__main__":
     unittest.main()
