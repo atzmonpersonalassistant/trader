@@ -227,6 +227,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("BLOCKED_QC_NO_OPTION_CHAIN_ROWS_ON_VALUATION_DATE", scan)
         self.assertIn("valuation_date", scan)
 
+    def test_stage2_runner_parses_chunked_stage2_json(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("trader.stage2_json_%02d", scan)
+        self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
+
 
 if __name__ == "__main__":
     unittest.main()
