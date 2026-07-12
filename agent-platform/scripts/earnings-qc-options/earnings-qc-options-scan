@@ -158,15 +158,20 @@ def ensure_qc_project(project_dir: pathlib.Path, project_name: str = QC_PROJECT_
     return int(project['projectId']), str(project.get('organizationId'))
 
 
+def latest_weekday_on_or_before(day: datetime.date) -> datetime.date:
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
 def write_qc_stage2_project(project_dir: pathlib.Path, batch_rows: list[dict[str, Any]], today: datetime.date) -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
     earnings = {r['symbol']: r['report_date'] for r in batch_rows}
     last_year = {r['symbol']: r.get('last_year_report_date') for r in batch_rows}
-    # Stage 2 is a point-in-time daily scanner: use the scan valuation date only.
-    # Do not scan a multi-day window and stop on the first option-chain slice,
-    # because that can use stale bid/ask/Greeks from days before the run date.
-    start = today
-    end = today
+    # Stage 2 is a point-in-time daily scanner: use the latest weekday valuation date.
+    # Avoid non-trading weekend dates that can return no option-chain slices and false OK scans.
+    valuation_date = latest_weekday_on_or_before(today)
+    start = valuation_date
+    end = valuation_date
     (project_dir / 'config.json').write_text(json.dumps({
         'algorithm-language': 'Python', 'parameters': {},
         'description': 'Earnings cheap near-expiry call QC batch diagnostic',
@@ -339,6 +344,9 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     elif batch_ok and (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0:
         status = 'BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED'
         batch_ok = False
+    elif batch_ok and batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0:
+        status = 'BLOCKED_QC_NO_OPTION_CHAIN_ROWS_ON_VALUATION_DATE'
+        batch_ok = False
     elif batch_ok:
         status = 'OK_STAGE3_QC_BATCH'
     else:
@@ -360,12 +368,13 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'qc_batch_limit': qc_batch_limit,
         'qc_batch_count': batch_n,
         'qc_processed_row_count': len((batch.get('parsed_result') or {}).get('rows') or []),
+        'valuation_date': latest_weekday_on_or_before(today).isoformat(),
         'qc_batch_offset': qc_batch_offset,
         'candidate_count': candidate_count,
         'candidate_details': candidate_details,
         'candidate_details_parse_failed': candidate_details_parse_failed,
         'tuning': tuning_stats,
-        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'))),
+        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else ('QC produced zero option-chain rows on valuation date' if batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.')))),
         'required_next_step': 'Run QC/EODHD multi-year historical option-PnL backtest with explicit exit policy.' if batch_ok else 'Fix QC batch diagnostic failure.',
         'qc_checks': checks,
         'funnel': {

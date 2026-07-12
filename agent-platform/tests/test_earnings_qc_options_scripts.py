@@ -221,6 +221,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         }
         self.assertFalse(full.multiyear_result_passes(row))
 
+    def test_stage2_blocks_zero_processed_rows_on_valuation_date(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("latest_weekday_on_or_before", scan)
+        self.assertIn("BLOCKED_QC_NO_OPTION_CHAIN_ROWS_ON_VALUATION_DATE", scan)
+        self.assertIn("valuation_date", scan)
+
 
 if __name__ == "__main__":
     unittest.main()
