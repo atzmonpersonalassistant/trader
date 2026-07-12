@@ -296,7 +296,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         qc_batch_offset = int(os.environ.get('QC_BATCH_OFFSET', '0'))
     start = today + timedelta(days=21)
     end = today + timedelta(days=28)
-    run_id = f"earnings-qc-options-scan-{today.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+    run_id = f"earnings-qc-options-scan-{today.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}-{os.getpid()}-{qc_batch_offset}"
     run_dir = REPORT_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 

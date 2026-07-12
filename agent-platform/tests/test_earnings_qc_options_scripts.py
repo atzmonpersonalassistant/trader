@@ -171,6 +171,16 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)", full)
         self.assertIn("rf.add_argument('--end-to-end'", full)
 
+    def test_scan_run_id_is_chunk_unique_for_parallel_runs(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("os.getpid()", scan)
+        self.assertIn("qc_batch_offset", scan)
+
+    def test_failed_multiyear_chunks_are_retry_targets(self):
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("mb.get('ok') is False", full)
+        self.assertIn("mandatory multiyear option-PnL backtest failed", full)
+
 
 if __name__ == "__main__":
     unittest.main()

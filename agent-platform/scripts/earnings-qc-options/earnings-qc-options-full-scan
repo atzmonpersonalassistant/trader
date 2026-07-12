@@ -195,6 +195,8 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
+            if mb.get('ok') is False:
+                failed.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'blocked_reason': 'mandatory multiyear option-PnL backtest failed'})
             ok_syms={r.get('symbol') for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
         else:
             ok_syms=set()
