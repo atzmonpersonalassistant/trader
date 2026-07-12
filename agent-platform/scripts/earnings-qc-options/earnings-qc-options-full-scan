@@ -39,7 +39,7 @@ def multiyear_result_passes(r: dict) -> bool:
     mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
     max_drawdown = float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999.0)
     max_loss = float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999.0)
-    return (
+    base_ok = (
         sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8'))
         and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
         and median_return > float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0'))
@@ -47,6 +47,13 @@ def multiyear_result_passes(r: dict) -> bool:
         and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
         and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
     )
+    windows = r.get('window_results') or []
+    if windows:
+        return base_ok and all(
+            w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
+            for w in windows
+        )
+    return base_ok
 
 def load_chunk(run_dir: pathlib.Path, offset: int) -> dict:
     p = run_dir / f'chunk-{offset}.stdout.json'

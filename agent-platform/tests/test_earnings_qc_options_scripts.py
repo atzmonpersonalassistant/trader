@@ -208,6 +208,19 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("[1,3,5", multi)
         self.assertIn("BLOCKED_HISTORICAL_OPTION_WINDOW_GATE", multi)
 
+    def test_full_scan_gate_rejects_failed_window_results(self):
+        full = load_script("earnings-qc-options-full-scan")
+        row = {
+            "status": "OK", "sample_size": 12, "win_rate": 0.5,
+            "median_return_pct": 10.0, "mean_return_pct": 15.0,
+            "max_drawdown_pct": 0.0, "max_loss_pct": 0.0,
+            "window_results": [
+                {"window": "1y", "status": "BLOCKED_HISTORICAL_OPTION_SAMPLE_INSUFFICIENT", "sample_size": 0},
+                {"window": "3y", "status": "OK", "sample_size": 3},
+            ],
+        }
+        self.assertFalse(full.multiyear_result_passes(row))
+
 
 if __name__ == "__main__":
     unittest.main()
