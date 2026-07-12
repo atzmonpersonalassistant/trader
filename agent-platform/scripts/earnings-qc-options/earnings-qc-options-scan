@@ -144,15 +144,15 @@ def qc_api(method: str, endpoint: str, payload: dict | None = None) -> dict:
     return out
 
 
-def ensure_qc_project(project_dir: pathlib.Path) -> tuple[int, str]:
+def ensure_qc_project(project_dir: pathlib.Path, project_name: str = QC_PROJECT_NAME) -> tuple[int, str]:
     cfg_path = project_dir / 'config.json'
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     if int(cfg.get('cloud-id') or 0) > 0 and cfg.get('organization-id'):
         return int(cfg['cloud-id']), str(cfg['organization-id'])
     projects = qc_api('GET', 'projects/read').get('projects', [])
-    project = next((p for p in projects if p.get('name') == QC_PROJECT_NAME), None)
+    project = next((p for p in projects if p.get('name') == project_name), None)
     if project is None:
-        project = qc_api('POST', 'projects/create', {'name': QC_PROJECT_NAME, 'language': 'Py'})['projects'][0]
+        project = qc_api('POST', 'projects/create', {'name': project_name, 'language': 'Py'})['projects'][0]
     cfg.update({'algorithm-language': 'Python', 'parameters': {}, 'description': 'Earnings cheap near-expiry call QC batch diagnostic', 'cloud-id': project['projectId'], 'organization-id': project.get('organizationId')})
     cfg_path.write_text(json.dumps(cfg, indent=2) + '\n')
     return int(project['projectId']), str(project.get('organizationId'))
@@ -230,20 +230,21 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
     batch_rows = calendar_rows[max(0, batch_offset):max(0, batch_offset)+max(0, batch_limit)]
     if not batch_rows:
         return {'ok': False, 'reason': 'empty_batch'}
-    project_dir = LEAN_WORKSPACE / QC_PROJECT_NAME
+    project_name = f'{QC_PROJECT_NAME}-{batch_offset}'
+    project_dir = LEAN_WORKSPACE / project_name
     write_qc_stage2_project(project_dir, batch_rows, today)
-    project_id, organization_id = ensure_qc_project(project_dir)
+    project_id, organization_id = ensure_qc_project(project_dir, project_name)
     # ensure_qc_project may have rewritten config after project creation; preserve main.py and push.
     push = subprocess.run(['lean','cloud','push','--project',str(project_dir),'--force'], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
     name = f"earnings-qc-stage2-{today.strftime('%Y%m%d')}-{datetime.datetime.now(datetime.timezone.utc).strftime('%H%M%S')}-n{len(batch_rows)}"
-    bt = subprocess.run(['lean','cloud','backtest',QC_PROJECT_NAME,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
+    bt = subprocess.run(['lean','cloud','backtest',project_name,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
     (run_dir/'qc_stage2_push_stdout.txt').write_text(push.stdout)
     (run_dir/'qc_stage2_push_stderr.txt').write_text(push.stderr)
     (run_dir/'qc_stage2_backtest_stdout.txt').write_text(bt.stdout)
     (run_dir/'qc_stage2_backtest_stderr.txt').write_text(bt.stderr)
     m = re.search(r'Backtest id:\s*([0-9a-f]+)', bt.stdout + '\n' + bt.stderr)
     backtest_id = m.group(1) if m else None
-    out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'project_id': project_id, 'organization_id': organization_id, 'project_name': QC_PROJECT_NAME, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode}
+    out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'project_id': project_id, 'organization_id': organization_id, 'project_name': project_name, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode}
     if backtest_id:
         try:
             b = qc_api('GET', 'backtests/read', {'projectId': project_id, 'backtestId': backtest_id}).get('backtest', {})
