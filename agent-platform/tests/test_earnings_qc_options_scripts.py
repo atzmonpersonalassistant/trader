@@ -136,6 +136,20 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         }))
         # Promotion code must additionally require summary["ok"], not just result_passes().
 
+    def test_stage2_candidate_json_parse_failure_should_block_when_count_positive(self):
+        # Regression guard for runtime-stat truncation: if trader.candidates says >0 but
+        # details JSON cannot parse, the run must block rather than silently skip
+        # mandatory multiyear validation. This script-level invariant is enforced in
+        # run_now; here we keep the expected status string pinned.
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("BLOCKED_QC_CANDIDATE_DETAILS_TRUNCATED", scan)
+        self.assertIn("candidate_details_parse_failed", scan)
+
+    def test_stage2_partial_nasdaq_fetch_should_block(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("BLOCKED_NASDAQ_CALENDAR_PARTIAL_FETCH_FAILED", scan)
+        self.assertIn("calendar_fetch_failed", scan)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -302,6 +302,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
 
     calendar_rows, calendar_fetches = nasdaq_calendar_window(start, end)
     symbols = sorted({r['symbol'] for r in calendar_rows})
+    calendar_fetch_failed = any(m.get('error') or m.get('parse_error') for m in calendar_fetches)
     # Preserve Nasdaq market-cap order for QC batch by using calendar order.
     checks = qc_capability_probe(calendar_rows, run_dir, min(qc_batch_limit, max(0, len(calendar_rows)-qc_batch_offset)), today, qc_batch_offset) if calendar_rows else qc_capability_probe([], run_dir, 0, today, 0)
     batch = checks.get('qc_option_chain_batch_diagnostic', {})
@@ -310,25 +311,33 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     batch_n = int(batch.get('symbols_requested') or 0)
     candidate_count = stat_int(stats, 'trader.candidates') if batch_ok else None
     candidate_details = []
+    candidate_details_parse_failed = False
     tuning_stats = {}
     if batch_ok:
         try:
             candidate_details = json.loads(stats.get('trader.candidates_json') or '[]')
         except Exception:
             candidate_details = []
+            candidate_details_parse_failed = True
         try:
             tuning_stats = json.loads(stats.get('trader.tuning') or '{}')
         except Exception:
             tuning_stats = {}
     if not calendar_rows:
         status = 'BLOCKED_NASDAQ_CALENDAR_EMPTY'
+    elif calendar_fetch_failed:
+        status = 'BLOCKED_NASDAQ_CALENDAR_PARTIAL_FETCH_FAILED'
+        batch_ok = False
+    elif batch_ok and candidate_details_parse_failed and (candidate_count or 0) > 0:
+        status = 'BLOCKED_QC_CANDIDATE_DETAILS_TRUNCATED'
+        batch_ok = False
     elif batch_ok:
         status = 'OK_STAGE3_QC_BATCH'
     else:
         status = 'BLOCKED_QC_BATCH_FAILED'
 
     payload = {
-        'ok': bool(calendar_rows) and batch_ok,
+        'ok': bool(calendar_rows) and batch_ok and not calendar_fetch_failed and not (candidate_details_parse_failed and (candidate_count or 0) > 0),
         'status': status,
         'run_id': run_id,
         'run_date': today.isoformat(),
@@ -339,14 +348,16 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'calendar_row_count': len(calendar_rows),
         'calendar_sample': calendar_rows[:25],
         'calendar_fetches': calendar_fetches,
+        'calendar_fetch_failed': calendar_fetch_failed,
         'qc_batch_limit': qc_batch_limit,
         'qc_batch_count': batch_n,
         'qc_processed_row_count': len((batch.get('parsed_result') or {}).get('rows') or []),
         'qc_batch_offset': qc_batch_offset,
         'candidate_count': candidate_count,
         'candidate_details': candidate_details,
+        'candidate_details_parse_failed': candidate_details_parse_failed,
         'tuning': tuning_stats,
-        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'),
+        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON truncated/unparseable' if candidate_details_parse_failed and (candidate_count or 0) > 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'))),
         'required_next_step': 'Run QC/EODHD multi-year historical option-PnL backtest with explicit exit policy.' if batch_ok else 'Fix QC batch diagnostic failure.',
         'qc_checks': checks,
         'funnel': {
