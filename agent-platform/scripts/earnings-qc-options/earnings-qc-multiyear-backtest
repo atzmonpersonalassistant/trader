@@ -44,7 +44,7 @@ def load_candidates(run_dir:pathlib.Path):
 
 def result_passes(r:dict)->bool:
     if r.get('status')!='OK': return False
-    sample=int(r.get('sample_size') or 0); win=float(r.get('win_rate') or 0); med=float(r.get('median_return_pct') or -999); mean=float(r.get('mean_return_pct') or -999); dd=float(r.get('max_drawdown_pct') or 999); ml=float(r.get('max_loss_pct') or -999)
+    sample=int(r.get('sample_size') if r.get('sample_size') is not None else 0); win=float(r.get('win_rate') if r.get('win_rate') is not None else 0); med=float(r.get('median_return_pct') if r.get('median_return_pct') is not None else -999); mean=float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999); dd=float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999); ml=float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999)
     return sample>=8 and win>=0.35 and med>0 and mean>0 and dd<80 and ml>-95
 
 def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int):

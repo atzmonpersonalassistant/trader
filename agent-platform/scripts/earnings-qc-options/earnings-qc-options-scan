@@ -416,7 +416,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     (run_dir/'candidate_details.json').write_text(json.dumps(candidate_details, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     (run_dir/'result.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     (run_dir/'hebrew_report.md').write_text(msg+'\n')
-    if notify:
+    if notify and (payload.get('candidate_count') or not payload.get('ok')):
         payload['outbox_written'] = write_outbox(msg, payload)
         (run_dir/'result.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))

@@ -151,6 +151,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("BLOCKED_NASDAQ_CALENDAR_PARTIAL_FETCH_FAILED", scan)
         self.assertIn("calendar_fetch_failed", scan)
 
+    def test_result_pass_gate_accepts_zero_drawdown(self):
+        full = load_script("earnings-qc-options-full-scan")
+        multi = load_script("earnings-qc-multiyear-backtest")
+        row = {
+            "status": "OK", "sample_size": 12, "win_rate": 0.5,
+            "median_return_pct": 10.0, "mean_return_pct": 15.0,
+            "max_drawdown_pct": 0.0, "max_loss_pct": 0.0,
+        }
+        self.assertTrue(full.multiyear_result_passes(row))
+        self.assertTrue(multi.result_passes(row))
+
+    def test_stage2_notify_only_candidates_or_blockers(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("if notify and (payload.get('candidate_count') or not payload.get('ok'))", scan)
+
 
 if __name__ == "__main__":
     unittest.main()

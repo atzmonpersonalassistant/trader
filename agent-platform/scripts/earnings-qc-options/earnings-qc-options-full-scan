@@ -33,12 +33,12 @@ def multiyear_result_passes(r: dict) -> bool:
     """Deterministic final-candidate gate for historical option-PnL evidence."""
     if r.get('status') != 'OK':
         return False
-    sample_size = int(r.get('sample_size') or 0)
-    win_rate = float(r.get('win_rate') or 0.0)
-    median_return = float(r.get('median_return_pct') or -999.0)
-    mean_return = float(r.get('mean_return_pct') or -999.0)
-    max_drawdown = float(r.get('max_drawdown_pct') or 999.0)
-    max_loss = float(r.get('max_loss_pct') or -999.0)
+    sample_size = int(r.get('sample_size') if r.get('sample_size') is not None else 0)
+    win_rate = float(r.get('win_rate') if r.get('win_rate') is not None else 0.0)
+    median_return = float(r.get('median_return_pct') if r.get('median_return_pct') is not None else -999.0)
+    mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
+    max_drawdown = float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999.0)
+    max_loss = float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999.0)
     return (
         sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8'))
         and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
