@@ -83,6 +83,38 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             )
         )
 
+    def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
+        mod = load_script("earnings-qc-options-full-scan")
+        summary = mod.aggregate(
+            [
+                {
+                    "ok": True,
+                    "qc_processed_row_count": 1,
+                    "calendar_row_count": 1,
+                    "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04"}],
+                    "chunk_multiyear_backtest": {
+                        "ok": False,
+                        "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS",
+                        "results": [
+                            {
+                                "symbol": "OPEN",
+                                "status": "OK",
+                                "sample_size": 12,
+                                "win_rate": 0.5,
+                                "median_return_pct": 10.0,
+                                "mean_return_pct": 15.0,
+                                "max_drawdown_pct": 40.0,
+                                "max_loss_pct": -70.0,
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+        self.assertFalse(summary["ok"])
+        self.assertTrue(summary["multiyear_failed"])
+        self.assertEqual(summary["final_candidate_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

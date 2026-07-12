@@ -195,7 +195,7 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
-            ok_syms={r.get('symbol') for r in mb.get('results',[]) if multiyear_result_passes(r)}
+            ok_syms={r.get('symbol') for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
         else:
             ok_syms=set()
         for c in d.get('candidate_details') or []:
@@ -207,7 +207,8 @@ def aggregate(chunks: list[dict]) -> dict:
     if multiyear_statuses:
         agg['07_multi_year_backtest_status'] = 'OK_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST' if all(x.get('ok') for x in multiyear_statuses) else 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     historical_gate_blocked = bool(forward_candidates) and not final_candidates
-    ok = bool(chunks) and not failed and scanned >= calendar_rows and not historical_gate_blocked
+    multiyear_failed = any(x.get('ok') is False for x in multiyear_statuses)
+    ok = bool(chunks) and not failed and scanned >= calendar_rows and not historical_gate_blocked and not multiyear_failed
     status = 'OK_FULL_QC_SCAN' if ok else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN'))
     return {
         'ok': ok,
@@ -227,6 +228,7 @@ def aggregate(chunks: list[dict]) -> dict:
         'final_candidates': final_candidates,
         'chunk_multiyear_statuses': multiyear_statuses,
         'historical_gate_blocked': historical_gate_blocked,
+        'multiyear_failed': multiyear_failed,
         'final_candidate_gate': {
             'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8')),
             'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
