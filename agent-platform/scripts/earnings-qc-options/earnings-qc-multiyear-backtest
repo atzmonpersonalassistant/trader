@@ -92,6 +92,15 @@ def run_backtest(run_dir:pathlib.Path, years:int):
         full['candidates']=full['final_candidates']
         full['candidate_count']=len(full['final_candidates'])
         full['final_candidate_count']=len(full['final_candidates'])
+        full['historical_gate_blocked']=bool(src) and not bool(full['final_candidates'])
+        full['multiyear_failed']=not bool(summary.get('ok'))
+        full['ok']=bool(full.get('ok')) and bool(summary.get('ok')) and not full['historical_gate_blocked']
+        if full['ok']:
+            full['status']='OK_FULL_QC_SCAN'
+        elif full['historical_gate_blocked']:
+            full['status']='BLOCKED_HISTORICAL_OPTION_PNL_GATE'
+        elif full['multiyear_failed']:
+            full['status']='BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
         fs.write_text(json.dumps(full,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
     return summary
 

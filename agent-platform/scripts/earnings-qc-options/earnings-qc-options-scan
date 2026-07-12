@@ -328,8 +328,8 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     elif calendar_fetch_failed:
         status = 'BLOCKED_NASDAQ_CALENDAR_PARTIAL_FETCH_FAILED'
         batch_ok = False
-    elif batch_ok and candidate_details_parse_failed and (candidate_count or 0) > 0:
-        status = 'BLOCKED_QC_CANDIDATE_DETAILS_TRUNCATED'
+    elif batch_ok and (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0:
+        status = 'BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED'
         batch_ok = False
     elif batch_ok:
         status = 'OK_STAGE3_QC_BATCH'
@@ -337,7 +337,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         status = 'BLOCKED_QC_BATCH_FAILED'
 
     payload = {
-        'ok': bool(calendar_rows) and batch_ok and not calendar_fetch_failed and not (candidate_details_parse_failed and (candidate_count or 0) > 0),
+        'ok': bool(calendar_rows) and batch_ok and not calendar_fetch_failed and not ((candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0),
         'status': status,
         'run_id': run_id,
         'run_date': today.isoformat(),
@@ -357,7 +357,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'candidate_details': candidate_details,
         'candidate_details_parse_failed': candidate_details_parse_failed,
         'tuning': tuning_stats,
-        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON truncated/unparseable' if candidate_details_parse_failed and (candidate_count or 0) > 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'))),
+        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'))),
         'required_next_step': 'Run QC/EODHD multi-year historical option-PnL backtest with explicit exit policy.' if batch_ok else 'Fix QC batch diagnostic failure.',
         'qc_checks': checks,
         'funnel': {

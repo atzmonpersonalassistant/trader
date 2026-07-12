@@ -142,8 +142,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         # mandatory multiyear validation. This script-level invariant is enforced in
         # run_now; here we keep the expected status string pinned.
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        self.assertIn("BLOCKED_QC_CANDIDATE_DETAILS_TRUNCATED", scan)
+        self.assertIn("BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED", scan)
         self.assertIn("candidate_details_parse_failed", scan)
+        self.assertIn("len(candidate_details)", scan)
 
     def test_stage2_partial_nasdaq_fetch_should_block(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
