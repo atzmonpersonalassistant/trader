@@ -114,6 +114,9 @@ def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int) -> dict:
     out_path = run_dir / f'chunk-{offset}.stdout.json'
     err_path = run_dir / f'chunk-{offset}.stderr.log'
     cmd = [str(SCANNER), 'run-now', '--no-outbox', '--qc-batch-limit', str(batch_size), '--qc-batch-offset', str(offset)]
+    snapshot = run_dir / 'calendar_snapshot.json'
+    if snapshot.exists():
+        cmd += ['--calendar-snapshot', str(snapshot)]
     started = time.time()
     p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_FULL_CHUNK_TIMEOUT_SECONDS','1200')))
     out_path.write_text(p.stdout)
@@ -286,8 +289,12 @@ def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) ->
 
 
 def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool) -> int | None:
-    # Run one deterministic chunk first so we know the Nasdaq calendar total.
+    # Run one deterministic chunk first so we know and snapshot the Nasdaq calendar total/order.
     d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end)
+    report_dir = d.get('report_dir')
+    src = pathlib.Path(report_dir) / 'calendar_rows.json' if report_dir else None
+    if src and src.exists():
+        (run_dir / 'calendar_snapshot.json').write_text(src.read_text())
     return d.get('calendar_row_count') or d.get('calendar_universe_count')
 
 

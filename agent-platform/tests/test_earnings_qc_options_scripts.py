@@ -188,6 +188,20 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("today - timedelta(days=5)", scan)
         self.assertNotIn("set_warm_up", scan)
 
+    def test_full_scan_uses_single_calendar_snapshot_for_chunks(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("--calendar-snapshot", scan)
+        self.assertIn("calendar_rows.json", scan)
+        self.assertIn("calendar_snapshot.json", full)
+        self.assertIn("--calendar-snapshot", full)
+
+    def test_after_market_multiyear_exit_uses_report_day(self):
+        multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
+        self.assertIn("if 'AfterMarket' in report_time", multi)
+        self.assertIn("exit_latest=rd", multi)
+        self.assertIn("after_market_report_day_close_no_hold_through", multi)
+
 
 if __name__ == "__main__":
     unittest.main()

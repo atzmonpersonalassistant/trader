@@ -290,7 +290,7 @@ def qc_capability_probe(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
     return checks
 
 
-def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_offset: int | None = None) -> int:
+def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_offset: int | None = None, calendar_snapshot: str | None = None) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     today = now.date()
     if qc_batch_limit is None:
@@ -303,9 +303,14 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     run_dir = REPORT_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    calendar_rows, calendar_fetches = nasdaq_calendar_window(start, end)
+    if calendar_snapshot:
+        calendar_rows = json.loads(pathlib.Path(calendar_snapshot).read_text())
+        calendar_fetches = [{'source': 'full_scan_calendar_snapshot', 'path': calendar_snapshot, 'row_count_normalized': len(calendar_rows)}]
+    else:
+        calendar_rows, calendar_fetches = nasdaq_calendar_window(start, end)
+    (run_dir/'calendar_rows.json').write_text(json.dumps(calendar_rows, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     symbols = sorted({r['symbol'] for r in calendar_rows})
-    calendar_fetch_failed = any(m.get('error') or m.get('parse_error') for m in calendar_fetches)
+    calendar_fetch_failed = (not bool(calendar_snapshot)) and any(m.get('error') or m.get('parse_error') for m in calendar_fetches)
     # Preserve Nasdaq market-cap order for QC batch by using calendar order.
     checks = qc_capability_probe(calendar_rows, run_dir, min(qc_batch_limit, max(0, len(calendar_rows)-qc_batch_offset)), today, qc_batch_offset) if calendar_rows else qc_capability_probe([], run_dir, 0, today, 0)
     batch = checks.get('qc_option_chain_batch_diagnostic', {})
@@ -434,11 +439,15 @@ def main() -> int:
         if '--qc-batch-limit' in sys.argv:
             i = sys.argv.index('--qc-batch-limit')
             limit = int(sys.argv[i+1])
+        snapshot = None
         if '--qc-batch-offset' in sys.argv:
             i = sys.argv.index('--qc-batch-offset')
             offset = int(sys.argv[i+1])
-        return run_now(notify=notify, qc_batch_limit=limit, qc_batch_offset=offset)
-    print('usage: earnings-qc-options-scan run-now [--no-outbox] [--qc-batch-limit N] [--qc-batch-offset N]', file=sys.stderr)
+        if '--calendar-snapshot' in sys.argv:
+            i = sys.argv.index('--calendar-snapshot')
+            snapshot = sys.argv[i+1]
+        return run_now(notify=notify, qc_batch_limit=limit, qc_batch_offset=offset, calendar_snapshot=snapshot)
+    print('usage: earnings-qc-options-scan run-now [--no-outbox] [--qc-batch-limit N] [--qc-batch-offset N] [--calendar-snapshot PATH]', file=sys.stderr)
     return 64
 
 if __name__ == '__main__':
