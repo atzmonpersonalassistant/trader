@@ -15,7 +15,6 @@ INT_FUNNEL_KEYS = [
     '04_qc_calls_ask_under_50c',
     '05_qc_liquidity_greeks_quality_pass',
     '06_qc_historical_required_move_runup_pass',
-    '08_qc_candidates',
 ]
 
 
@@ -28,6 +27,26 @@ def latest_run_dir() -> pathlib.Path | None:
     dirs = sorted(REPORT_ROOT.glob('earnings-qc-options-scan-full-*'), key=lambda x: x.stat().st_mtime if x.exists() else 0)
     return dirs[-1] if dirs else None
 
+
+
+def multiyear_result_passes(r: dict) -> bool:
+    """Deterministic final-candidate gate for historical option-PnL evidence."""
+    if r.get('status') != 'OK':
+        return False
+    sample_size = int(r.get('sample_size') or 0)
+    win_rate = float(r.get('win_rate') or 0.0)
+    median_return = float(r.get('median_return_pct') or -999.0)
+    mean_return = float(r.get('mean_return_pct') or -999.0)
+    max_drawdown = float(r.get('max_drawdown_pct') or 999.0)
+    max_loss = float(r.get('max_loss_pct') or -999.0)
+    return (
+        sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8'))
+        and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
+        and median_return > float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0'))
+        and mean_return > float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0'))
+        and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
+        and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
+    )
 
 def load_chunk(run_dir: pathlib.Path, offset: int) -> dict:
     p = run_dir / f'chunk-{offset}.stdout.json'
@@ -168,7 +187,7 @@ def aggregate(chunks: list[dict]) -> dict:
     for k in INT_FUNNEL_KEYS:
         vals = [(d.get('funnel') or {}).get(k) for d in chunks]
         agg[k] = sum(v for v in vals if isinstance(v, int))
-    candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]
+    forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]
     for d in chunks:
         scanned += int(d.get('qc_batch_count') or 0)
         if not d.get('ok'):
@@ -176,20 +195,20 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
-            ok_syms={r.get('symbol') for r in mb.get('results',[]) if r.get('status')=='OK'}
+            ok_syms={r.get('symbol') for r in mb.get('results',[]) if multiyear_result_passes(r)}
         else:
             ok_syms=set()
         for c in d.get('candidate_details') or []:
             key=(c.get('symbol'), c.get('earnings_date'))
             if key not in seen:
-                candidates.append(c); seen.add(key)
+                forward_candidates.append(c); seen.add(key)
             if c.get('symbol') in ok_syms and key not in final_seen:
                 final_candidates.append(c); final_seen.add(key)
-    agg['08_qc_candidates'] = len(candidates)
     if multiyear_statuses:
         agg['07_multi_year_backtest_status'] = 'OK_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST' if all(x.get('ok') for x in multiyear_statuses) else 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
-    ok = bool(chunks) and not failed and scanned >= calendar_rows
-    status = 'OK_FULL_QC_SCAN' if ok else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN')
+    historical_gate_blocked = bool(forward_candidates) and not final_candidates
+    ok = bool(chunks) and not failed and scanned >= calendar_rows and not historical_gate_blocked
+    status = 'OK_FULL_QC_SCAN' if ok else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN'))
     return {
         'ok': ok,
         'status': status,
@@ -200,8 +219,22 @@ def aggregate(chunks: list[dict]) -> dict:
         'failed_chunk_count': len(failed),
         'failed_chunks': failed,
         'aggregate_funnel': agg,
-        'candidate_count': len(candidates),
-        'candidates': candidates,
+        'forward_candidate_count': len(forward_candidates),
+        'forward_candidates': forward_candidates,
+        'candidate_count': len(final_candidates),
+        'candidates': final_candidates,
+        'final_candidate_count': len(final_candidates),
+        'final_candidates': final_candidates,
+        'chunk_multiyear_statuses': multiyear_statuses,
+        'historical_gate_blocked': historical_gate_blocked,
+        'final_candidate_gate': {
+            'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8')),
+            'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
+            'min_median_return_pct': float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0')),
+            'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
+            'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
+            'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
+        },
         'guardrails': {
             'no_yahoo_yfinance': True,
             'nasdaq_calendar_stage_only': True,
@@ -224,7 +257,8 @@ def hebrew_report(summary: dict, batch_size: int) -> str:
         f'- calls עם ask <= $0.50: {f.get("04_qc_calls_ask_under_50c")}',
         f'- liquidity/Greeks quality pass: {f.get("05_qc_liquidity_greeks_quality_pass")}',
         f'- multi-year backtest: {f.get("07_multi_year_backtest_status")}',
-        f'- מועמדים: {summary.get("candidate_count")}',
+        f'- forward candidates לפני historical PnL: {summary.get("forward_candidate_count")}',
+        f'- מועמדים סופיים אחרי historical PnL: {summary.get("candidate_count")}',
     ]
     if summary.get('failed_chunk_count'):
         lines.append(f'- chunks שנכשלו: {summary.get("failed_chunk_count")} — הרץ retry-failed')
@@ -241,7 +275,7 @@ def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) ->
     (run_dir/'hebrew_report.md').write_text(msg+'\n')
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     (STATE_DIR/'latest-full-run.txt').write_text(str(run_dir)+'\n')
-    if notify and (summary.get('candidate_count') or not summary.get('ok')):
+    if notify and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
         summary['outbox_written'] = write_outbox(msg, summary)
         (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     return summary
@@ -326,7 +360,7 @@ def cmd_run(args) -> int:
             summary=json.loads(fp.read_text())
         summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel}
         fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
-    if not args.no_outbox and (summary.get('candidate_count') or summary.get('final_candidate_count') or not summary.get('ok')):
+    if not args.no_outbox and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
         msg = hebrew_report(summary, args.chunk_size)
         summary['outbox_written'] = write_outbox(msg, summary)
         (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')

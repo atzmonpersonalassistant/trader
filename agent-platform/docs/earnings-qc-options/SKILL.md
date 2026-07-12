@@ -50,8 +50,9 @@ Run as `agent-research` for research jobs and `agent-orchestrator` for outbox.
    - ask <= $0.50 or the closest historical equivalent rule
    - required move based on selected contract's strike/spot
    - liquidity/Greeks evidence when available historically
-   - max loss, win rate, median/mean return, drawdown, and sample size
-   If QC/EODHDUpcomingEarnings has insufficient events for a symbol/window, report a symbol/window-level blocker such as `BLOCKED_QC_EODHD_HISTORICAL_EVENTS_INSUFFICIENT` or `BLOCKED_HISTORICAL_OPTION_SAMPLE_INSUFFICIENT`; do not fake dates silently. Do not promote final candidates without multi-year option-PnL evidence unless Uriel explicitly asks for a forward-only watchlist.
+   - **exit rule is mandatory:** default strategy is a pre-earnings run-up trade, not an earnings-gap gamble. Exit at the last tradable option snapshot before the report. For pre-market reports, exit on the prior trading day. For after-market reports, exit before/at that day's close when an option snapshot exists. Do not hold through earnings by default. Any hold-through-earnings variant must be labeled separately and backtested separately.
+   - max loss, win rate, median/mean return, drawdown, sample size, and exit timing/slippage
+   If QC/EODHDUpcomingEarnings has insufficient events for a symbol/window, report a symbol/window-level blocker such as `BLOCKED_QC_EODHD_HISTORICAL_EVENTS_INSUFFICIENT` or `BLOCKED_HISTORICAL_OPTION_SAMPLE_INSUFFICIENT`; do not fake dates silently. Do not promote final candidates without multi-year option-PnL evidence and the configured exit rule unless Uriel explicitly asks for a forward-only watchlist.
    - Optional report/debug context: when `last_year_report_date` is available from Nasdaq, the report may include the prior single-year pre-earnings equity run-up versus the current contract's `required_move_pct`, but this must never be a pipeline stage, hard filter, or candidate gate.
 7. **QC-derived funnel + watchlist aggregation:** Produce funnel counts and candidate/watchlist from the chunk-validated results:
    - Nasdaq earnings calendar universe
@@ -61,7 +62,8 @@ Run as `agent-research` for research jobs and `agent-orchestrator` for outbox.
    - QC liquidity/Greeks quality pass
    - QC/EODHD historical events available
    - mandatory QC/EODHD historical option-PnL backtest pass or explicit symbol/window blocker
-   - QC final candidate/watchlist only after multi-year option-PnL evidence passes
+   - explicit entry and exit rule used by the backtest
+   - QC final candidate/watchlist only after multi-year option-PnL evidence passes under the configured exit rule
 8. Notify only candidates or blockers. No empty daily spam.
 
 ## Bundled scripts
