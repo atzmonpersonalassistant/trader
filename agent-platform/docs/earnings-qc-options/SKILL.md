@@ -20,15 +20,9 @@ Use this skill for Uriel's daily earnings run-up options scanner.
 - Research only: no live trading, no broker orders.
 - WhatsApp reports should be concise Hebrew.
 
-## Current VPS
+## Runtime / deployment notes
 
-SSH pattern:
-
-```bash
-ssh -i ~/.ssh/ovh_vps_ce2ba5e7 -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 ubuntu@144.217.82.149 '<command>'
-```
-
-Run as `agent-research` for research jobs and `agent-orchestrator` for outbox.
+Production deployment details such as hostnames, IPs, SSH keys, and user-specific paths are intentionally kept out of this repo. The scanner scripts are designed to run on the Trader research environment as the research user.
 
 ## Workflow
 
