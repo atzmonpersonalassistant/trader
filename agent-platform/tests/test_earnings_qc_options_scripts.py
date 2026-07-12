@@ -54,6 +54,35 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("multiyear_json_%02d", main)
         self.assertIn("exit_reason", main)
 
+    def test_multiyear_result_pass_gate_rejects_bad_completed_results(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        self.assertFalse(
+            mod.result_passes(
+                {
+                    "status": "OK",
+                    "sample_size": 18,
+                    "win_rate": 0.2222,
+                    "median_return_pct": -59.86,
+                    "mean_return_pct": 52.02,
+                    "max_drawdown_pct": 100.0,
+                    "max_loss_pct": -96.55,
+                }
+            )
+        )
+        self.assertTrue(
+            mod.result_passes(
+                {
+                    "status": "OK",
+                    "sample_size": 12,
+                    "win_rate": 0.5,
+                    "median_return_pct": 10.0,
+                    "mean_return_pct": 15.0,
+                    "max_drawdown_pct": 40.0,
+                    "max_loss_pct": -70.0,
+                }
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
