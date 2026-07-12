@@ -181,6 +181,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("mb.get('ok') is False", full)
         self.assertIn("mandatory multiyear option-PnL backtest failed", full)
 
+    def test_stage2_uses_scan_date_not_stale_multiday_first_slice(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("start = today", scan)
+        self.assertIn("end = today", scan)
+        self.assertNotIn("today - timedelta(days=5)", scan)
+        self.assertNotIn("set_warm_up", scan)
+
 
 if __name__ == "__main__":
     unittest.main()
