@@ -400,7 +400,7 @@ def cmd_retry_failed(args) -> int:
         failed = [{'offset': args.offset}]
     for item in failed:
         off = int(item['offset'])
-        run_chunk(run_dir, off, args.chunk_size)
+        run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)
     summary = write_summary(run_dir, args.chunk_size, notify=args.notify)
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if summary.get('ok') else 2
@@ -415,7 +415,7 @@ def build_parser():
     r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','2'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
     s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
     sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
-    rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true')
+    rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
     return p
 
 

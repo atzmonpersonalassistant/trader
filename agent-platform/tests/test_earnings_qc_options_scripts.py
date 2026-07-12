@@ -166,6 +166,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("if notify and (payload.get('candidate_count') or not payload.get('ok'))", scan)
 
+    def test_retry_failed_uses_end_to_end_runner(self):
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)", full)
+        self.assertIn("rf.add_argument('--end-to-end'", full)
+
 
 if __name__ == "__main__":
     unittest.main()
