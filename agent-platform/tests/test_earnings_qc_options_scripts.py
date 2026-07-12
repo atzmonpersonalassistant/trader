@@ -115,6 +115,27 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertTrue(summary["multiyear_failed"])
         self.assertEqual(summary["final_candidate_count"], 0)
 
+    def test_full_scan_load_chunks_uses_latest_retry_for_same_offset(self):
+        mod = load_script("earnings-qc-options-full-scan")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "chunks.jsonl").write_text(
+            '{"offset": 0, "ok": false, "seconds": 1}\n'
+            '{"offset": 0, "ok": true, "seconds": 2}\n'
+        )
+        (run_dir / "chunk-0.stdout.json").write_text('{"ok": true, "status": "OK"}')
+        chunks = mod.load_chunks(run_dir)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0]["_chunk_seconds"], 2)
+
+    def test_multiyear_final_candidates_require_summary_ok(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        self.assertTrue(mod.result_passes({
+            "status": "OK", "sample_size": 12, "win_rate": 0.5,
+            "median_return_pct": 10.0, "mean_return_pct": 15.0,
+            "max_drawdown_pct": 40.0, "max_loss_pct": -70.0,
+        }))
+        # Promotion code must additionally require summary["ok"], not just result_passes().
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,7 +78,7 @@ def run_backtest(run_dir:pathlib.Path, years:int):
         js=''.join(parts) if parts else None
         if js:
             try:
-                payload=json.loads(js); summary.update(payload); any_pass=any(result_passes(r) for r in summary.get('results',[])); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); summary.update({'ok': bool(qc_ok and any_pass), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if any_pass else 'BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS'})
+                payload=json.loads(js); summary.update(payload); any_pass=any(result_passes(r) for r in summary.get('results',[])); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); summary.update({'ok': bool(qc_ok and any_pass), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if (qc_ok and any_pass) else ('QC_BACKTEST_FAILED' if not qc_ok else 'BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS')})
             except Exception as e: summary['parse_error']=repr(e)
         summary['qc_status']=b.get('status'); summary['qc_error']=b.get('error'); summary['qc_stacktrace']=b.get('stacktrace')
     (out_dir/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
@@ -86,7 +86,7 @@ def run_backtest(run_dir:pathlib.Path, years:int):
     if fs.exists():
         full=json.loads(fs.read_text()); full['multiyear_backtest']=summary; full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')
         # final candidates only where option pnl backtest has sufficient OK status; stricter pass criteria can be tuned later
-        ok_syms={r['symbol'] for r in summary.get('results',[]) if result_passes(r)}
+        ok_syms={r['symbol'] for r in summary.get('results',[]) if summary.get('ok') and result_passes(r)}
         src=full.get('forward_candidates') or full.get('candidates',[])
         full['final_candidates']=[c for c in src if c.get('symbol') in ok_syms]
         full['candidates']=full['final_candidates']

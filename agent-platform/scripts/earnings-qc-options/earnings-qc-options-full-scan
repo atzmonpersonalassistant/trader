@@ -62,7 +62,7 @@ def load_chunks(run_dir: pathlib.Path) -> list[dict]:
     rows = []
     index_path = run_dir / 'chunks.jsonl'
     if index_path.exists():
-        seen = set()
+        latest = {}
         for line in index_path.read_text().splitlines():
             if not line.strip():
                 continue
@@ -71,9 +71,9 @@ def load_chunks(run_dir: pathlib.Path) -> list[dict]:
                 off = int(meta['offset'])
             except Exception:
                 continue
-            if off in seen:
-                continue
-            seen.add(off)
+            latest[off] = meta
+        for off in sorted(latest):
+            meta = latest[off]
             d = load_chunk(run_dir, off)
             d['_chunk_seconds'] = meta.get('seconds')
             rows.append(d)
