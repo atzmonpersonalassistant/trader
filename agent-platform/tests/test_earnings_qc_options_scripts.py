@@ -264,6 +264,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("trader.stage2_json_%02d", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
 
+    def test_stage2_reports_qc_capacity_without_exposing_cli_output(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("BLOCKED_QC_CLOUD_NO_SPARE_NODES", scan)
+        self.assertIn("capacity_blocked", scan)
+        self.assertIn("error_class", scan)
+        self.assertIn("no spare nodes available", scan)
+        self.assertNotIn("'backtest_stdout':", scan)
+        self.assertNotIn("'backtest_stderr':", scan)
+
     def test_stage2_reads_option_chain_values_like_working_qc_templates(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("data.option_chains.values()", scan)
