@@ -193,6 +193,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)", full)
         self.assertIn("rf.add_argument('--end-to-end'", full)
 
+    def test_full_scan_throttles_discovery_and_sequential_chunks(self):
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("QC_FULL_CHUNK_DELAY_SECONDS", full)
+        self.assertIn("discovery_delay", full)
+        self.assertIn("if offsets and not args.resume", full)
+        self.assertIn("time.sleep(discovery_delay)", full)
+        self.assertIn("time.sleep(delay)", full)
+        self.assertIn("QC_FULL_PARALLEL','1'", full)
+
     def test_scan_run_id_is_chunk_unique_for_parallel_runs(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("os.getpid()", scan)

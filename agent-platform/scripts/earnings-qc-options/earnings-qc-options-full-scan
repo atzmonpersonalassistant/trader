@@ -371,6 +371,10 @@ def cmd_run(args) -> int:
             # max_chunks counts total chunks including the discovery chunk.
             remaining=max(0,args.max_chunks-1)
             offsets=offsets[:remaining]
+    if offsets and not args.resume:
+        discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
+        if discovery_delay > 0:
+            time.sleep(discovery_delay)
     run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end)
     summary = write_summary(run_dir, args.chunk_size, notify=False)
     mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
