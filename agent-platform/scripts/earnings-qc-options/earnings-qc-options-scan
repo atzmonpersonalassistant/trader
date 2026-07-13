@@ -171,7 +171,9 @@ def write_qc_stage2_project(project_dir: pathlib.Path, batch_rows: list[dict[str
     # Avoid non-trading weekend dates that can return no option-chain slices and false OK scans.
     valuation_date = latest_weekday_on_or_before(today)
     start = valuation_date
-    end = valuation_date
+    # QuantConnect requires end_date > start_date even for point-in-time daily scans.
+    # Run one calendar day past the valuation date and quit once all symbols are processed.
+    end = valuation_date + timedelta(days=1)
     (project_dir / 'config.json').write_text(json.dumps({
         'algorithm-language': 'Python', 'parameters': {},
         'description': 'Earnings cheap near-expiry call QC batch diagnostic',
