@@ -1,0 +1,469 @@
+#!/usr/bin/env python3
+"""Nasdaq-calendar + QC/LEAN earnings options scanner entrypoint.
+
+Stage 1 calendar: free Nasdaq public earnings calendar API.
+Stage 2+ evidence: QC/LEAN option-chain/liquidity/Greeks/history only.
+No Yahoo/yfinance.
+"""
+from __future__ import annotations
+import json, sys, sqlite3, datetime, pathlib, subprocess, os, time, urllib.request, urllib.parse, hashlib, re
+from datetime import timedelta
+from typing import Any
+from urllib.parse import urljoin
+
+REPORT_ROOT = pathlib.Path('/agents/research/reports')
+ORCH_DB = pathlib.Path('/agents/orchestrator/state/orchestrator.db')
+LEAN_WORKSPACE = pathlib.Path('/agents/research/lean-workspace')
+STATE_DIR = pathlib.Path('/agents/research/state/earnings-qc-options-scan')
+CACHE_DIR = STATE_DIR / 'nasdaq-calendar-cache'
+QC_PROJECT_NAME = 'earnings-qc-stage2-batch'
+QC_API_BASE = 'https://www.quantconnect.com/api/v2/'
+
+
+def write_outbox(message: str, payload: dict) -> bool:
+    if not ORCH_DB.exists():
+        return False
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    ext = f"earnings-qc-options-scan-{payload.get('run_date')}-{payload.get('status')}"
+    con = sqlite3.connect(str(ORCH_DB))
+    con.execute("""INSERT OR IGNORE INTO outbox(external_id,state,labels,channel,message,payload_json,created_at,updated_at,last_seen_at,retry_count)
+VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)""", (
+        ext,
+        json.dumps(['earnings_qc_options_scan','notification' if payload.get('candidate_count') else 'blocker']),
+        message,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ts, ts, ts,
+    ))
+    con.commit(); con.close(); return True
+
+
+def fetch_nasdaq_earnings_for_date(day: datetime.date) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = CACHE_DIR / f'{day.isoformat()}.json'
+    url = 'https://api.nasdaq.com/api/calendar/earnings?' + urllib.parse.urlencode({'date': day.isoformat()})
+    headers = {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://www.nasdaq.com',
+        'Referer': 'https://www.nasdaq.com/market-activity/earnings',
+    }
+    meta = {'date': day.isoformat(), 'url': url, 'cache_path': str(cache_path), 'from_cache': False}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=25) as r:
+            body = r.read().decode('utf-8', 'replace')
+            meta['http_status'] = getattr(r, 'status', None)
+            meta['content_type'] = r.headers.get('content-type')
+        cache_path.write_text(body)
+    except Exception as e:
+        meta['error'] = repr(e)
+        if cache_path.exists():
+            body = cache_path.read_text()
+            meta['from_cache'] = True
+        else:
+            return [], meta
+    try:
+        data = json.loads(body)
+        rows = (((data or {}).get('data') or {}).get('rows') or [])
+        out = []
+        for row in rows:
+            sym = str(row.get('symbol') or '').strip().upper()
+            if not sym or sym in {'N/A', 'NA'}:
+                continue
+            if any(x in sym for x in ['^', '/', '.', '$']):
+                continue
+            t = row.get('time')
+            if t == 'time-after-hours': timing = 'after_market'
+            elif t == 'time-pre-market': timing = 'before_market'
+            elif t == 'time-during-market': timing = 'during_market'
+            else: timing = 'not_supplied'
+            out.append({
+                'symbol': sym,
+                'report_date': day.isoformat(),
+                'company_name': row.get('name'),
+                'before_after_market': timing,
+                'nasdaq_time_raw': t,
+                'market_cap': row.get('marketCap'),
+                'fiscal_quarter_ending': row.get('fiscalQuarterEnding'),
+                'eps_forecast': row.get('epsForecast'),
+                'analyst_estimate_count': row.get('noOfEsts'),
+                'last_year_report_date': row.get('lastYearRptDt'),
+                'last_year_eps': row.get('lastYearEPS'),
+                'source': 'nasdaq_public_calendar',
+            })
+        meta['row_count_raw'] = len(rows)
+        meta['row_count_normalized'] = len(out)
+        return out, meta
+    except Exception as e:
+        meta['parse_error'] = repr(e)
+        return [], meta
+
+
+def nasdaq_calendar_window(start: datetime.date, end: datetime.date) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    metas: list[dict[str, Any]] = []
+    cur = start
+    seen = set()
+    while cur <= end:
+        day_rows, meta = fetch_nasdaq_earnings_for_date(cur)
+        metas.append(meta)
+        for r in day_rows:
+            key = (r['symbol'], r['report_date'])
+            if key not in seen:
+                rows.append(r); seen.add(key)
+        cur += timedelta(days=1)
+        time.sleep(0.15)
+    return rows, metas
+
+
+def qc_credentials() -> tuple[str, str]:
+    path = pathlib.Path.home() / '.lean' / 'credentials'
+    d = json.loads(path.read_text())
+    return str(d['user-id']), str(d['api-token'])
+
+
+def qc_api(method: str, endpoint: str, payload: dict | None = None) -> dict:
+    uid, token = qc_credentials()
+    ts = str(int(time.time()))
+    pw = hashlib.sha256(f'{token}:{ts}'.encode('utf-8')).hexdigest()
+    headers = {'Timestamp': ts, 'User-Agent': 'Lean CLI earnings-qc-stage2'}
+    url = urljoin(QC_API_BASE, endpoint)
+    data = None
+    if method.upper() == 'GET' and payload:
+        url += '?' + urllib.parse.urlencode(payload)
+    elif payload:
+        data = json.dumps(payload).encode('utf-8')
+        headers['Content-Type'] = 'application/json'
+    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    import base64
+    req.add_header('Authorization', 'Basic ' + base64.b64encode(f'{uid}:{pw}'.encode()).decode())
+    with urllib.request.urlopen(req, timeout=90) as r:
+        out = json.loads(r.read().decode('utf-8', 'replace'))
+    if not out.get('success'):
+        raise RuntimeError(json.dumps({k: out.get(k) for k in ['errors','messages','Message']}, ensure_ascii=False))
+    return out
+
+
+def ensure_qc_project(project_dir: pathlib.Path, project_name: str = QC_PROJECT_NAME) -> tuple[int, str]:
+    cfg_path = project_dir / 'config.json'
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    if int(cfg.get('cloud-id') or 0) > 0 and cfg.get('organization-id'):
+        return int(cfg['cloud-id']), str(cfg['organization-id'])
+    projects = qc_api('GET', 'projects/read').get('projects', [])
+    project = next((p for p in projects if p.get('name') == project_name), None)
+    if project is None:
+        project = qc_api('POST', 'projects/create', {'name': project_name, 'language': 'Py'})['projects'][0]
+    cfg.update({'algorithm-language': 'Python', 'parameters': {}, 'description': 'Earnings cheap near-expiry call QC batch diagnostic', 'cloud-id': project['projectId'], 'organization-id': project.get('organizationId')})
+    cfg_path.write_text(json.dumps(cfg, indent=2) + '\n')
+    return int(project['projectId']), str(project.get('organizationId'))
+
+
+def latest_weekday_on_or_before(day: datetime.date) -> datetime.date:
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+def write_qc_stage2_project(project_dir: pathlib.Path, batch_rows: list[dict[str, Any]], today: datetime.date) -> None:
+    project_dir.mkdir(parents=True, exist_ok=True)
+    earnings = {r['symbol']: r['report_date'] for r in batch_rows}
+    last_year = {r['symbol']: r.get('last_year_report_date') for r in batch_rows}
+    # Stage 2 is a point-in-time daily scanner: use the latest weekday valuation date.
+    # Avoid non-trading weekend dates that can return no option-chain slices and false OK scans.
+    valuation_date = latest_weekday_on_or_before(today)
+    start = valuation_date
+    end = valuation_date
+    (project_dir / 'config.json').write_text(json.dumps({
+        'algorithm-language': 'Python', 'parameters': {},
+        'description': 'Earnings cheap near-expiry call QC batch diagnostic',
+        'cloud-id': 0, 'organization-id': ''
+    }, indent=2) + '\n')
+    code = f'''from AlgorithmImports import *\nimport json\nfrom datetime import datetime, timedelta\n\nclass EarningsQcStage2BatchDiagnostic(QCAlgorithm):\n    def initialize(self):\n        self.set_start_date({start.year}, {start.month}, {start.day})\n        self.set_end_date({end.year}, {end.month}, {end.day})\n        self.set_cash(100000)\n        self.max_days_after_earnings = 7\n        self.max_premium = 0.50\n        self.max_spread = 0.25\n        self.max_spread_pct = 0.60\n        self.min_bid = 0.05\n        self.min_open_interest = 50\n        self.min_volume = 10\n        self.candidate_details = []\n        self.earnings = {json.dumps(earnings, sort_keys=True)}\n        self.last_year_report = {json.dumps(last_year, sort_keys=True)}\n        self.hist_cache = {{}}\n        self.option_by_underlying = {{}}\n        self.done_by_symbol = {{}}\n        self.rows = []\n        self.funnel = {{\n            "symbols_input": len(self.earnings),\n            "option_chain_available": 0,\n            "expiry_within_0_7d_after_earnings": 0,\n            "expiry_within_0_7d_after_earnings": 0,\n            "calls_under_50c": 0,\n            "liquidity_pass": 0,\n            "historical_required_move_runup_pass": 0,\n            "candidates": 0,\n        }}\n        for ticker in self.earnings.keys():\n            try:\n                eq = self.add_equity(ticker, Resolution.DAILY)\n                eq.set_data_normalization_mode(DataNormalizationMode.RAW)\n                opt = self.add_option(ticker, Resolution.DAILY)\n                opt.set_filter(lambda u: u.include_weeklys().strikes(-50, 300).expiration(timedelta(0), timedelta(120)))\n                self.option_by_underlying[eq.symbol] = opt.symbol\n                self.done_by_symbol[str(eq.symbol)] = False\n            except Exception as e:\n                self.debug("TRADER_STAGE2_ADD_SYMBOL_ERROR=" + ticker + ":" + str(e)[:200])\n\n    def on_data(self, data):\n        for underlying, opt_symbol in list(self.option_by_underlying.items()):\n            key = str(underlying)\n            if self.done_by_symbol.get(key):\n                continue\n            chain = data.option_chains.get(opt_symbol)\n            if chain is None:\n                continue\n            contracts = list(chain)\n            if not contracts:\n                continue\n            ticker = key.split(' ')[0]\n            spot = float(self.securities[underlying].price)\n            edate = datetime.strptime(self.earnings[ticker], "%Y-%m-%d").date()\n            max_expiry = edate + timedelta(days=self.max_days_after_earnings)\n            calls_after = [c for c in contracts if c.right == OptionRight.CALL and c.expiry.date() > edate]\n            expiries = sorted({{c.expiry.date() for c in calls_after}})\n            selected = [c for c in calls_after if edate < c.expiry.date() <= max_expiry and float(c.strike) > spot]\n            cheap = []\n            liquid = []\n            liquid_details = []\n            for c in selected:\n                bid = float(c.bid_price) if c.bid_price is not None else 0.0\n                ask = float(c.ask_price) if c.ask_price is not None else 0.0\n                last = float(c.last_price) if c.last_price is not None else 0.0\n                mid = (bid + ask) / 2.0 if bid > 0 and ask > 0 else (ask if ask > 0 else last)\n                if 0 < ask <= self.max_premium:\n                    cheap.append(c)\n                    spread = (ask - bid) if ask > 0 and bid >= 0 else 999\n                    oi = int(c.open_interest) if c.open_interest is not None else 0\n                    vol = int(c.volume) if c.volume is not None else 0\n                    has_greeks = c.greeks is not None and c.greeks.delta is not None\n                    if ask > 0 and bid >= self.min_bid and spread <= self.max_spread and ((ask - bid) / ((ask + bid) / 2.0)) <= self.max_spread_pct and (oi >= self.min_open_interest or vol >= self.min_volume) and has_greeks:\n                        liquid.append(c)\n                        mid2 = (bid + ask) / 2.0 if bid > 0 and ask > 0 else None\n                        req = (float(c.strike) / spot - 1.0) if spot else None\n                        liquid_details.append(dict(contract=str(c.symbol), expiry=str(c.expiry.date()), dte=(c.expiry.date() - self.time.date()).days, days_after_earnings=(c.expiry.date() - edate).days, strike=float(c.strike), required_move_pct=round(req * 100.0, 2) if req is not None else None, bid=bid, ask=ask, mid=round(mid2, 4) if mid2 is not None else None, spread=round(spread, 4), spread_mid_pct=round(((ask - bid) / ((ask + bid) / 2.0)) * 100.0, 2) if ask > 0 and bid > 0 else None, volume=vol, open_interest=oi, zero_volume=(vol == 0), iv=round(float(c.implied_volatility), 4) if c.implied_volatility is not None else None, delta=round(float(c.greeks.delta), 4) if c.greeks and c.greeks.delta is not None else None))\n            self.funnel["option_chain_available"] += 1\n            if selected: self.funnel["expiry_within_0_7d_after_earnings"] += 1\n            if cheap: self.funnel["calls_under_50c"] += 1\n            hist_pass = False\n            hist_meta = {{}}\n            passing_details = []\n            if liquid:\n                self.funnel["liquidity_pass"] += 1\n                # Optional/debug only: prior-year Nasdaq date anchors a QC equity run-up calculation.\n                # This is NOT a candidate gate; final validation is QC/EODHD multi-year option-PnL.\n                _, hist_meta = self.historical_runup_pass(underlying, ticker)\n                actual = hist_meta.get("pre_earnings_return_pct")\n                for d in liquid_details:\n                    req = d.get("required_move_pct")\n                    d["historical_actual_runup_pct"] = actual\n                    d["historical_required_move_pct"] = req\n                    d["historical_contract_pass_debug_only"] = actual is not None and req is not None and actual >= req\n                    if d["historical_contract_pass_debug_only"]:\n                        passing_details.append(d)\n                hist_pass = bool(passing_details)\n                if hist_pass:\n                    self.funnel["historical_required_move_runup_pass"] += 1\n                self.funnel["candidates"] += 1\n                best = sorted(liquid_details, key=lambda r: (r.get("ask") or 999, r.get("required_move_pct") or 999, -(r.get("open_interest") or 0), -(r.get("volume") or 0)))[:3]\n                self.candidate_details.append(dict(symbol=ticker, spot=round(spot, 4), earnings_date=str(edate), last_year_report_date=self.last_year_report.get(ticker), runup_pct_debug_only=actual, forward_candidate_status="FORWARD_LIQUIDITY_GREEKS_PASS_REQUIRES_MULTIYEAR_OPTION_PNL", historical_backtest_status="REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL", contract_count=len(liquid_details), contracts=best[:2]))\n            self.rows.append({{"symbol": ticker, "spot": spot, "earnings_date": str(edate), "last_year_report_date": self.last_year_report.get(ticker), "chain_contracts": len(contracts), "after_earnings_call_expiry_count": len(expiries), "selected_contracts_0_7d_after_earnings": len(selected), "cheap_calls_under_50c": len(cheap), "liquidity_pass": len(liquid), "historical_runup_pass_debug_only": bool(hist_pass), "historical_runup_meta": hist_meta, "candidate_count": 1 if liquid else 0, "multi_year_backtest_status": "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL"}})\n            self.done_by_symbol[key] = True\n        if all(self.done_by_symbol.values()) or self.time.date() >= self.end_date.date():\n            self.emit_and_quit()\n\n
+    def mark_unprocessed_symbols(self):
+        for underlying, done in list(self.done_by_symbol.items()):
+            if done:
+                continue
+            ticker = str(underlying).split(' ')[0]
+            spot = None
+            try:
+                spot = float(self.securities[underlying].price)
+            except Exception:
+                pass
+            self.rows.append({{"symbol": ticker, "spot": spot, "earnings_date": self.earnings.get(ticker), "last_year_report_date": self.last_year_report.get(ticker), "chain_contracts": 0, "after_earnings_call_expiry_count": 0, "selected_contracts_0_7d_after_earnings": 0, "cheap_calls_under_50c": 0, "liquidity_pass": 0, "historical_runup_pass": False, "historical_runup_meta": {{"reason": "no_option_chain_slice_or_no_data"}}, "candidate_count": 0, "multi_year_backtest_status": "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL"}})
+            self.done_by_symbol[underlying] = True
+
+
+    def historical_runup_pass(self, underlying, ticker):
+        # Uses only Nasdaq-provided last_year_report_date + QC historical equity data.
+        # This returns the actual prior pre-earnings run-up. Contract-level pass/fail
+        # is evaluated against each contract's required_move_pct, not a fixed 3%.
+        raw = self.last_year_report.get(ticker)
+        meta = {{"source": "qc_history_plus_nasdaq_last_year_report_date", "raw_last_year_report_date": raw}}
+        if raw is None or str(raw).strip() in ("", "N/A", "NA"):
+            meta["reason"] = "missing_last_year_report_date"
+            return False, meta
+        try:
+            report_day = datetime.strptime(str(raw), "%m/%d/%Y").date()
+        except Exception as e:
+            meta["reason"] = "parse_error"
+            meta["error"] = str(e)[:120]
+            return False, meta
+        try:
+            start_day = report_day - timedelta(days=28)
+            end_day = report_day - timedelta(days=1)
+            hist = self.history(underlying, start_day, report_day, Resolution.DAILY)
+            if hist is None or hist.empty or "close" not in hist.columns:
+                meta["reason"] = "qc_history_empty"
+                return False, meta
+            closes = [float(x) for x in list(hist["close"]) if x is not None and float(x) > 0]
+            meta["bar_count"] = len(closes)
+            if len(closes) < 5:
+                meta["reason"] = "too_few_qc_history_bars"
+                return False, meta
+            ret = (closes[-1] / closes[0]) - 1.0
+            meta["start_close"] = round(closes[0], 4)
+            meta["end_close"] = round(closes[-1], 4)
+            meta["pre_earnings_return_pct"] = round(ret * 100, 2)
+            meta["threshold_pct"] = "contract_required_move_pct"
+            return True, meta
+        except Exception as e:
+            meta["reason"] = "qc_history_exception"
+            meta["error"] = str(e)[:200]
+            return False, meta
+
+    def on_end_of_algorithm(self):\n        self.emit_and_quit(should_quit=False)\n\n    def emit_and_quit(self, should_quit=True):\n        if getattr(self, "_trader_emitted", False):\n            return\n        self._trader_emitted = True\n        self.mark_unprocessed_symbols()\n        # no-op finalizer: emit current funnel even when no option-chain slices arrived\n        result = {{"type":"earnings_qc_stage2_batch_diagnostic", "time":str(self.time), "funnel": self.funnel, "rows": self.rows}}\n        txt = json.dumps(result, sort_keys=True)\n        self.debug("TRADER_EARNINGS_QC_STAGE2_JSON=" + txt)\n        for i in range(0, len(txt), 3500):\n            self.set_runtime_statistic("trader.stage2_json_%02d" % (i//3500), txt[i:i+3500])\n        for k,v in self.funnel.items():\n            self.set_runtime_statistic("trader."+k, str(v))\n        self.set_runtime_statistic("trader.candidates_json", json.dumps(self.candidate_details[:40], sort_keys=True, separators=(",",":"))[:3900])\n        self.set_runtime_statistic("trader.tuning", json.dumps(dict(max_days_after_earnings=self.max_days_after_earnings, max_premium=self.max_premium, max_spread=self.max_spread, max_spread_pct=self.max_spread_pct, min_bid=self.min_bid, min_open_interest=self.min_open_interest, min_volume=self.min_volume, historical_threshold="debug_only_contract_required_move_pct", multi_year_backtest_status="REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL", robust_finalizer=True), sort_keys=True))\n        if should_quit:\n            self.quit()\n'''
+    (project_dir / 'main.py').write_text(code)
+
+
+def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Path, batch_limit: int, today: datetime.date, batch_offset: int = 0) -> dict:
+    batch_rows = calendar_rows[max(0, batch_offset):max(0, batch_offset)+max(0, batch_limit)]
+    if not batch_rows:
+        return {'ok': False, 'reason': 'empty_batch'}
+    project_name = f'{QC_PROJECT_NAME}-{batch_offset}'
+    project_dir = LEAN_WORKSPACE / project_name
+    write_qc_stage2_project(project_dir, batch_rows, today)
+    project_id, organization_id = ensure_qc_project(project_dir, project_name)
+    # ensure_qc_project may have rewritten config after project creation; preserve main.py and push.
+    push = subprocess.run(['lean','cloud','push','--project',str(project_dir),'--force'], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
+    name = f"earnings-qc-stage2-{today.strftime('%Y%m%d')}-{datetime.datetime.now(datetime.timezone.utc).strftime('%H%M%S')}-n{len(batch_rows)}"
+    bt = subprocess.run(['lean','cloud','backtest',project_name,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
+    (run_dir/'qc_stage2_push_stdout.txt').write_text(push.stdout)
+    (run_dir/'qc_stage2_push_stderr.txt').write_text(push.stderr)
+    (run_dir/'qc_stage2_backtest_stdout.txt').write_text(bt.stdout)
+    (run_dir/'qc_stage2_backtest_stderr.txt').write_text(bt.stderr)
+    m = re.search(r'Backtest id:\s*([0-9a-f]+)', bt.stdout + '\n' + bt.stderr)
+    backtest_id = m.group(1) if m else None
+    out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'project_id': project_id, 'organization_id': organization_id, 'project_name': project_name, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode}
+    if backtest_id:
+        try:
+            b = qc_api('GET', 'backtests/read', {'projectId': project_id, 'backtestId': backtest_id}).get('backtest', {})
+            out['runtime_statistics'] = b.get('runtimeStatistics') or {}
+            parts = [out['runtime_statistics'][k] for k in sorted(out['runtime_statistics']) if k.startswith('trader.stage2_json_')]
+            if parts:
+                try:
+                    out['parsed_result'] = json.loads(''.join(parts))
+                except Exception as e:
+                    out['parsed_result_error'] = repr(e)
+            out['status'] = b.get('status')
+            out['completed'] = b.get('completed')
+            out['error'] = b.get('error')
+            out['stacktrace'] = b.get('stacktrace')
+            out['ok'] = bool(out.get('ok') and b.get('completed') and b.get('status') == 'Completed.' and not b.get('error') and not b.get('stacktrace') and 'trader.symbols_input' in (out.get('runtime_statistics') or {}))
+            (run_dir/'qc_stage2_backtest_read.json').write_text(json.dumps(b, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+        except Exception as e:
+            out['read_error'] = repr(e)
+            out['ok'] = False
+    return out
+
+
+def stat_int(stats: dict, key: str) -> int | None:
+    v = stats.get(key)
+    if v is None: return None
+    try: return int(str(v).replace(',', '').strip())
+    except Exception: return None
+
+
+def qc_capability_probe(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Path, batch_limit: int, today: datetime.date, batch_offset: int = 0) -> dict:
+    checks = {}
+    try:
+        p = subprocess.run(['lean', '--version'], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=20)
+        checks['lean_version'] = {'ok': p.returncode == 0, 'stdout': p.stdout.strip(), 'stderr': p.stderr.strip()[:500]}
+    except Exception as e:
+        checks['lean_version'] = {'ok': False, 'error': repr(e)}
+    try:
+        p = subprocess.run(['lean', 'cloud', 'pull', '--help'], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=30)
+        checks['qc_smoke'] = {'ok': p.returncode == 0, 'stdout': p.stdout.strip()[:1000], 'stderr': p.stderr.strip()[:500], 'note': 'CLI cloud command reachable; not a full QC auth/project backtest'}
+    except Exception as e:
+        checks['qc_smoke'] = {'ok': False, 'error': repr(e)}
+    try:
+        checks['qc_option_chain_batch_diagnostic'] = run_qc_stage2_batch(calendar_rows, run_dir, batch_limit, today, batch_offset)
+    except Exception as e:
+        checks['qc_option_chain_batch_diagnostic'] = {'ok': False, 'error': repr(e)}
+    return checks
+
+
+def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_offset: int | None = None, calendar_snapshot: str | None = None) -> int:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    today = now.date()
+    if qc_batch_limit is None:
+        qc_batch_limit = int(os.environ.get('QC_BATCH_LIMIT', '25'))
+    if qc_batch_offset is None:
+        qc_batch_offset = int(os.environ.get('QC_BATCH_OFFSET', '0'))
+    start = today + timedelta(days=21)
+    end = today + timedelta(days=28)
+    run_id = f"earnings-qc-options-scan-{today.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}-{os.getpid()}-{qc_batch_offset}"
+    run_dir = REPORT_ROOT / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if calendar_snapshot:
+        calendar_rows = json.loads(pathlib.Path(calendar_snapshot).read_text())
+        calendar_fetches = [{'source': 'full_scan_calendar_snapshot', 'path': calendar_snapshot, 'row_count_normalized': len(calendar_rows)}]
+    else:
+        calendar_rows, calendar_fetches = nasdaq_calendar_window(start, end)
+    (run_dir/'calendar_rows.json').write_text(json.dumps(calendar_rows, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    symbols = sorted({r['symbol'] for r in calendar_rows})
+    calendar_fetch_failed = (not bool(calendar_snapshot)) and any(m.get('error') or m.get('parse_error') for m in calendar_fetches)
+    # Preserve Nasdaq market-cap order for QC batch by using calendar order.
+    checks = qc_capability_probe(calendar_rows, run_dir, min(qc_batch_limit, max(0, len(calendar_rows)-qc_batch_offset)), today, qc_batch_offset) if calendar_rows else qc_capability_probe([], run_dir, 0, today, 0)
+    batch = checks.get('qc_option_chain_batch_diagnostic', {})
+    batch_ok = bool(batch.get('ok'))
+    stats = batch.get('runtime_statistics') or {}
+    batch_n = int(batch.get('symbols_requested') or 0)
+    candidate_count = stat_int(stats, 'trader.candidates') if batch_ok else None
+    candidate_details = []
+    candidate_details_parse_failed = False
+    tuning_stats = {}
+    if batch_ok:
+        try:
+            candidate_details = json.loads(stats.get('trader.candidates_json') or '[]')
+        except Exception:
+            candidate_details = []
+            candidate_details_parse_failed = True
+        try:
+            tuning_stats = json.loads(stats.get('trader.tuning') or '{}')
+        except Exception:
+            tuning_stats = {}
+    if not calendar_rows:
+        status = 'BLOCKED_NASDAQ_CALENDAR_EMPTY'
+    elif calendar_fetch_failed:
+        status = 'BLOCKED_NASDAQ_CALENDAR_PARTIAL_FETCH_FAILED'
+        batch_ok = False
+    elif batch_ok and (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0:
+        status = 'BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED'
+        batch_ok = False
+    elif batch_ok and batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0:
+        status = 'BLOCKED_QC_NO_OPTION_CHAIN_ROWS_ON_VALUATION_DATE'
+        batch_ok = False
+    elif batch_ok:
+        status = 'OK_STAGE3_QC_BATCH'
+    else:
+        status = 'BLOCKED_QC_BATCH_FAILED'
+
+    payload = {
+        'ok': bool(calendar_rows) and batch_ok and not calendar_fetch_failed and not ((candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0),
+        'status': status,
+        'run_id': run_id,
+        'run_date': today.isoformat(),
+        'report_dir': str(run_dir),
+        'calendar_window': [start.isoformat(), end.isoformat()],
+        'calendar_source': 'nasdaq_public_calendar',
+        'calendar_universe_count': len(symbols),
+        'calendar_row_count': len(calendar_rows),
+        'calendar_sample': calendar_rows[:25],
+        'calendar_fetches': calendar_fetches,
+        'calendar_fetch_failed': calendar_fetch_failed,
+        'qc_batch_limit': qc_batch_limit,
+        'qc_batch_count': batch_n,
+        'qc_processed_row_count': len((batch.get('parsed_result') or {}).get('rows') or []),
+        'valuation_date': latest_weekday_on_or_before(today).isoformat(),
+        'qc_batch_offset': qc_batch_offset,
+        'candidate_count': candidate_count,
+        'candidate_details': candidate_details,
+        'candidate_details_parse_failed': candidate_details_parse_failed,
+        'tuning': tuning_stats,
+        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else ('QC produced zero option-chain rows on valuation date' if batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.')))),
+        'required_next_step': 'Run QC/EODHD multi-year historical option-PnL backtest with explicit exit policy.' if batch_ok else 'Fix QC batch diagnostic failure.',
+        'qc_checks': checks,
+        'funnel': {
+            '01_nasdaq_earnings_21_28d_universe': len(symbols),
+            '02_qc_option_chain_available': stat_int(stats, 'trader.option_chain_available'),
+            '03_qc_expiry_within_0_7d_after_earnings': stat_int(stats, 'trader.expiry_within_0_7d_after_earnings'),
+            '04_qc_calls_ask_under_50c': stat_int(stats, 'trader.calls_under_50c'),
+            '05_qc_liquidity_greeks_quality_pass': stat_int(stats, 'trader.liquidity_pass'),
+            '06_qc_historical_required_move_runup_pass': stat_int(stats, 'trader.historical_required_move_runup_pass'),
+            '07_multi_year_backtest_status': 'REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL',
+            '08_qc_candidates': candidate_count,
+        },
+        'guardrails': {
+            'no_yahoo_yfinance': True,
+            'nasdaq_calendar_stage_only': True,
+            'qc_for_options_and_history': True,
+            'historical_runup_source': 'qc_history_plus_nasdaq_last_year_report_date',
+            'research_only': True,
+            'qc_stage2_batch_limited': batch_n < len(symbols),
+        },
+    }
+    if not calendar_rows:
+        msg = (
+            'סריקת דוחות Nasdaq נכשלה/חזרה ריקה.\n'
+            f'- חלון: {start.isoformat()} עד {end.isoformat()}\n'
+            '- לא הופעל Yahoo/yfinance.'
+        )
+    elif batch_ok:
+        top = ', '.join(symbols[:20]) + ('…' if len(symbols) > 20 else '')
+        msg = (
+            'סריקת דוחות + QC Stage 3 הורצה בהצלחה.\n'
+            f'- חלון דוחות: {start.isoformat()} עד {end.isoformat()}\n'
+            f'- Nasdaq universe: {len(symbols)} סימבולים / {len(calendar_rows)} שורות\n'
+            f'- QC batch שנבדק: {batch_n} סימבולים, offset {qc_batch_offset}\n'
+            f'- option chain: {payload["funnel"]["02_qc_option_chain_available"]}/{batch_n}\n'
+            f'- פקיעה עד 7 ימים אחרי הדוח: {payload["funnel"]["03_qc_expiry_within_0_7d_after_earnings"]}/{batch_n}\n'
+            f'- אין סינון OTM קשיח לפני cheap-calls; נבדק required_move_pct לכל חוזה\n'
+            f'- calls עם ask עד $0.50: {payload["funnel"]["04_qc_calls_ask_under_50c"]}/{batch_n}\n'
+            f'- liquidity/Greeks quality pass: {payload["funnel"]["05_qc_liquidity_greeks_quality_pass"]}/{batch_n}\n'
+            f'- historical run-up >= required move של החוזה: {payload["funnel"]["06_qc_historical_required_move_runup_pass"]}/{batch_n}\n'
+            f'- multi-year backtest: {payload["funnel"]["07_multi_year_backtest_status"]}\n'
+            f'- מועמדים ב־batch: {candidate_count}\n'
+            + (''.join([f'- {c.get("symbol")}: run-up {c.get("runup_pct")}%, חוזים לדוגמה {len(c.get("contracts",[]))}\n' for c in candidate_details[:5]]) if candidate_details else '')
+            + f'- דוגמאות universe: {top}\n'
+            '- לא הופעל Yahoo/yfinance.'
+        )
+    else:
+        msg = (
+            'שלב Nasdaq עבר, אבל QC Stage 2 נכשל.\n'
+            f'- חלון דוחות: {start.isoformat()} עד {end.isoformat()}\n'
+            f'- Nasdaq universe: {len(symbols)} סימבולים\n'
+            '- ראה qc_stage2_* artifacts בדוח.\n'
+            '- לא הופעל Yahoo/yfinance.'
+        )
+    (run_dir/'nasdaq_calendar_rows.json').write_text(json.dumps(calendar_rows, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    (run_dir/'candidate_details.json').write_text(json.dumps(candidate_details, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    (run_dir/'result.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    (run_dir/'hebrew_report.md').write_text(msg+'\n')
+    if notify and (payload.get('candidate_count') or not payload.get('ok')):
+        payload['outbox_written'] = write_outbox(msg, payload)
+        (run_dir/'result.json').write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if payload.get('ok') else 2
+
+
+def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == 'run-now':
+        notify = '--no-outbox' not in sys.argv
+        limit = None
+        offset = None
+        if '--qc-batch-limit' in sys.argv:
+            i = sys.argv.index('--qc-batch-limit')
+            limit = int(sys.argv[i+1])
+        snapshot = None
+        if '--qc-batch-offset' in sys.argv:
+            i = sys.argv.index('--qc-batch-offset')
+            offset = int(sys.argv[i+1])
+        if '--calendar-snapshot' in sys.argv:
+            i = sys.argv.index('--calendar-snapshot')
+            snapshot = sys.argv[i+1]
+        return run_now(notify=notify, qc_batch_limit=limit, qc_batch_offset=offset, calendar_snapshot=snapshot)
+    print('usage: earnings-qc-options-scan run-now [--no-outbox] [--qc-batch-limit N] [--qc-batch-offset N] [--calendar-snapshot PATH]', file=sys.stderr)
+    return 64
+
+if __name__ == '__main__':
+    raise SystemExit(main())
