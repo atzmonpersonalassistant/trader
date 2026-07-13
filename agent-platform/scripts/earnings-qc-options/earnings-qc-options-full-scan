@@ -310,8 +310,11 @@ def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: i
         return
     parallel = max(1, int(parallel or 1))
     if parallel == 1:
-        for off in offsets:
+        delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
+        for i, off in enumerate(offsets):
             run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end)
+            if delay > 0 and i < len(offsets) - 1:
+                time.sleep(delay)
         return
     # Conservative bounded parallelism for QC Cloud compile/backtest stability.
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as ex:
@@ -428,7 +431,7 @@ def build_parser():
     def common(sp):
         sp.add_argument('--run-dir')
         sp.add_argument('--chunk-size', type=int, default=int(os.environ.get('QC_FULL_CHUNK_SIZE','25')))
-    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','2'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
+    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
     s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
     sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
     rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
