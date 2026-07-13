@@ -205,10 +205,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_uses_point_in_time_valuation_window_not_stale_multiday_slice(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("valuation_date = last_completed_qc_trading_day(today)", scan)
+        self.assertIn("'valuation_date': last_completed_qc_trading_day(today).isoformat()", scan)
+        self.assertNotIn("'valuation_date': latest_weekday_on_or_before(today).isoformat()", scan)
         self.assertIn("start = previous_weekday_before(valuation_date)", scan)
         self.assertIn("end = valuation_date", scan)
         self.assertIn("self.valuation_date", scan)
         self.assertIn("self.time.date() < self.valuation_date", scan)
+        self.assertIn("elif self.time.date() > self.valuation_date", scan)
+        self.assertNotIn("or self.time.date() >= self.valuation_date", scan)
         self.assertNotIn("today - timedelta(days=5)", scan)
         self.assertNotIn("end = valuation_date + timedelta(days=1)", scan)
         self.assertNotIn("set_warm_up", scan)
@@ -258,6 +263,16 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("trader.stage2_json_%02d", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
+
+    def test_stage2_reads_option_chain_values_like_working_qc_templates(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("data.option_chains.values()", scan)
+        self.assertIn("chains_by_symbol", scan)
+        self.assertIn("chain.contracts.values()", scan)
+        self.assertIn("self.add_option(ticker, Resolution.HOUR)", scan)
+        self.assertIn("calls_only().strikes(-50, 300).expiration(0, 120)", scan)
+        self.assertIn("trader.option_chain_slice_count", scan)
+        self.assertIn("trader.option_chain_symbols_sample", scan)
 
 
 if __name__ == "__main__":
