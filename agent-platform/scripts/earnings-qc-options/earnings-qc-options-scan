@@ -257,17 +257,36 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
     project_id, organization_id = ensure_qc_project(project_dir, project_name)
     # ensure_qc_project may have rewritten config after project creation; preserve main.py and push.
     push = subprocess.run(['lean','cloud','push','--project',str(project_dir),'--force'], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
-    name = f"earnings-qc-stage2-{today.strftime('%Y%m%d')}-{datetime.datetime.now(datetime.timezone.utc).strftime('%H%M%S')}-n{len(batch_rows)}"
-    bt = subprocess.run(['lean','cloud','backtest',project_name,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
+    attempts = []
+    max_attempts = int(os.environ.get('QC_STAGE2_BACKTEST_ATTEMPTS', '4'))
+    base_delay = int(os.environ.get('QC_STAGE2_BACKTEST_RETRY_BASE_SECONDS', '45'))
+    bt = None
+    name = ''
+    for attempt in range(1, max(1, max_attempts) + 1):
+        name = f"earnings-qc-stage2-{today.strftime('%Y%m%d')}-{datetime.datetime.now(datetime.timezone.utc).strftime('%H%M%S')}-n{len(batch_rows)}-a{attempt}"
+        bt = subprocess.run(['lean','cloud','backtest',project_name,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
+        output = (bt.stdout + '\n' + bt.stderr).strip()
+        retryable = bt.returncode != 0 and ('too many backtest requests' in output.lower() or 'no spare nodes available' in output.lower())
+        attempts.append({'attempt': attempt, 'returncode': bt.returncode, 'retryable': retryable, 'rate_limited': 'too many backtest requests' in output.lower(), 'capacity_blocked': 'no spare nodes available' in output.lower()})
+        if bt.returncode == 0 or not retryable or attempt >= max_attempts:
+            break
+        time.sleep(base_delay * attempt)
+    assert bt is not None
     (run_dir/'qc_stage2_push_stdout.txt').write_text(push.stdout)
     (run_dir/'qc_stage2_push_stderr.txt').write_text(push.stderr)
     (run_dir/'qc_stage2_backtest_stdout.txt').write_text(bt.stdout)
     (run_dir/'qc_stage2_backtest_stderr.txt').write_text(bt.stderr)
+    (run_dir/'qc_stage2_backtest_attempts.json').write_text(json.dumps(attempts, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     m = re.search(r'Backtest id:\s*([0-9a-f]+)', bt.stdout + '\n' + bt.stderr)
     backtest_id = m.group(1) if m else None
     backtest_output = (bt.stdout + '\n' + bt.stderr).strip()
-    out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'project_id': project_id, 'organization_id': organization_id, 'project_name': project_name, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode}
-    if bt.returncode != 0 and 'no spare nodes available' in backtest_output.lower():
+    out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'project_id': project_id, 'organization_id': organization_id, 'project_name': project_name, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode, 'backtest_attempts': attempts}
+    if bt.returncode != 0 and 'too many backtest requests' in backtest_output.lower():
+        out['status'] = 'BLOCKED_QC_CLOUD_RATE_LIMITED'
+        out['rate_limited'] = True
+        out['error'] = 'QuantConnect Cloud rejected the request as too many backtest requests; retry later/slower.'
+        out['error_class'] = 'qc_cloud_rate_limit'
+    elif bt.returncode != 0 and 'no spare nodes available' in backtest_output.lower():
         out['status'] = 'BLOCKED_QC_CLOUD_NO_SPARE_NODES'
         out['capacity_blocked'] = True
         out['error'] = 'QuantConnect Cloud has no spare nodes available for a new backtest.'
@@ -369,6 +388,9 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
     elif batch_ok and (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0:
         status = 'BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED'
         batch_ok = False
+    elif batch.get('rate_limited'):
+        status = 'BLOCKED_QC_CLOUD_RATE_LIMITED'
+        batch_ok = False
     elif batch.get('capacity_blocked'):
         status = 'BLOCKED_QC_CLOUD_NO_SPARE_NODES'
         batch_ok = False
@@ -402,7 +424,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'candidate_details': candidate_details,
         'candidate_details_parse_failed': candidate_details_parse_failed,
         'tuning': tuning_stats,
-        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC Cloud has no spare nodes available for a new backtest' if batch.get('capacity_blocked') else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else ('QC produced zero option-chain rows on valuation date' if batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0 and batch.get('backtest_returncode') == 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.'))))),
+        'blocked_reason': None if batch_ok else ('Nasdaq calendar empty' if not calendar_rows else ('Nasdaq calendar partial fetch/parse failure' if calendar_fetch_failed else ('QC Cloud rate-limited backtest requests; retry later/slower' if batch.get('rate_limited') else ('QC Cloud has no spare nodes available for a new backtest' if batch.get('capacity_blocked') else ('QC candidate details JSON missing/truncated/unparseable' if (candidate_details_parse_failed or (candidate_count or 0) > len(candidate_details)) and (candidate_count or 0) > 0 else ('QC produced zero option-chain rows on valuation date' if batch_n > 0 and len((batch.get('parsed_result') or {}).get('rows') or []) == 0 and batch.get('backtest_returncode') == 0 else 'QC/LEAN batch option-chain diagnostic failed; see qc_stage2_* artifacts.')))))),
         'required_next_step': 'Run QC/EODHD multi-year historical option-PnL backtest with explicit exit policy.' if batch_ok else 'Fix QC batch diagnostic failure.',
         'qc_checks': checks,
         'funnel': {
