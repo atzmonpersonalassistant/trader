@@ -24,6 +24,8 @@ Use this skill for Uriel's daily earnings run-up options scanner.
 
 Production deployment details such as hostnames, IPs, SSH keys, and user-specific paths are intentionally kept out of this repo. The scanner scripts are designed to run on the Trader research environment as the research user.
 
+Use the local OpenClaw skill wrapper (`scripts/run_earnings_qc_scan.sh` in the private skill directory) for environment-specific SSH/VPS invocation.
+
 ## Workflow
 
 1. **Nasdaq-only calendar step:** Generate the first-stage universe from Nasdaq public earnings calendar API for `today+21` through `today+28`.
