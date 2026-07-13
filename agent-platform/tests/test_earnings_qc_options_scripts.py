@@ -183,9 +183,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_uses_point_in_time_valuation_window_not_stale_multiday_slice(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        self.assertIn("start = valuation_date", scan)
-        self.assertIn("end = valuation_date + timedelta(days=1)", scan)
+        self.assertIn("start = previous_weekday_before(valuation_date)", scan)
+        self.assertIn("end = valuation_date", scan)
+        self.assertIn("self.valuation_date", scan)
+        self.assertIn("self.time.date() < self.valuation_date", scan)
         self.assertNotIn("today - timedelta(days=5)", scan)
+        self.assertNotIn("end = valuation_date + timedelta(days=1)", scan)
         self.assertNotIn("set_warm_up", scan)
 
     def test_full_scan_uses_single_calendar_snapshot_for_chunks(self):
