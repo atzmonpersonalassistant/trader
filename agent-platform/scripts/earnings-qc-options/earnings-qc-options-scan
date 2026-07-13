@@ -387,7 +387,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'qc_batch_limit': qc_batch_limit,
         'qc_batch_count': batch_n,
         'qc_processed_row_count': len((batch.get('parsed_result') or {}).get('rows') or []),
-        'valuation_date': latest_weekday_on_or_before(today).isoformat(),
+        'valuation_date': last_completed_qc_trading_day(today).isoformat(),
         'qc_batch_offset': qc_batch_offset,
         'candidate_count': candidate_count,
         'candidate_details': candidate_details,

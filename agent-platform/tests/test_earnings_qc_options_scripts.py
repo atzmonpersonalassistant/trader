@@ -206,6 +206,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_stage2_uses_point_in_time_valuation_window_not_stale_multiday_slice(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("valuation_date = last_completed_qc_trading_day(today)", scan)
+        self.assertIn("'valuation_date': last_completed_qc_trading_day(today).isoformat()", scan)
+        self.assertNotIn("'valuation_date': latest_weekday_on_or_before(today).isoformat()", scan)
         self.assertIn("start = previous_weekday_before(valuation_date)", scan)
         self.assertIn("end = valuation_date", scan)
         self.assertIn("self.valuation_date", scan)
