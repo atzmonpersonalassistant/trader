@@ -177,19 +177,47 @@ def env_float(name: str, default: float, min_value: float | None = None, max_val
     return value
 
 
+TUNING_SPECS = {
+    'max_premium': ('QC_MAX_PREMIUM', 0.50, 0.01, 5.00),
+    'min_bid': ('QC_MIN_BID', 0.05, 0.00, 5.00),
+    'max_spread_pct': ('QC_MAX_SPREAD_PCT', 0.60, 0.01, 5.00),
+    'min_relative_spread': ('QC_MIN_RELATIVE_SPREAD', 0.25, 0.00, 5.00),
+    'vol_spread_factor': ('QC_VOL_SPREAD_FACTOR', 0.50, 0.00, 10.00),
+    'expected_move_spread_fraction': ('QC_EXPECTED_MOVE_SPREAD_FRACTION', 0.15, 0.00, 5.00),
+}
+
+
+def validate_scan_tuning(tuning: dict[str, float] | None = None) -> dict[str, float]:
+    """Validate explicit or env-derived research-agent/LLM scan knobs."""
+    tuning = tuning or {}
+    out = {}
+    unknown = sorted(set(tuning) - set(TUNING_SPECS))
+    if unknown:
+        raise ValueError(f'unknown scan tuning keys: {unknown}')
+    for key, (env_name, default, min_value, max_value) in TUNING_SPECS.items():
+        if key in tuning:
+            try:
+                value = float(tuning[key])
+            except Exception as e:
+                raise ValueError(f'{key} must be a float, got {tuning[key]!r}') from e
+            if not math.isfinite(value):
+                raise ValueError(f'{key} must be finite, got {value}')
+            if value < min_value:
+                raise ValueError(f'{key} must be >= {min_value}, got {value}')
+            if value > max_value:
+                raise ValueError(f'{key} must be <= {max_value}, got {value}')
+            out[key] = value
+        else:
+            out[key] = env_float(env_name, default, min_value, max_value)
+    return out
+
+
 def scan_tuning_from_env() -> dict[str, float]:
     """Guardrailed knobs for research-agent/LLM parameter sweeps.
 
     These change scanner filtering only. They do not authorize live trading.
     """
-    return {
-        'max_premium': env_float('QC_MAX_PREMIUM', 0.50, 0.01, 5.00),
-        'min_bid': env_float('QC_MIN_BID', 0.05, 0.00, 5.00),
-        'max_spread_pct': env_float('QC_MAX_SPREAD_PCT', 0.60, 0.01, 5.00),
-        'min_relative_spread': env_float('QC_MIN_RELATIVE_SPREAD', 0.25, 0.00, 5.00),
-        'vol_spread_factor': env_float('QC_VOL_SPREAD_FACTOR', 0.50, 0.00, 10.00),
-        'expected_move_spread_fraction': env_float('QC_EXPECTED_MOVE_SPREAD_FRACTION', 0.15, 0.00, 5.00),
-    }
+    return validate_scan_tuning()
 
 
 def latest_weekday_on_or_before(day: datetime.date) -> datetime.date:
@@ -211,7 +239,7 @@ def last_completed_qc_trading_day(today: datetime.date) -> datetime.date:
 def write_qc_stage2_project(project_dir: pathlib.Path, batch_rows: list[dict[str, Any]], today: datetime.date, tuning: dict[str, float] | None = None) -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
     earnings = {r['symbol']: r['report_date'] for r in batch_rows}
-    tuning = tuning or scan_tuning_from_env()
+    tuning = validate_scan_tuning(tuning) if tuning is not None else scan_tuning_from_env()
     # Stage 2 is a point-in-time daily scanner: use the most recent completed weekday.
     # QC daily option-chain snapshots for the current trading day may not be available yet.
     valuation_date = last_completed_qc_trading_day(today)

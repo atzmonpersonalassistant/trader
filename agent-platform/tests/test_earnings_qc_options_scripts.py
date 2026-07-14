@@ -37,7 +37,18 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_accepts_dynamic_liquidity_tuning_from_env_or_args(self):
         mod = load_script("earnings-qc-options-scan")
-        self.assertEqual(mod.scan_tuning_from_env()["max_premium"], 0.5)
+        import os
+        old_env = {k: os.environ.get(k) for k in [spec[0] for spec in mod.TUNING_SPECS.values()]}
+        try:
+            for k in old_env:
+                os.environ.pop(k, None)
+            self.assertEqual(mod.scan_tuning_from_env()["max_premium"], 0.5)
+        finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
         project_dir = pathlib.Path(tempfile.mkdtemp())
         mod.write_qc_stage2_project(
             project_dir,
@@ -74,6 +85,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             os.environ["QC_MAX_PREMIUM"] = "inf"
             with self.assertRaises(ValueError):
                 mod.scan_tuning_from_env()
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"max_premium": float("nan")})
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"max_premium": 10})
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"unknown": 1})
         finally:
             if old is None:
                 os.environ.pop("QC_MAX_PREMIUM", None)
