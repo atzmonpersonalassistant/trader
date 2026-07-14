@@ -3,6 +3,16 @@ import unittest
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
+
+    def test_earnings_research_has_single_public_cli(self):
+        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+
+        self.assertIn('/agents/research/bin/earnings-qc-research', workflow)
+        self.assertIn('/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan', workflow)
+        self.assertIn('/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest', workflow)
+        self.assertIn('rm -f /agents/research/bin/earnings-qc-options-full-scan', workflow)
+        self.assertIn('test ! -e /agents/research/bin/earnings-qc-options-full-scan', workflow)
+
     def test_research_postgres_cache_db_is_provisioned(self):
         workflow = Path('.github/workflows/vps-deploy.yml').read_text()
 

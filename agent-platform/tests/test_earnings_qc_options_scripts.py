@@ -19,6 +19,14 @@ def load_script(name: str):
 
 
 class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
+
+    def test_single_public_research_cli_uses_internal_libexec_stages(self):
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan", cli)
+        self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest", cli)
+        self.assertNotIn("SCANNER = pathlib.Path('/agents/research/bin/earnings-qc-options-scan')", cli)
+        self.assertNotIn("MULTIYEAR = pathlib.Path('/agents/research/bin/earnings-qc-multiyear-backtest')", cli)
+
     def test_stage2_generated_qc_algorithm_contains_finalizers(self):
         mod = load_script("earnings-qc-options-scan")
         project_dir = pathlib.Path(tempfile.mkdtemp())
