@@ -182,7 +182,32 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("allowed_relative_spread", main)
         self.assertIn("allowed_spread", main)
         self.assertIn("spread_policy", main)
-        self.assertIn("volatility_aware_min_absolute_relative_expected_move", main)
+        self.assertIn("volatility_aware_relative_expected_move_no_absolute_spread_gate", main)
+
+
+    def test_stage2_relaxes_oi_volume_and_absolute_spread_gates_with_diagnostics(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
+            datetime.date(2026, 7, 13),
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.min_open_interest = 0", main)
+        self.assertIn("self.min_volume = 0", main)
+        self.assertIn("self.max_spread = None", main)
+        self.assertNotIn("(oi >= self.min_open_interest or vol >= self.min_volume)", main)
+        self.assertIn("open_interest_volume_policy=\"diagnostic_only_not_gate\"", main)
+        self.assertIn("spread_policy=\"volatility_aware_relative_expected_move_no_absolute_spread_gate\"", main)
+        self.assertIn("liquidity_fail_reason_counts", main)
+        self.assertIn("cheap_contract_diagnostics_sample", main)
+        self.assertIn("low_bid", main)
+        self.assertIn("missing_greeks", main)
+        self.assertIn("missing_iv", main)
+        self.assertIn("spread_too_wide", main)
+        self.assertIn("diagnostic_zero_volume", main)
+        self.assertIn("diagnostic_zero_open_interest", main)
 
     def test_stage2_notify_only_candidates_or_blockers(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
