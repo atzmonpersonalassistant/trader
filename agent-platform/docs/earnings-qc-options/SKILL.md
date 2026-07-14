@@ -1,68 +1,65 @@
 ---
 name: earnings-qc-options-scan
-description: QC/LEAN-only earnings options scanner for Uriel's Trader VPS. Use when scanning companies reporting in 21-28 days for long OTM calls up to $0.50, building funnel counts, validating option chains/Greeks/liquidity through QuantConnect only, or configuring the daily Trader cron/job for this earnings run-up strategy.
+description: Active QC/LEAN-only earnings options research loop for Uriel's Trader VPS. Use when searching for earnings run-up option candidates, iterating scanner parameters, running Nasdaq→QC→multi-year option-PnL workflows, or using the earnings-qc-options-full-scan CLI to find final trade candidates.
 ---
 
-# Earnings QC Options Scan
+# Earnings QC Options Research Loop
 
-Use this skill for Uriel's daily earnings run-up options scanner.
+This is an **active research skill**, not a one-shot scanner.
+
+Use the CLI as an experimental research instrument: run the full Nasdaq→QC→multi-year workflow, inspect the funnel, adjust guardrailed parameters, rerun, and continue until either final QC/EODHD-backed candidates emerge or the reasonable search space is exhausted.
+
+Research only: no live trading and no broker orders.
+
+## Canonical CLI
+
+Use one canonical CLI for the full flow:
+
+```bash
+/agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+```
+
+This CLI owns the complete workflow:
+
+1. fetch Nasdaq public earnings calendar for `today+21` through `today+28`
+2. cache/normalize the forward earnings universe
+3. split the universe into chunks
+4. run QC/LEAN option-chain/Greeks/liquidity diagnostics per chunk
+5. run QC/EODHD multi-year historical option-PnL validation for forward candidates
+6. aggregate funnel counts, blockers, final candidates, and reports
+
+Internal CLIs exist but are implementation details:
+
+- `/agents/research/bin/earnings-qc-options-scan` — internal single-stage/chunk diagnostic
+- `/agents/research/bin/earnings-qc-multiyear-backtest` — internal historical option-PnL validator
+
+Use those only for debugging broken stages. Normal research uses `earnings-qc-options-full-scan`.
+
+## Runtime invocation
+
+Run the canonical CLI in the Trader research environment as the research user:
+
+```bash
+/agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+```
+
+Environment-specific hostnames, SSH keys, usernames, and private paths are intentionally kept out of this repo. Use the private local OpenClaw skill wrapper for VPS invocation.
+
+Prefer `--parallel 1` while experimenting with QC Cloud reliability/cost.
 
 ## Non-negotiables
 
-- **Only Step 1 uses Nasdaq.** Use the free Nasdaq public earnings calendar API only to build the first-stage forward earnings universe for companies reporting in 21-28 calendar days.
-- Label Nasdaq calendar rows explicitly as `source=nasdaq_public_calendar`; this is a free public endpoint, not QC evidence and not a guaranteed commercial feed.
-- **Steps 2-6 must use QC/LEAN evidence.** Option chain availability, expiries, pricing, bid/ask, volume/open interest, Greeks/IV, historical prices, historical run-up calculations, funnel validation, candidate/watchlist evidence, and backtest price/option evidence must come from QC/LEAN.
-- For multi-year historical backtesting, use **QC/EODHDUpcomingEarnings** as the approved historical earnings event-date source. A live QC probe on 2026-07-12 confirmed historical events from 2018-2026 for AAPL/MSFT/AMD/NVDA/PLTR. QC/LEAN remains the source for historical prices/options and now also the approved source for historical earnings event dates when EODHDUpcomingEarnings data is available. If QC/EODHDUpcomingEarnings is unavailable for a symbol/window, mark that symbol/window as blocked; do not fake dates silently.
-- Do **not** use Yahoo/yfinance for earnings calendar, option chain, Greeks, liquidity, IV, prices, or historical earnings-run-up validation unless Uriel explicitly approves it for a one-off diagnostic.
-- If Nasdaq calendar retrieval fails, fall back only to another explicitly approved free source or stop with a blocker; do not silently revert to Yahoo.
-- If QC batch diagnostics are not implemented or cannot run after the Nasdaq calendar stage, report `BLOCKED_QC_BATCH_NOT_READY`; do not produce a Yahoo-based funnel.
-- Research only: no live trading, no broker orders.
-- WhatsApp reports should be concise Hebrew.
+- Nasdaq is only the first-stage forward earnings calendar source.
+- Nasdaq access is deterministic code inside the CLI, not LLM browsing/manual extraction.
+- Steps after calendar must use QC/LEAN evidence only: option chains, bid/ask, Greeks, IV, liquidity, prices, historical earnings events, and option PnL.
+- Do not use Yahoo/yfinance unless Uriel explicitly approves a one-off diagnostic.
+- Do not promote a trade without QC/EODHD multi-year historical option-PnL evidence.
+- Default exit rule: pre-earnings run-up trade; exit before earnings. Do not hold through earnings unless explicitly running a separately-labeled variant.
+- If a source/stage is unavailable, report a blocker; do not fake data.
 
-## Runtime / deployment notes
+## Dynamic research knobs
 
-Production deployment details such as hostnames, IPs, SSH keys, and user-specific paths are intentionally kept out of this repo. The scanner scripts are designed to run on the Trader research environment as the research user.
-
-Use the local OpenClaw skill wrapper (`scripts/run_earnings_qc_scan.sh` in the private skill directory) for environment-specific SSH/VPS invocation.
-
-## Workflow
-
-1. **Nasdaq-only calendar step:** Generate the first-stage universe from Nasdaq public earnings calendar API for `today+21` through `today+28`.
-   - Endpoint pattern: `https://api.nasdaq.com/api/calendar/earnings?date=YYYY-MM-DD`.
-   - Use browser-like headers (`User-Agent`, `Accept`, `Origin`, `Referer`) and cache each fetched date locally.
-   - Normalize `time-after-hours` / `time-pre-market` / `time-not-supplied`, EPS forecast, analyst count, market cap, fiscal quarter, company name, and `last_year_report_date` when present.
-2. **Chunked QC end-to-end execution:** After the Nasdaq calendar stage, split the universe into small chunks and run each chunk through the full QC pipeline. Default to conservative QC concurrency, currently `parallel=2`, and only increase after observing stable QC compile/backtest behavior, rate limits, and runtime-stat output size.
-   - The VPS is only the orchestrator: chunk scheduling, retry, aggregation, and reporting.
-   - QC/LEAN Cloud is responsible for all option-chain, Greeks/liquidity, historical event, and historical option-PnL evidence.
-   - Each chunk should be independently retryable; a failed chunk must not require rerunning the whole universe.
-3. **QC-only option availability + near-expiry filter, per chunk:** Run QC/LEAN diagnostics for option chain availability and keep only call contracts expiring after the earnings date but no later than **7 calendar days after earnings**. Do not select first/second expiry if it is more than 7 days after the report.
-4. **QC-only cheap call filter, per chunk:** Filter long calls using QC option-chain data only: ask <= configured max premium, bid/ask, volume/open interest, Greeks/IV when available. Do **not** require a fixed OTM threshold such as 3% before this step. Instead, compute each contract's `required_move_pct = strike / spot - 1` and carry it forward.
-5. **QC-only liquidity/Greeks quality filter, per chunk:** For each cheap call, record and score the exact liquidity inputs: bid, ask, mid, absolute spread, spread/mid %, volume, open interest, IV, delta, DTE, and whether volume is zero. Prefer explicit pass/fail reasons over a generic `liquidity_pass` boolean.
-6. **Mandatory QC/EODHD multi-year option-PnL backtesting up to 10 years, per chunk — the historical gate:** For forward candidates that pass option availability, expiry, cheap-call, and liquidity/Greeks evidence inside a chunk, query historical earnings events through QC/EODHDUpcomingEarnings and test configurable lookback windows: 1y, 3y, 5y, and up to 10y when data exists. This is the historical validation gate. For each historical event, use QC/LEAN prices/options to simulate the same rule family:
-   - event dates from QC/EODHDUpcomingEarnings only
-   - buy window / observation window before earnings
-   - expiry after earnings but no later than 7 calendar days after earnings
-   - ask <= configured max premium or the closest historical equivalent rule
-   - required move based on selected contract's strike/spot
-   - liquidity/Greeks evidence when available historically
-   - **exit rule is mandatory:** default strategy is a pre-earnings run-up trade, not an earnings-gap gamble. Exit at the last tradable option snapshot before the report. For pre-market reports, exit on the prior trading day. For after-market reports, exit before/at that day's close when an option snapshot exists. Do not hold through earnings by default. Any hold-through-earnings variant must be labeled separately and backtested separately.
-   - max loss, win rate, median/mean return, drawdown, sample size, and exit timing/slippage
-   If QC/EODHDUpcomingEarnings has insufficient events for a symbol/window, report a symbol/window-level blocker such as `BLOCKED_QC_EODHD_HISTORICAL_EVENTS_INSUFFICIENT` or `BLOCKED_HISTORICAL_OPTION_SAMPLE_INSUFFICIENT`; do not fake dates silently. Do not promote final candidates without multi-year option-PnL evidence and the configured exit rule unless Uriel explicitly asks for a forward-only watchlist.
-7. **QC-derived funnel + watchlist aggregation:** Produce funnel counts and candidate/watchlist from the chunk-validated results:
-   - Nasdaq earnings calendar universe
-   - QC option chain available
-   - QC expiry within 0-7 days after earnings
-   - QC calls ask <= configured max premium
-   - QC liquidity/Greeks quality pass
-   - QC/EODHD historical events available
-   - mandatory QC/EODHD historical option-PnL backtest pass or explicit symbol/window blocker
-   - explicit entry and exit rule used by the backtest
-   - QC final candidate/watchlist only after multi-year option-PnL evidence passes under the configured exit rule
-8. Notify only candidates or blockers. No empty daily spam.
-
-## Dynamic scan tuning knobs
-
-Research agents may run parameter sweeps by setting guardrailed environment variables before invoking the scanner. These are research filters only and do not authorize live trading.
+The CLI supports guardrailed environment knobs. The agent may vary these during research sweeps:
 
 - `QC_MAX_PREMIUM` default `0.50`, allowed `0.01..5.00`
 - `QC_MIN_BID` default `0.05`, allowed `0.00..5.00`
@@ -74,14 +71,78 @@ Research agents may run parameter sweeps by setting guardrailed environment vari
 Example:
 
 ```bash
-QC_MAX_PREMIUM=0.75 QC_MIN_BID=0.02 /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+sudo -n -u agent-research env \
+  HOME=/home/agent-research \
+  PYTHONDONTWRITEBYTECODE=1 \
+  QC_MAX_PREMIUM=0.75 \
+  QC_MIN_BID=0.02 \
+  /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
 ```
 
-Every run should record the effective tuning in the QC/runtime output so results are comparable.
+Effective tuning is recorded in output. Compare runs by run directory and tuning.
 
-## Bundled scripts
+## Research loop
 
-- `scripts/run_earnings_qc_scan.sh`: wrapper that runs the VPS scanner and enforces the no-Yahoo guard.
-- VPS runner should prefer `/agents/research/bin/earnings-qc-options-full-scan run --parallel 2 --end-to-end` or equivalent defaults. Keep QC concurrency conservative until measured stable; increase only after reviewing failed chunks, QC rate/compile stability, runtime-stat truncation, and total wall-clock time.
+When asked to search for candidates:
 
-When setting cron, invoke the script/wrapper; do not run old ad-hoc yfinance scanner.
+1. Start with the canonical full-scan defaults.
+2. Read the latest run dir from `/agents/research/state/earnings-qc-options-scan/latest-full-run.txt`.
+3. Inspect funnel and blockers:
+   - Nasdaq universe count
+   - QC option chain availability
+   - expiry within 0–7 days after earnings
+   - calls under configured max premium
+   - liquidity/Greeks gate pass
+   - multi-year option-PnL pass/fail
+   - final candidates
+4. If no candidates, diagnose the bottleneck:
+   - too few contracts under premium → consider raising `QC_MAX_PREMIUM`
+   - too many low-bid failures → consider lowering `QC_MIN_BID` carefully
+   - spread too strict → consider spread knobs carefully
+   - missing Greeks/IV → do not bypass blindly; may indicate QC data limitation
+   - historical option-PnL fails → do not promote; refine parameters or conclude no trade
+5. Stop stale runs before starting a replacement run to avoid wasting QC.
+6. Rerun with one controlled parameter change at a time when practical.
+7. Continue until final candidates appear or a clear no-trade conclusion is supported.
+
+## Optimize for chance of success vs profit
+
+Do not merely loosen filters until something appears. Optimize for expected trade quality:
+
+- probability of success / win rate
+- mean and median return
+- max loss and drawdown
+- sample size and robustness across windows/regimes
+- premium paid vs required move
+- spread/slippage and tradability
+- consistency of historical option-PnL, not just one exceptional event
+
+A candidate with a lower headline return but better robustness, smaller drawdown, better liquidity, and stronger median outcome may be preferable to a high-upside fragile candidate.
+
+## Final candidate standard
+
+A final candidate must have:
+
+- forward earnings event from Nasdaq calendar
+- QC option chain available
+- expiry after earnings and no more than 7 calendar days after earnings
+- call ask <= configured max premium
+- liquidity/Greeks gate pass
+- QC/EODHD historical earnings events available
+- multi-year QC/LEAN historical option-PnL pass under the configured pre-earnings exit rule
+- explicit metrics: sample size, win rate, median/mean return, drawdown, max loss, and exit timing/slippage
+
+Forward-only watchlists are allowed only if explicitly labeled as not final trade candidates.
+
+## Reporting style
+
+WhatsApp reports should be concise Hebrew:
+
+- current run dir
+- current offset / progress
+- funnel counts
+- active bottleneck
+- final candidates, if any
+- next parameter change, if continuing
+
+Do not spam empty daily reports. Notify candidates or meaningful blockers.
