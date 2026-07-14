@@ -12,7 +12,7 @@ MULTIYEAR_LOCK = threading.Lock()
 INT_FUNNEL_KEYS = [
     '02_qc_option_chain_available',
     '03_qc_expiry_within_0_7d_after_earnings',
-    '04_qc_calls_ask_under_50c',
+    '04_qc_calls_ask_under_max_premium',
     '05_qc_liquidity_greeks_quality_pass',
 ]
 
@@ -267,7 +267,7 @@ def hebrew_report(summary: dict, batch_size: int) -> str:
         f'- נסרקו ב־QC: {summary.get("qc_symbols_scanned")} סימבולים, chunks={summary.get("chunk_count")}, chunk_size={batch_size}',
         f'- option chain: {f.get("02_qc_option_chain_available")}',
         f'- פקיעה עד 7 ימים אחרי הדוח: {f.get("03_qc_expiry_within_0_7d_after_earnings")}',
-        f'- calls עם ask <= $0.50: {f.get("04_qc_calls_ask_under_50c")}',
+        f'- calls עם ask <= max premium: {f.get("04_qc_calls_ask_under_max_premium")}',
         f'- liquidity/Greeks quality pass: {f.get("05_qc_liquidity_greeks_quality_pass")}',
         f'- multi-year backtest: {f.get("07_multi_year_backtest_status")}',
         f'- forward candidates לפני historical PnL: {summary.get("forward_candidate_count")}',

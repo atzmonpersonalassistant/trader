@@ -35,6 +35,79 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("historical_runup_pass", main)
         self.assertIn("FORWARD_LIQUIDITY_GREEKS_PASS_REQUIRES_MULTIYEAR_OPTION_PNL", main)
 
+    def test_stage2_accepts_dynamic_liquidity_tuning_from_env_or_args(self):
+        mod = load_script("earnings-qc-options-scan")
+        import os
+        old_env = {k: os.environ.get(k) for k in [spec[0] for spec in mod.TUNING_SPECS.values()]}
+        try:
+            for k in old_env:
+                os.environ.pop(k, None)
+            self.assertEqual(mod.scan_tuning_from_env()["max_premium"], 0.5)
+        finally:
+            for k, v in old_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            datetime.date(2026, 7, 14),
+            {
+                "max_premium": 0.75,
+                "min_bid": 0.02,
+                "max_spread_pct": 0.80,
+                "min_relative_spread": 0.20,
+                "vol_spread_factor": 0.70,
+                "expected_move_spread_fraction": 0.25,
+            },
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.max_premium = 0.750000", main)
+        self.assertIn("self.min_bid = 0.020000", main)
+        self.assertIn("self.max_spread_pct = 0.800000", main)
+        self.assertIn("self.min_relative_spread = 0.200000", main)
+        self.assertIn("self.vol_spread_factor = 0.700000", main)
+        self.assertIn("self.expected_move_spread_fraction = 0.250000", main)
+
+    def test_stage2_dynamic_premium_uses_threshold_neutral_metric_names(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("calls_under_max_premium", scan)
+        self.assertIn("04_qc_calls_ask_under_max_premium", scan)
+        self.assertIn("04_qc_calls_ask_under_max_premium", full)
+        self.assertNotIn("calls_under_50c", scan)
+        self.assertNotIn("04_qc_calls_ask_under_50c", scan)
+        self.assertNotIn("04_qc_calls_ask_under_50c", full)
+
+
+    def test_stage2_dynamic_tuning_is_guardrailed(self):
+        mod = load_script("earnings-qc-options-scan")
+        import os
+        old = os.environ.get("QC_MAX_PREMIUM")
+        try:
+            os.environ["QC_MAX_PREMIUM"] = "10"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
+            os.environ["QC_MAX_PREMIUM"] = "nan"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
+            os.environ["QC_MAX_PREMIUM"] = "inf"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"max_premium": float("nan")})
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"max_premium": 10})
+            with self.assertRaises(ValueError):
+                mod.validate_scan_tuning({"unknown": 1})
+        finally:
+            if old is None:
+                os.environ.pop("QC_MAX_PREMIUM", None)
+            else:
+                os.environ["QC_MAX_PREMIUM"] = old
+
     def test_multiyear_generated_qc_algorithm_contains_exit_policy_and_chunked_json(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         project_dir = pathlib.Path(tempfile.mkdtemp())

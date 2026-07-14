@@ -36,13 +36,13 @@ Use the local OpenClaw skill wrapper (`scripts/run_earnings_qc_scan.sh` in the p
    - QC/LEAN Cloud is responsible for all option-chain, Greeks/liquidity, historical event, and historical option-PnL evidence.
    - Each chunk should be independently retryable; a failed chunk must not require rerunning the whole universe.
 3. **QC-only option availability + near-expiry filter, per chunk:** Run QC/LEAN diagnostics for option chain availability and keep only call contracts expiring after the earnings date but no later than **7 calendar days after earnings**. Do not select first/second expiry if it is more than 7 days after the report.
-4. **QC-only cheap call filter, per chunk:** Filter long calls using QC option-chain data only: ask <= $0.50, bid/ask, volume/open interest, Greeks/IV when available. Do **not** require a fixed OTM threshold such as 3% before this step. Instead, compute each contract's `required_move_pct = strike / spot - 1` and carry it forward.
+4. **QC-only cheap call filter, per chunk:** Filter long calls using QC option-chain data only: ask <= configured max premium, bid/ask, volume/open interest, Greeks/IV when available. Do **not** require a fixed OTM threshold such as 3% before this step. Instead, compute each contract's `required_move_pct = strike / spot - 1` and carry it forward.
 5. **QC-only liquidity/Greeks quality filter, per chunk:** For each cheap call, record and score the exact liquidity inputs: bid, ask, mid, absolute spread, spread/mid %, volume, open interest, IV, delta, DTE, and whether volume is zero. Prefer explicit pass/fail reasons over a generic `liquidity_pass` boolean.
 6. **Mandatory QC/EODHD multi-year option-PnL backtesting up to 10 years, per chunk — the historical gate:** For forward candidates that pass option availability, expiry, cheap-call, and liquidity/Greeks evidence inside a chunk, query historical earnings events through QC/EODHDUpcomingEarnings and test configurable lookback windows: 1y, 3y, 5y, and up to 10y when data exists. This is the historical validation gate. For each historical event, use QC/LEAN prices/options to simulate the same rule family:
    - event dates from QC/EODHDUpcomingEarnings only
    - buy window / observation window before earnings
    - expiry after earnings but no later than 7 calendar days after earnings
-   - ask <= $0.50 or the closest historical equivalent rule
+   - ask <= configured max premium or the closest historical equivalent rule
    - required move based on selected contract's strike/spot
    - liquidity/Greeks evidence when available historically
    - **exit rule is mandatory:** default strategy is a pre-earnings run-up trade, not an earnings-gap gamble. Exit at the last tradable option snapshot before the report. For pre-market reports, exit on the prior trading day. For after-market reports, exit before/at that day's close when an option snapshot exists. Do not hold through earnings by default. Any hold-through-earnings variant must be labeled separately and backtested separately.
@@ -52,13 +52,32 @@ Use the local OpenClaw skill wrapper (`scripts/run_earnings_qc_scan.sh` in the p
    - Nasdaq earnings calendar universe
    - QC option chain available
    - QC expiry within 0-7 days after earnings
-   - QC calls ask <= $0.50
+   - QC calls ask <= configured max premium
    - QC liquidity/Greeks quality pass
    - QC/EODHD historical events available
    - mandatory QC/EODHD historical option-PnL backtest pass or explicit symbol/window blocker
    - explicit entry and exit rule used by the backtest
    - QC final candidate/watchlist only after multi-year option-PnL evidence passes under the configured exit rule
 8. Notify only candidates or blockers. No empty daily spam.
+
+## Dynamic scan tuning knobs
+
+Research agents may run parameter sweeps by setting guardrailed environment variables before invoking the scanner. These are research filters only and do not authorize live trading.
+
+- `QC_MAX_PREMIUM` default `0.50`, allowed `0.01..5.00`
+- `QC_MIN_BID` default `0.05`, allowed `0.00..5.00`
+- `QC_MAX_SPREAD_PCT` default `0.60`, allowed `0.01..5.00`
+- `QC_MIN_RELATIVE_SPREAD` default `0.25`, allowed `0.00..5.00`
+- `QC_VOL_SPREAD_FACTOR` default `0.50`, allowed `0.00..10.00`
+- `QC_EXPECTED_MOVE_SPREAD_FRACTION` default `0.15`, allowed `0.00..5.00`
+
+Example:
+
+```bash
+QC_MAX_PREMIUM=0.75 QC_MIN_BID=0.02 /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+```
+
+Every run should record the effective tuning in the QC/runtime output so results are comparable.
 
 ## Bundled scripts
 
