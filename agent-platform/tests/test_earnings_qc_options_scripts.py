@@ -68,6 +68,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             os.environ["QC_MAX_PREMIUM"] = "10"
             with self.assertRaises(ValueError):
                 mod.scan_tuning_from_env()
+            os.environ["QC_MAX_PREMIUM"] = "nan"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
+            os.environ["QC_MAX_PREMIUM"] = "inf"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
         finally:
             if old is None:
                 os.environ.pop("QC_MAX_PREMIUM", None)

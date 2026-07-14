@@ -6,7 +6,7 @@ Stage 2+ evidence: QC/LEAN option-chain/liquidity/Greeks/history only.
 No Yahoo/yfinance.
 """
 from __future__ import annotations
-import json, sys, sqlite3, datetime, pathlib, subprocess, os, time, urllib.request, urllib.parse, hashlib, re
+import json, sys, sqlite3, datetime, pathlib, subprocess, os, time, urllib.request, urllib.parse, hashlib, re, math
 from datetime import timedelta
 from typing import Any
 from urllib.parse import urljoin
@@ -168,6 +168,8 @@ def env_float(name: str, default: float, min_value: float | None = None, max_val
         value = float(raw)
     except Exception as e:
         raise ValueError(f'{name} must be a float, got {raw!r}') from e
+    if not math.isfinite(value):
+        raise ValueError(f'{name} must be finite, got {value}')
     if min_value is not None and value < min_value:
         raise ValueError(f'{name} must be >= {min_value}, got {value}')
     if max_value is not None and value > max_value:
