@@ -119,7 +119,6 @@ jobs:
             agent-platform/scripts/trading-research-qc-docker-run \
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
-            agent-platform/scripts/earnings-qc-options/earnings-qc-options-full-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
@@ -451,11 +450,11 @@ jobs:
           bash -n /usr/local/sbin/trading-research-qc-docker-run
           bash -n /usr/local/bin/trading-orchestrator-tick
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
-          grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/bin/earnings-qc-options-scan
-          grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-options-full-scan
-          grep -q "historical_option_pnl_v1" /agents/research/bin/earnings-qc-multiyear-backtest
-          ! grep -q "historical_required_move_runup_pass" /agents/research/bin/earnings-qc-options-scan
-          ! grep -q "historical_required_move_runup_pass" /agents/research/bin/earnings-qc-options-full-scan
+          grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
+          grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
+          grep -q "historical_option_pnl_v1" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          ! grep -q "historical_required_move_runup_pass" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
+          ! grep -q "historical_required_move_runup_pass" /agents/research/bin/earnings-qc-research
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
