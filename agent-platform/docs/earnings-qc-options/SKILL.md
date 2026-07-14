@@ -35,14 +35,15 @@ Internal CLIs exist but are implementation details:
 
 Use those only for debugging broken stages. Normal research uses `earnings-qc-options-full-scan`.
 
-## VPS invocation
+## Runtime invocation
 
-Run on the Trader VPS as `agent-research`:
+Run the canonical CLI in the Trader research environment as the research user:
 
 ```bash
-ssh -i ~/.ssh/ovh_vps_ce2ba5e7 -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 ubuntu@144.217.82.149 \
-  'sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end'
+/agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
 ```
+
+Environment-specific hostnames, SSH keys, usernames, and private paths are intentionally kept out of this repo. Use the private local OpenClaw skill wrapper for VPS invocation.
 
 Prefer `--parallel 1` while experimenting with QC Cloud reliability/cost.
 
