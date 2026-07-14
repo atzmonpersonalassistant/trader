@@ -214,7 +214,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("zero_open_interest", main)
         self.assertNotIn("diagnostic_zero_volume", main)
         self.assertNotIn("diagnostic_zero_open_interest", main)
-        self.assertIn('"liquidity_fail_reason_counts": {{}}, "liquidity_warning_counts": {{"no_option_chain_slice_or_no_data": 1}}', main)
+        self.assertIn('"liquidity_fail_reason_counts": {}, "liquidity_warning_counts": {"no_option_chain_slice_or_no_data": 1}', main)
 
 
     def test_full_scan_removed_last_year_debug_runup_metric(self):
