@@ -29,9 +29,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
         main = (project_dir / "main.py").read_text()
         self.assertIn("def mark_unprocessed_symbols", main)
-        self.assertIn("def historical_runup_pass", main)
         self.assertIn("def emit_and_quit", main)
-        self.assertIn("historical_contract_pass_debug_only", main)
+        self.assertNotIn("def historical_runup_pass", main)
+        self.assertNotIn("historical_contract_pass_debug_only", main)
+        self.assertNotIn("historical_runup_pass", main)
         self.assertIn("FORWARD_LIQUIDITY_GREEKS_PASS_REQUIRES_MULTIYEAR_OPTION_PNL", main)
 
     def test_multiyear_generated_qc_algorithm_contains_exit_policy_and_chunked_json(self):
@@ -208,6 +209,16 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("spread_too_wide", main)
         self.assertIn("diagnostic_zero_volume", main)
         self.assertIn("diagnostic_zero_open_interest", main)
+
+
+    def test_full_scan_removed_last_year_debug_runup_metric(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertNotIn("historical_required_move_runup_pass", scan)
+        self.assertNotIn("historical_required_move_runup_pass", full)
+        self.assertNotIn("historical_runup_source", scan)
+        self.assertNotIn("runup_pct_debug_only", scan)
+        self.assertNotIn("historical_contract_pass_debug_only", scan)
 
     def test_stage2_notify_only_candidates_or_blockers(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()

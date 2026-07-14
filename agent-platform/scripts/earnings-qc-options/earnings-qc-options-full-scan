@@ -14,7 +14,6 @@ INT_FUNNEL_KEYS = [
     '03_qc_expiry_within_0_7d_after_earnings',
     '04_qc_calls_ask_under_50c',
     '05_qc_liquidity_greeks_quality_pass',
-    '06_qc_historical_required_move_runup_pass',
 ]
 
 
