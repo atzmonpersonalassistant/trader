@@ -35,6 +35,45 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("historical_runup_pass", main)
         self.assertIn("FORWARD_LIQUIDITY_GREEKS_PASS_REQUIRES_MULTIYEAR_OPTION_PNL", main)
 
+    def test_stage2_accepts_dynamic_liquidity_tuning_from_env_or_args(self):
+        mod = load_script("earnings-qc-options-scan")
+        self.assertEqual(mod.scan_tuning_from_env()["max_premium"], 0.5)
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            datetime.date(2026, 7, 14),
+            {
+                "max_premium": 0.75,
+                "min_bid": 0.02,
+                "max_spread_pct": 0.80,
+                "min_relative_spread": 0.20,
+                "vol_spread_factor": 0.70,
+                "expected_move_spread_fraction": 0.25,
+            },
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.max_premium = 0.750000", main)
+        self.assertIn("self.min_bid = 0.020000", main)
+        self.assertIn("self.max_spread_pct = 0.800000", main)
+        self.assertIn("self.min_relative_spread = 0.200000", main)
+        self.assertIn("self.vol_spread_factor = 0.700000", main)
+        self.assertIn("self.expected_move_spread_fraction = 0.250000", main)
+
+    def test_stage2_dynamic_tuning_is_guardrailed(self):
+        mod = load_script("earnings-qc-options-scan")
+        import os
+        old = os.environ.get("QC_MAX_PREMIUM")
+        try:
+            os.environ["QC_MAX_PREMIUM"] = "10"
+            with self.assertRaises(ValueError):
+                mod.scan_tuning_from_env()
+        finally:
+            if old is None:
+                os.environ.pop("QC_MAX_PREMIUM", None)
+            else:
+                os.environ["QC_MAX_PREMIUM"] = old
+
     def test_multiyear_generated_qc_algorithm_contains_exit_policy_and_chunked_json(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         project_dir = pathlib.Path(tempfile.mkdtemp())

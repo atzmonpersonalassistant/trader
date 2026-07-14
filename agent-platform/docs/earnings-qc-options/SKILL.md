@@ -60,6 +60,25 @@ Use the local OpenClaw skill wrapper (`scripts/run_earnings_qc_scan.sh` in the p
    - QC final candidate/watchlist only after multi-year option-PnL evidence passes under the configured exit rule
 8. Notify only candidates or blockers. No empty daily spam.
 
+## Dynamic scan tuning knobs
+
+Research agents may run parameter sweeps by setting guardrailed environment variables before invoking the scanner. These are research filters only and do not authorize live trading.
+
+- `QC_MAX_PREMIUM` default `0.50`, allowed `0.01..5.00`
+- `QC_MIN_BID` default `0.05`, allowed `0.00..5.00`
+- `QC_MAX_SPREAD_PCT` default `0.60`, allowed `0.01..5.00`
+- `QC_MIN_RELATIVE_SPREAD` default `0.25`, allowed `0.00..5.00`
+- `QC_VOL_SPREAD_FACTOR` default `0.50`, allowed `0.00..10.00`
+- `QC_EXPECTED_MOVE_SPREAD_FRACTION` default `0.15`, allowed `0.00..5.00`
+
+Example:
+
+```bash
+QC_MAX_PREMIUM=0.75 QC_MIN_BID=0.02 /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+```
+
+Every run should record the effective tuning in the QC/runtime output so results are comparable.
+
 ## Bundled scripts
 
 - `scripts/run_earnings_qc_scan.sh`: wrapper that runs the VPS scanner and enforces the no-Yahoo guard.
