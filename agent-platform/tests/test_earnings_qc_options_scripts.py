@@ -219,6 +219,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("historical_runup_source", scan)
         self.assertNotIn("runup_pct_debug_only", scan)
         self.assertNotIn("historical_contract_pass_debug_only", scan)
+        self.assertNotIn("historical_threshold", scan)
+        self.assertNotIn("debug_only_contract_required_move_pct", scan)
 
     def test_stage2_notify_only_candidates_or_blockers(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
