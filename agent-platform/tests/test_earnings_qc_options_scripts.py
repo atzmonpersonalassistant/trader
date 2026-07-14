@@ -71,6 +71,17 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.vol_spread_factor = 0.700000", main)
         self.assertIn("self.expected_move_spread_fraction = 0.250000", main)
 
+    def test_stage2_dynamic_premium_uses_threshold_neutral_metric_names(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        self.assertIn("calls_under_max_premium", scan)
+        self.assertIn("04_qc_calls_ask_under_max_premium", scan)
+        self.assertIn("04_qc_calls_ask_under_max_premium", full)
+        self.assertNotIn("calls_under_50c", scan)
+        self.assertNotIn("04_qc_calls_ask_under_50c", scan)
+        self.assertNotIn("04_qc_calls_ask_under_50c", full)
+
+
     def test_stage2_dynamic_tuning_is_guardrailed(self):
         mod = load_script("earnings-qc-options-scan")
         import os
