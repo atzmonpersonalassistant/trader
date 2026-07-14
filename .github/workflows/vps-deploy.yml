@@ -199,6 +199,17 @@ jobs:
             sudo apt-get update
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
           fi
+          if command -v apt-get >/dev/null 2>&1; then
+            if ! command -v psql >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' postgresql 2>/dev/null | grep -q "install ok installed"; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client
+            fi
+          fi
+          if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl enable --now postgresql
+          else
+            sudo service postgresql start
+          fi
           sudo usermod -aG agent-lean agent-coding
           sudo usermod -aG agent-lean agent-review
           sudo usermod -aG agent-lean agent-validator
@@ -211,6 +222,13 @@ jobs:
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo chown -R agent-research:agent-research /agents/research
           sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'agent-research'" | grep -q 1 || sudo -n -u postgres psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "agent-research" LOGIN'
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = 'trader_research'" | grep -q 1 || sudo -n -u postgres createdb -O "agent-research" trader_research
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'CREATE SCHEMA IF NOT EXISTS earnings_cache AUTHORIZATION "agent-research"'
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'ALTER DATABASE trader_research SET search_path TO earnings_cache, public'
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'GRANT CONNECT, TEMPORARY ON DATABASE trader_research TO "agent-research"'
+          sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'GRANT USAGE, CREATE ON SCHEMA earnings_cache TO "agent-research"'
+          sudo -n -u agent-research psql -d trader_research -v ON_ERROR_STOP=1 -c 'SELECT 1 AS research_postgres_ready' >/tmp/trader-research-postgres-smoke.txt
           sudo install -d -o agent-research -g agent-research -m 755 /agents/research/bin
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/bin/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-full-scan" /agents/research/bin/earnings-qc-options-full-scan
