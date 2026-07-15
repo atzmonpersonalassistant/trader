@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import argparse, concurrent.futures, datetime, json, os, pathlib, sqlite3, subprocess, sys, threading, time
+
+REPORT_ROOT = pathlib.Path('/agents/research/reports')
+STATE_DIR = pathlib.Path('/agents/research/state/earnings-qc-options-scan')
+ORCH_DB = pathlib.Path('/agents/orchestrator/state/orchestrator.db')
+SCANNER = pathlib.Path(os.environ.get('EARNINGS_QC_STAGE2_CLI', '/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan'))
+MULTIYEAR = pathlib.Path(os.environ.get('EARNINGS_QC_MULTIYEAR_CLI', '/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest'))
+MULTIYEAR_LOCK = threading.Lock()
+
+INT_FUNNEL_KEYS = [
+    '02_qc_option_chain_available',
+    '03_qc_expiry_within_0_7d_after_earnings',
+    '04_qc_calls_ask_under_max_premium',
+    '05_qc_liquidity_greeks_quality_pass',
+]
+
+
+def latest_run_dir() -> pathlib.Path | None:
+    p = STATE_DIR / 'latest-full-run.txt'
+    if p.exists():
+        txt = p.read_text().strip()
+        if txt:
+            return pathlib.Path(txt)
+    dirs = sorted(REPORT_ROOT.glob('earnings-qc-options-scan-full-*'), key=lambda x: x.stat().st_mtime if x.exists() else 0)
+    return dirs[-1] if dirs else None
+
+
+
+def multiyear_result_passes(r: dict) -> bool:
+    """Deterministic final-candidate gate for historical option-PnL evidence."""
+    if r.get('status') != 'OK':
+        return False
+    sample_size = int(r.get('sample_size') if r.get('sample_size') is not None else 0)
+    win_rate = float(r.get('win_rate') if r.get('win_rate') is not None else 0.0)
+    median_return = float(r.get('median_return_pct') if r.get('median_return_pct') is not None else -999.0)
+    mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
+    max_drawdown = float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999.0)
+    max_loss = float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999.0)
+    base_ok = (
+        sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8'))
+        and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
+        and median_return > float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0'))
+        and mean_return > float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0'))
+        and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
+        and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
+    )
+    windows = r.get('window_results') or []
+    if windows:
+        return base_ok and all(
+            w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
+            for w in windows
+        )
+    return base_ok
+
+def load_chunk(run_dir: pathlib.Path, offset: int) -> dict:
+    p = run_dir / f'chunk-{offset}.stdout.json'
+    try:
+        d = json.loads(p.read_text())
+    except Exception as e:
+        d = {'ok': False, 'status': 'BLOCKED_CHUNK_BAD_JSON', 'blocked_reason': repr(e)}
+    d['_chunk_offset'] = offset
+    return d
+
+
+def load_chunks(run_dir: pathlib.Path) -> list[dict]:
+    rows = []
+    index_path = run_dir / 'chunks.jsonl'
+    if index_path.exists():
+        latest = {}
+        for line in index_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                meta = json.loads(line)
+                off = int(meta['offset'])
+            except Exception:
+                continue
+            latest[off] = meta
+        for off in sorted(latest):
+            meta = latest[off]
+            d = load_chunk(run_dir, off)
+            d['_chunk_seconds'] = meta.get('seconds')
+            rows.append(d)
+        return rows
+    for p in sorted(run_dir.glob('chunk-*.stdout.json')):
+        try:
+            off = int(p.name.split('-')[1].split('.')[0])
+        except Exception:
+            continue
+        rows.append(load_chunk(run_dir, off))
+    return rows
+
+
+def append_chunk_meta(run_dir: pathlib.Path, d: dict) -> None:
+    meta = {'offset': d.get('_chunk_offset'), 'ok': d.get('ok'), 'status': d.get('status'), 'qc_batch_count': d.get('qc_batch_count'), 'seconds': d.get('_chunk_seconds')}
+    with (run_dir / 'chunks.jsonl').open('a') as f:
+        f.write(json.dumps(meta, ensure_ascii=False) + '\n')
+
+
+def write_outbox(message: str, payload: dict) -> bool:
+    if not ORCH_DB.exists():
+        return False
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    ext = f"earnings-qc-options-full-scan-{payload.get('run_date')}-{payload.get('status')}-{payload.get('run_dir')}"
+    con = sqlite3.connect(str(ORCH_DB))
+    con.execute("""INSERT OR IGNORE INTO outbox(external_id,state,labels,channel,message,payload_json,created_at,updated_at,last_seen_at,retry_count)
+VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)""", (
+        ext,
+        json.dumps(['earnings_qc_options_scan','full_scan','notification' if payload.get('candidate_count') else 'blocker']),
+        message,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        ts, ts, ts,
+    ))
+    con.commit(); con.close(); return True
+
+
+def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int) -> dict:
+    out_path = run_dir / f'chunk-{offset}.stdout.json'
+    err_path = run_dir / f'chunk-{offset}.stderr.log'
+    cmd = [str(SCANNER), 'run-now', '--no-outbox', '--qc-batch-limit', str(batch_size), '--qc-batch-offset', str(offset)]
+    snapshot = run_dir / 'calendar_snapshot.json'
+    if snapshot.exists():
+        cmd += ['--calendar-snapshot', str(snapshot)]
+    started = time.time()
+    p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_FULL_CHUNK_TIMEOUT_SECONDS','1200')))
+    out_path.write_text(p.stdout)
+    err_path.write_text(p.stderr)
+    try:
+        d = json.loads(p.stdout)
+    except Exception as e:
+        d = {'ok': False, 'status': 'BLOCKED_CHUNK_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+    d['_chunk_offset'] = offset
+    d['_chunk_returncode'] = p.returncode
+    d['_chunk_seconds'] = round(time.time() - started, 1)
+    append_chunk_meta(run_dir, d)
+    return d
+
+
+def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int) -> dict | None:
+    candidates = chunk.get('candidate_details') or []
+    if not candidates:
+        return None
+    if not MULTIYEAR.exists():
+        return {'ok': False, 'status': 'BLOCKED_MULTIYEAR_RUNNER_MISSING', 'path': str(MULTIYEAR)}
+    offset = int(chunk.get('_chunk_offset') or 0)
+    chunk_dir = run_dir / 'chunk_e2e' / f'offset-{offset}'
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    summary = {
+        'ok': True,
+        'status': 'OK_CHUNK_FORWARD_CANDIDATES',
+        'calendar_row_count': chunk.get('calendar_row_count'),
+        'calendar_universe_count': chunk.get('calendar_universe_count'),
+        'qc_symbols_scanned': chunk.get('qc_batch_count'),
+        'chunk_count': 1,
+        'failed_chunk_count': 0,
+        'candidate_count': len(candidates),
+        'candidates': candidates,
+        'aggregate_funnel': dict(chunk.get('funnel') or {}),
+        'run_dir': str(chunk_dir),
+    }
+    (chunk_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    cmd = [str(MULTIYEAR), '--run-dir', str(chunk_dir), '--years', str(years)]
+    # The current multiyear runner uses one QC project name. Serialize this part to avoid project push/backtest collisions.
+    with MULTIYEAR_LOCK:
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
+    (chunk_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
+    (chunk_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
+    try:
+        mb = json.loads(p.stdout)
+    except Exception as e:
+        mb = {'ok': False, 'status': 'BLOCKED_MULTIYEAR_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+    return mb
+
+
+def run_chunk_end_to_end(run_dir: pathlib.Path, offset: int, batch_size: int, years: int, end_to_end: bool) -> dict:
+    d = run_chunk(run_dir, offset, batch_size)
+    if end_to_end and d.get('ok') and d.get('candidate_details'):
+        mb = run_chunk_multiyear(run_dir, d, years)
+        d['chunk_multiyear_backtest'] = mb
+        d['historical_backtest_status'] = (mb or {}).get('status') if mb else 'NO_FORWARD_CANDIDATES'
+        # Rewrite chunk stdout with attached e2e result so aggregation/status are deterministic.
+        (run_dir / f'chunk-{offset}.stdout.json').write_text(json.dumps(d, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    return d
+
+
+def aggregate(chunks: list[dict]) -> dict:
+    first = chunks[0] if chunks else {}
+    universe = first.get('calendar_universe_count') or first.get('calendar_row_count') or 0
+    calendar_rows = first.get('calendar_row_count') or universe
+    agg = {
+        '01_nasdaq_earnings_21_28d_universe': universe,
+        '07_multi_year_backtest_status': 'NOT_IMPLEMENTED_IN_RUNNER_YET_QC_EODHD_APPROVED',
+    }
+    for k in INT_FUNNEL_KEYS:
+        vals = [(d.get('funnel') or {}).get(k) for d in chunks]
+        agg[k] = sum(v for v in vals if isinstance(v, int))
+    forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]
+    for d in chunks:
+        scanned += int(d.get('qc_processed_row_count') or d.get('qc_batch_count') or 0)
+        if not d.get('ok'):
+            failed.append({'offset': d.get('_chunk_offset'), 'status': d.get('status'), 'blocked_reason': d.get('blocked_reason')})
+        mb=d.get('chunk_multiyear_backtest') or {}
+        if mb:
+            multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
+            if mb.get('ok') is False:
+                failed.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'blocked_reason': 'mandatory multiyear option-PnL backtest failed'})
+            ok_syms={r.get('symbol') for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
+        else:
+            ok_syms=set()
+        for c in d.get('candidate_details') or []:
+            key=(c.get('symbol'), c.get('earnings_date'))
+            if key not in seen:
+                forward_candidates.append(c); seen.add(key)
+            if c.get('symbol') in ok_syms and key not in final_seen:
+                final_candidates.append(c); final_seen.add(key)
+    if multiyear_statuses:
+        agg['07_multi_year_backtest_status'] = 'OK_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST' if all(x.get('ok') for x in multiyear_statuses) else 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
+    historical_gate_blocked = bool(forward_candidates) and not final_candidates
+    multiyear_failed = any(x.get('ok') is False for x in multiyear_statuses)
+    ok = bool(chunks) and not failed and scanned >= calendar_rows and not historical_gate_blocked and not multiyear_failed
+    status = 'OK_FULL_QC_SCAN' if ok else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN'))
+    return {
+        'ok': ok,
+        'status': status,
+        'calendar_row_count': calendar_rows,
+        'calendar_universe_count': universe,
+        'qc_symbols_scanned': scanned,
+        'chunk_count': len(chunks),
+        'failed_chunk_count': len(failed),
+        'failed_chunks': failed,
+        'aggregate_funnel': agg,
+        'forward_candidate_count': len(forward_candidates),
+        'forward_candidates': forward_candidates,
+        'candidate_count': len(final_candidates),
+        'candidates': final_candidates,
+        'final_candidate_count': len(final_candidates),
+        'final_candidates': final_candidates,
+        'chunk_multiyear_statuses': multiyear_statuses,
+        'historical_gate_blocked': historical_gate_blocked,
+        'multiyear_failed': multiyear_failed,
+        'final_candidate_gate': {
+            'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8')),
+            'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
+            'min_median_return_pct': float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0')),
+            'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
+            'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
+            'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
+        },
+        'guardrails': {
+            'no_yahoo_yfinance': True,
+            'nasdaq_calendar_stage_only': True,
+            'qc_for_options_and_history': True,
+            'chunked_qc_batch_size_safe_default': True,
+            'research_only': True,
+        },
+    }
+
+
+def hebrew_report(summary: dict, batch_size: int) -> str:
+    f = summary['aggregate_funnel']
+    lines = [
+        'סריקת earnings QC מלאה הסתיימה.' if summary.get('ok') else 'סריקת earnings QC מלאה הסתיימה חלקית / נחסמה.',
+        f'- סטטוס: {summary.get("status")}',
+        f'- universe Nasdaq: {summary.get("calendar_universe_count")} סימבולים / {summary.get("calendar_row_count")} שורות',
+        f'- נסרקו ב־QC: {summary.get("qc_symbols_scanned")} סימבולים, chunks={summary.get("chunk_count")}, chunk_size={batch_size}',
+        f'- option chain: {f.get("02_qc_option_chain_available")}',
+        f'- פקיעה עד 7 ימים אחרי הדוח: {f.get("03_qc_expiry_within_0_7d_after_earnings")}',
+        f'- calls עם ask <= max premium: {f.get("04_qc_calls_ask_under_max_premium")}',
+        f'- liquidity/Greeks quality pass: {f.get("05_qc_liquidity_greeks_quality_pass")}',
+        f'- multi-year backtest: {f.get("07_multi_year_backtest_status")}',
+        f'- forward candidates לפני historical PnL: {summary.get("forward_candidate_count")}',
+        f'- מועמדים סופיים אחרי historical PnL: {summary.get("candidate_count")}',
+    ]
+    if summary.get('failed_chunk_count'):
+        lines.append(f'- chunks שנכשלו: {summary.get("failed_chunk_count")} — הרץ retry-failed')
+    lines.append('- לא הופעל Yahoo/yfinance.')
+    return '\n'.join(lines)
+
+
+def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) -> dict:
+    chunks = load_chunks(run_dir)
+    summary = aggregate(chunks)
+    summary.update({'run_date': datetime.datetime.now(datetime.timezone.utc).date().isoformat(), 'run_dir': str(run_dir), 'chunk_size': batch_size})
+    msg = hebrew_report(summary, batch_size)
+    (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    (run_dir/'hebrew_report.md').write_text(msg+'\n')
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR/'latest-full-run.txt').write_text(str(run_dir)+'\n')
+    if notify and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
+        summary['outbox_written'] = write_outbox(msg, summary)
+        (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    return summary
+
+
+def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool) -> int | None:
+    # Run one deterministic chunk first so we know and snapshot the Nasdaq calendar total/order.
+    d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end)
+    report_dir = d.get('report_dir')
+    src = pathlib.Path(report_dir) / 'calendar_rows.json' if report_dir else None
+    if src and src.exists():
+        (run_dir / 'calendar_snapshot.json').write_text(src.read_text())
+    return d.get('calendar_row_count') or d.get('calendar_universe_count')
+
+
+def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: int, parallel: int, years: int, end_to_end: bool) -> None:
+    if not offsets:
+        return
+    parallel = max(1, int(parallel or 1))
+    if parallel == 1:
+        delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
+        for i, off in enumerate(offsets):
+            run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end)
+            if delay > 0 and i < len(offsets) - 1:
+                time.sleep(delay)
+        return
+    # Conservative bounded parallelism for QC Cloud compile/backtest stability.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as ex:
+        futs = {ex.submit(run_chunk_end_to_end, run_dir, off, batch_size, years, end_to_end): off for off in offsets}
+        for fut in concurrent.futures.as_completed(futs):
+            off = futs[fut]
+            try:
+                fut.result()
+            except Exception as e:
+                d = {'ok': False, 'status': 'BLOCKED_CHUNK_EXCEPTION', 'blocked_reason': repr(e), '_chunk_offset': off, '_chunk_seconds': None, 'qc_batch_count': 0}
+                (run_dir / f'chunk-{off}.stdout.json').write_text(json.dumps(d, ensure_ascii=False, indent=2))
+                (run_dir / f'chunk-{off}.stderr.log').write_text(repr(e))
+                append_chunk_meta(run_dir, d)
+
+
+def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
+    if not args.end_to_end:
+        return None
+    if not MULTIYEAR.exists():
+        return {'ok': False, 'status': 'BLOCKED_MULTIYEAR_RUNNER_MISSING', 'path': str(MULTIYEAR)}
+    cmd = [str(MULTIYEAR), '--run-dir', str(run_dir), '--years', str(args.years)]
+    p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
+    (run_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
+    (run_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
+    try:
+        return json.loads(p.stdout)
+    except Exception as e:
+        return {'ok': False, 'status': 'BLOCKED_MULTIYEAR_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+
+
+def cmd_run(args) -> int:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else REPORT_ROOT / f'earnings-qc-options-scan-full-{now.strftime("%Y%m%d-%H%M%S")}'
+    run_dir.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR/'latest-full-run.txt').write_text(str(run_dir)+'\n')
+    calendar_total = None
+    existing_offsets = {int(d.get('_chunk_offset') or 0) for d in load_chunks(run_dir)} if args.resume else set()
+    start_offset = args.start_offset
+    if existing_offsets:
+        chunks = load_chunks(run_dir)
+        calendar_total = (chunks[0].get('calendar_row_count') or chunks[0].get('calendar_universe_count')) if chunks else None
+    else:
+        calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end)
+        existing_offsets.add(start_offset)
+    offsets=[]
+    if calendar_total:
+        off = start_offset + args.chunk_size
+        while off < int(calendar_total):
+            if off not in existing_offsets:
+                offsets.append(off)
+            off += args.chunk_size
+        if args.max_chunks is not None:
+            # max_chunks counts total chunks including the discovery chunk.
+            remaining=max(0,args.max_chunks-1)
+            offsets=offsets[:remaining]
+    if offsets and not args.resume:
+        discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
+        if discovery_delay > 0:
+            time.sleep(discovery_delay)
+    run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end)
+    summary = write_summary(run_dir, args.chunk_size, notify=False)
+    mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
+    if mb is not None:
+        # multiyear runner updates full_summary.json; reload if available.
+        fp=run_dir/'full_summary.json'
+        if fp.exists():
+            summary=json.loads(fp.read_text())
+        summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel}
+        fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    if not args.no_outbox and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
+        msg = hebrew_report(summary, args.chunk_size)
+        summary['outbox_written'] = write_outbox(msg, summary)
+        (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if summary.get('ok') else 2
+
+
+def cmd_status(args) -> int:
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
+    if not run_dir or not run_dir.exists():
+        print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
+    chunks = load_chunks(run_dir)
+    summary = aggregate(chunks)
+    summary.update({'run_dir': str(run_dir), 'chunk_size': args.chunk_size})
+    print(json.dumps(summary, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
+    return 0 if summary.get('ok') else 2
+
+
+def cmd_summarize(args) -> int:
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
+    if not run_dir or not run_dir.exists():
+        print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
+    summary = write_summary(run_dir, args.chunk_size, notify=args.notify)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if summary.get('ok') else 2
+
+
+def cmd_retry_failed(args) -> int:
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
+    if not run_dir or not run_dir.exists():
+        print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
+    summary = aggregate(load_chunks(run_dir))
+    failed = summary.get('failed_chunks') or []
+    if args.offset is not None:
+        failed = [{'offset': args.offset}]
+    for item in failed:
+        off = int(item['offset'])
+        run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)
+    summary = write_summary(run_dir, args.chunk_size, notify=args.notify)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if summary.get('ok') else 2
+
+
+def build_parser():
+    p = argparse.ArgumentParser(description='Deterministic earnings QC full-scan runner')
+    sub = p.add_subparsers(dest='cmd')
+    def common(sp):
+        sp.add_argument('--run-dir')
+        sp.add_argument('--chunk-size', type=int, default=int(os.environ.get('QC_FULL_CHUNK_SIZE','25')))
+    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
+    s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
+    sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
+    rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
+    return p
+
+
+def main(argv):
+    # Backward compatible: old cron called script with flags only; treat as run.
+    if not argv or argv[0].startswith('--'):
+        argv = ['run'] + argv
+    args = build_parser().parse_args(argv)
+    if args.cmd == 'run': return cmd_run(args)
+    if args.cmd == 'status': return cmd_status(args)
+    if args.cmd == 'summarize': return cmd_summarize(args)
+    if args.cmd == 'retry-failed': return cmd_retry_failed(args)
+    raise SystemExit('missing command')
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

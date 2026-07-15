@@ -19,6 +19,20 @@ def load_script(name: str):
 
 
 class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
+
+
+    def test_daily_wrapper_uses_single_public_research_cli(self):
+        wrapper = (SCRIPTS / "earnings-otm-daily-root.sh").read_text()
+        self.assertIn("/agents/research/bin/earnings-qc-research", wrapper)
+        self.assertNotIn("/agents/research/bin/earnings-qc-options-full-scan", wrapper)
+
+    def test_single_public_research_cli_uses_internal_libexec_stages(self):
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan", cli)
+        self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest", cli)
+        self.assertNotIn("SCANNER = pathlib.Path('/agents/research/bin/earnings-qc-options-scan')", cli)
+        self.assertNotIn("MULTIYEAR = pathlib.Path('/agents/research/bin/earnings-qc-multiyear-backtest')", cli)
+
     def test_stage2_generated_qc_algorithm_contains_finalizers(self):
         mod = load_script("earnings-qc-options-scan")
         project_dir = pathlib.Path(tempfile.mkdtemp())
@@ -73,7 +87,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_dynamic_premium_uses_threshold_neutral_metric_names(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("calls_under_max_premium", scan)
         self.assertIn("04_qc_calls_ask_under_max_premium", scan)
         self.assertIn("04_qc_calls_ask_under_max_premium", full)
@@ -164,7 +178,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
 
     def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
-        mod = load_script("earnings-qc-options-full-scan")
+        mod = load_script("earnings-qc-research")
         summary = mod.aggregate(
             [
                 {
@@ -196,7 +210,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(summary["final_candidate_count"], 0)
 
     def test_full_scan_load_chunks_uses_latest_retry_for_same_offset(self):
-        mod = load_script("earnings-qc-options-full-scan")
+        mod = load_script("earnings-qc-research")
         run_dir = pathlib.Path(tempfile.mkdtemp())
         (run_dir / "chunks.jsonl").write_text(
             '{"offset": 0, "ok": false, "seconds": 1}\n'
@@ -232,7 +246,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("calendar_fetch_failed", scan)
 
     def test_result_pass_gate_accepts_zero_drawdown(self):
-        full = load_script("earnings-qc-options-full-scan")
+        full = load_script("earnings-qc-research")
         multi = load_script("earnings-qc-multiyear-backtest")
         row = {
             "status": "OK", "sample_size": 12, "win_rate": 0.5,
@@ -292,7 +306,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_full_scan_removed_last_year_debug_runup_metric(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertNotIn("historical_required_move_runup_pass", scan)
         self.assertNotIn("historical_required_move_runup_pass", full)
         self.assertNotIn("historical_runup_source", scan)
@@ -306,12 +320,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("if notify and (payload.get('candidate_count') or not payload.get('ok'))", scan)
 
     def test_retry_failed_uses_end_to_end_runner(self):
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)", full)
         self.assertIn("rf.add_argument('--end-to-end'", full)
 
     def test_full_scan_throttles_discovery_and_sequential_chunks(self):
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("QC_FULL_CHUNK_DELAY_SECONDS", full)
         self.assertIn("discovery_delay", full)
         self.assertIn("if offsets and not args.resume", full)
@@ -325,7 +339,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("qc_batch_offset", scan)
 
     def test_failed_multiyear_chunks_are_retry_targets(self):
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("mb.get('ok') is False", full)
         self.assertIn("mandatory multiyear option-PnL backtest failed", full)
 
@@ -346,7 +360,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_full_scan_uses_single_calendar_snapshot_for_chunks(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        full = (SCRIPTS / "earnings-qc-options-full-scan").read_text()
+        full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("--calendar-snapshot", scan)
         self.assertIn("calendar_rows.json", scan)
         self.assertIn("calendar_snapshot.json", full)
@@ -367,7 +381,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("BLOCKED_HISTORICAL_OPTION_WINDOW_GATE", multi)
 
     def test_full_scan_gate_rejects_failed_window_results(self):
-        full = load_script("earnings-qc-options-full-scan")
+        full = load_script("earnings-qc-research")
         row = {
             "status": "OK", "sample_size": 12, "win_rate": 0.5,
             "median_return_pct": 10.0, "mean_return_pct": 15.0,

@@ -23,5 +23,5 @@ exec sudo -n -u agent-research env \
   QC_STAGE2_BACKTEST_ATTEMPTS="$QC_STAGE2_BACKTEST_ATTEMPTS" \
   QC_STAGE2_BACKTEST_RETRY_BASE_SECONDS="$QC_STAGE2_BACKTEST_RETRY_BASE_SECONDS" \
   QC_MULTIYEAR_YEARS="$QC_MULTIYEAR_YEARS" \
-  /agents/research/bin/earnings-qc-options-full-scan run --chunk-size "$QC_FULL_CHUNK_SIZE" --parallel "$QC_FULL_PARALLEL" --end-to-end \
+  /agents/research/bin/earnings-qc-research run --chunk-size "$QC_FULL_CHUNK_SIZE" --parallel "$QC_FULL_PARALLEL" --end-to-end \
   >> "$LOG" 2>&1

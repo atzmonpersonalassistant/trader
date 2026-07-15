@@ -27,13 +27,7 @@ Current MVP direction: MVP1 should use the paid QuantConnect Quant Researcher ti
 
 ## Legacy Radar Cleanup
 
-The old standalone scanner folders were removed from this repo:
-
-- `earnings-volatility-radar/`
-- `market-radar/`
-- `options-radar/`
-
-Future scanner work should be implemented under the coherent `planning/` structure, not as separate top-level radar projects.
+Old standalone scanner folders were removed from this repo. Future scanner work should be implemented under the coherent `planning/` structure, not as separate top-level radar projects.
 
 ## Outputs
 

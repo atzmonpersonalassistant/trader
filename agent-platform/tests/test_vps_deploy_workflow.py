@@ -3,6 +3,26 @@ import unittest
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
+
+    def test_earnings_research_has_single_public_cli(self):
+        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+
+        self.assertIn('/agents/research/bin/earnings-qc-research', workflow)
+        self.assertIn('/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan', workflow)
+        self.assertIn('/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest', workflow)
+        self.assertIn('agent-platform/scripts/earnings-qc-options/earnings-otm-daily-root.sh', workflow)
+        self.assertIn('/usr/local/bin/earnings-otm-daily-root.sh', workflow)
+        self.assertIn("grep -q '/agents/research/bin/earnings-qc-research' /usr/local/bin/earnings-otm-daily-root.sh", workflow)
+        self.assertIn("! grep -q '/agents/research/bin/earnings-qc-options-full-scan' /usr/local/bin/earnings-otm-daily-root.sh", workflow)
+        self.assertIn('rm -f /agents/research/bin/earnings-qc-options-full-scan', workflow)
+        self.assertIn('test ! -e /agents/research/bin/earnings-qc-options-full-scan', workflow)
+        self.assertIn('test ! -e /agents/research/bin/earnings-qc-options-scan', workflow)
+        self.assertIn('test ! -e /agents/research/bin/earnings-qc-multiyear-backtest', workflow)
+        self.assertNotIn('rm -f /agents/research/bin/earnings-qc-research', workflow)
+        self.assertNotIn('agent-platform/scripts/earnings-qc-options/earnings-qc-options-full-scan', workflow)
+        self.assertNotIn('/agents/research/bin/earnings-qc-options-scan --help', workflow)
+        self.assertNotIn('/agents/research/bin/earnings-qc-options-full-scan --help', workflow)
+
     def test_research_postgres_cache_db_is_provisioned(self):
         workflow = Path('.github/workflows/vps-deploy.yml').read_text()
 
