@@ -37,14 +37,7 @@ Read-only Interactive Brokers connectivity utilities for **IB Gateway only**. St
 
 ## Removed Legacy Folders
 
-The old standalone radar/planning folders were removed from the active repo layout:
-
-- `options-radar/`
-- `market-radar/`
-- `earnings-volatility-radar/`
-- top-level `plans/`
-
-They should not be used as source-of-truth going forward.
+Old standalone radar/planning folders were removed from the active repo layout. Future scanner work should live under `agent-platform/` or `planning/`, not as separate top-level radar folders.
 
 ## Secrets and VPS Runtime
 
