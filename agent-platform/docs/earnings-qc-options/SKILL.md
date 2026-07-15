@@ -1,6 +1,6 @@
 ---
 name: earnings-qc-options-scan
-description: Active QC/LEAN-only earnings options research loop for Uriel's Trader VPS. Use when searching for earnings run-up option candidates, iterating scanner parameters, running Nasdaq→QC→multi-year option-PnL workflows, or using the earnings-qc-options-full-scan CLI to find final trade candidates.
+description: Active QC/LEAN-only earnings options research loop for Uriel's Trader VPS. Use when searching for earnings run-up option candidates, iterating scanner parameters, running Nasdaq→QC→multi-year option-PnL workflows, or using the earnings-qc-research CLI to find final trade candidates.
 ---
 
 # Earnings QC Options Research Loop
@@ -16,7 +16,7 @@ Research only: no live trading and no broker orders.
 Use one canonical CLI for the full flow:
 
 ```bash
-/agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+/agents/research/bin/earnings-qc-research run --parallel 1 --end-to-end
 ```
 
 This CLI owns the complete workflow:
@@ -28,19 +28,14 @@ This CLI owns the complete workflow:
 5. run QC/EODHD multi-year historical option-PnL validation for forward candidates
 6. aggregate funnel counts, blockers, final candidates, and reports
 
-Internal CLIs exist but are implementation details:
-
-- `/agents/research/bin/earnings-qc-options-scan` — internal single-stage/chunk diagnostic
-- `/agents/research/bin/earnings-qc-multiyear-backtest` — internal historical option-PnL validator
-
-Use those only for debugging broken stages. Normal research uses `earnings-qc-options-full-scan`.
+The public interface is intentionally one CLI. Stage-specific code may exist internally under `libexec`, but agents and users should not call it directly.
 
 ## Runtime invocation
 
 Run the canonical CLI in the Trader research environment as the research user:
 
 ```bash
-/agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+/agents/research/bin/earnings-qc-research run --parallel 1 --end-to-end
 ```
 
 Environment-specific hostnames, SSH keys, usernames, and private paths are intentionally kept out of this repo. Use the private local OpenClaw skill wrapper for VPS invocation.
@@ -76,7 +71,7 @@ sudo -n -u agent-research env \
   PYTHONDONTWRITEBYTECODE=1 \
   QC_MAX_PREMIUM=0.75 \
   QC_MIN_BID=0.02 \
-  /agents/research/bin/earnings-qc-options-full-scan run --parallel 1 --end-to-end
+  /agents/research/bin/earnings-qc-research run --parallel 1 --end-to-end
 ```
 
 Effective tuning is recorded in output. Compare runs by run directory and tuning.

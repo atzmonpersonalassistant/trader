@@ -4,9 +4,7 @@ This directory tracks the production scripts and skill spec for Uriel's QC/LEAN-
 
 Runtime deployment target on the Trader VPS:
 
-- `/agents/research/bin/earnings-qc-options-scan`
-- `/agents/research/bin/earnings-qc-options-full-scan`
-- `/agents/research/bin/earnings-qc-multiyear-backtest`
+- `/agents/research/bin/earnings-qc-research`
 - daily wrapper: `/usr/local/bin/earnings-otm-daily-root.sh`
 
 High-level flow:
