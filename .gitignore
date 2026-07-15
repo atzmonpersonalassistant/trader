@@ -9,12 +9,6 @@ __pycache__/
 # OS/editor noise
 .DS_Store
 
-# Earnings Volatility Radar local/runtime files
-earnings-volatility-radar/config/earnings.csv
-earnings-volatility-radar/config/watchlist.csv
-earnings-volatility-radar/data/earnings_history.csv
-earnings-volatility-radar/output/*
-!earnings-volatility-radar/output/README.md
 
 # IBKR Client local/runtime files
 ibkr-client/output/*
