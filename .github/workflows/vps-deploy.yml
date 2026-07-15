@@ -120,7 +120,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
-            agent-platform/scripts/earnings-qc-options/earnings-otm-daily-root.sh \
+            agent-platform/scripts/earnings-qc-options/earnings-qc-daily-run.sh \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
@@ -235,7 +235,14 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-research" /agents/research/bin/earnings-qc-research
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
-          sudo install -o root -g root -m 755 "$DEPLOY_DIR/earnings-otm-daily-root.sh" /usr/local/bin/earnings-otm-daily-root.sh
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/earnings-qc-daily-run.sh" /usr/local/bin/earnings-qc-daily-run.sh
+          tmp_cron="$(mktemp)"
+          if sudo crontab -l >"$tmp_cron" 2>/dev/null; then
+            sed -i 's#/usr/local/bin/earnings-otm-daily-root\.sh#/usr/local/bin/earnings-qc-daily-run.sh#g' "$tmp_cron"
+            sudo crontab "$tmp_cron"
+          fi
+          rm -f "$tmp_cron"
+          sudo rm -f /usr/local/bin/earnings-otm-daily-root.sh
           sudo rm -f /agents/research/bin/earnings-qc-options-full-scan /agents/research/bin/earnings-qc-options-scan /agents/research/bin/earnings-qc-multiyear-backtest
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
@@ -286,7 +293,7 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_research_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-orchestrator-tick /usr/local/bin/earnings-otm-daily-root.sh /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-orchestrator-tick /usr/local/bin/earnings-qc-daily-run.sh /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research run --help >/tmp/trader-earnings-qc-research-help.txt
           sudo -n -u agent-research bash -lc 'test ! -e /agents/research/bin/earnings-qc-options-full-scan && test ! -e /agents/research/bin/earnings-qc-options-scan && test ! -e /agents/research/bin/earnings-qc-multiyear-backtest'
           python3 - <<'PY'
@@ -451,9 +458,13 @@ jobs:
           bash -n /usr/local/bin/trading-research-qc-api-extract
           bash -n /usr/local/sbin/trading-research-qc-docker-run
           bash -n /usr/local/bin/trading-orchestrator-tick
-          bash -n /usr/local/bin/earnings-otm-daily-root.sh
-          grep -q '/agents/research/bin/earnings-qc-research' /usr/local/bin/earnings-otm-daily-root.sh
-          ! grep -q '/agents/research/bin/earnings-qc-options-full-scan' /usr/local/bin/earnings-otm-daily-root.sh
+          bash -n /usr/local/bin/earnings-qc-daily-run.sh
+          grep -q '/agents/research/bin/earnings-qc-research' /usr/local/bin/earnings-qc-daily-run.sh
+          ! grep -q '/agents/research/bin/earnings-qc-options-full-scan' /usr/local/bin/earnings-qc-daily-run.sh
+          test ! -e /usr/local/bin/earnings-otm-daily-root.sh
+          sudo crontab -l >/tmp/trader-root-crontab.txt
+          grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
+          ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
