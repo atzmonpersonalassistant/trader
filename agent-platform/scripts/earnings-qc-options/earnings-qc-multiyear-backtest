@@ -98,7 +98,11 @@ def run_backtest(run_dir:pathlib.Path, years:int):
         full['final_candidate_count']=len(full['final_candidates'])
         full['historical_gate_blocked']=bool(src) and not bool(full['final_candidates'])
         full['multiyear_failed']=not bool(summary.get('ok'))
-        full['ok']=bool(full.get('ok')) and bool(summary.get('ok')) and not full['historical_gate_blocked']
+        scanner_failed = [x for x in (full.get('failed_chunks') or []) if 'MULTIYEAR' not in str(x.get('status')) and 'HISTORICAL' not in str(x.get('status'))]
+        base_scan_ok = not scanner_failed and int(full.get('qc_symbols_scanned') or 0) >= int(full.get('calendar_row_count') or full.get('calendar_universe_count') or 0)
+        full['failed_chunks'] = scanner_failed
+        full['failed_chunk_count'] = len(scanner_failed)
+        full['ok']=bool(base_scan_ok) and bool(summary.get('ok')) and not full['historical_gate_blocked']
         if full['ok']:
             full['status']='OK_FULL_QC_SCAN'
         elif full['historical_gate_blocked']:
