@@ -1,9 +1,14 @@
+import contextlib
 import datetime
+import io
 import importlib.machinery
 import importlib.util
+import json
 import pathlib
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "agent-platform" / "scripts" / "earnings-qc-options"
@@ -27,6 +32,162 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest", cli)
         self.assertNotIn("SCANNER = pathlib.Path('/agents/research/bin/earnings-qc-options-scan')", cli)
         self.assertNotIn("MULTIYEAR = pathlib.Path('/agents/research/bin/earnings-qc-multiyear-backtest')", cli)
+
+    def test_research_cli_exposes_llm_research_commands(self):
+        mod = load_script("earnings-qc-research")
+        parser = mod.build_parser()
+        commands = parser._subparsers._group_actions[0].choices
+        for name in ["run", "status", "history", "insights", "historical", "decision", "cleanup"]:
+            self.assertIn(name, commands)
+        args = parser.parse_args(["run", "--campaign", "test", "--years", "1", "--from-stage", "historical_option_pnl"])
+        self.assertEqual(args.campaign, "test")
+        self.assertEqual(args.years, 1)
+        self.assertEqual(args.from_stage, "historical_option_pnl")
+
+    def test_research_cli_has_postgres_persistence_schema(self):
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        for table in ["research_campaigns", "research_runs", "research_stages", "stage_artifacts", "candidate_dossiers", "research_decisions", "cleanup_runs"]:
+            self.assertIn(table, cli)
+        self.assertIn("historical_option_pnl_years_", cli)
+        self.assertIn("derive_insights", cli)
+
+    def test_research_schema_identifier_is_sanitized(self):
+        mod = load_script("earnings-qc-research")
+        self.assertEqual(mod.safe_identifier("earnings_cache", "fallback"), "earnings_cache")
+        self.assertEqual(mod.safe_identifier("bad;drop schema public", "fallback"), "fallback")
+        self.assertEqual(mod.safe_identifier("1bad", "fallback"), "fallback")
+
+    def test_candidate_persistence_keeps_forward_leads_when_final_exists(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        summary = {
+            "final_candidates": [{"symbol": "AAA", "earnings_date": "2026-08-01"}],
+            "forward_candidates": [
+                {"symbol": "AAA", "earnings_date": "2026-08-01"},
+                {"symbol": "BBB", "earnings_date": "2026-08-02"},
+            ],
+            "multiyear_backtest": {"results": [{"symbol": "AAA", "sample_size": 10, "win_rate": 0.6}]},
+        }
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.persist_candidates("camp", "run", summary)
+        joined = "\n".join(calls)
+        self.assertIn("AAA", joined)
+        self.assertIn("BBB", joined)
+        self.assertIn("sample_size", joined)
+        self.assertIn("historical_pnl_json=EXCLUDED.historical_pnl_json", joined)
+        self.assertEqual(len(calls), 2)
+
+    def test_run_from_historical_stage_delegates_before_new_run_dir(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args(["run", "--from-stage", "historical_option_pnl", "--years", "10"])
+        with mock.patch.object(mod, "cmd_historical", return_value=7) as historical:
+            rc = mod.cmd_run(args)
+        self.assertEqual(rc, 7)
+        historical.assert_called_once()
+
+    def test_historical_uses_campaign_db_run_before_state_file_and_upserts_before_stage(self):
+        mod = load_script("earnings-qc-research")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
+        args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
+        calls = []
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign", side_effect=lambda *a, **k: calls.append("campaign")), \
+             mock.patch.object(mod, "upsert_run", side_effect=lambda *a, **k: calls.append("run")), \
+             mock.patch.object(mod, "upsert_stage", side_effect=lambda *a, **k: calls.append("stage")), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST"}), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
+             mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
+            rc = mod.cmd_historical(args)
+        self.assertEqual(rc, 0)
+        self.assertLess(calls.index("run"), calls.index("stage"))
+
+    def test_multiyear_expansion_can_turn_historical_blocker_into_ok(self):
+        multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
+        self.assertIn("scanner_failed", multi)
+        self.assertIn("'MULTIYEAR' not in str(x.get('status'))", multi)
+        self.assertIn("base_scan_ok", multi)
+        self.assertIn("full['ok']=bool(base_scan_ok) and bool(summary.get('ok'))", multi)
+        self.assertNotIn("full['ok']=bool(full.get('ok')) and bool(summary.get('ok'))", multi)
+
+    def test_stage_counts_are_integer_coerced_before_sql(self):
+        mod = load_script("earnings-qc-research")
+        self.assertEqual(mod.sql_int_or_null(3), "3")
+        self.assertEqual(mod.sql_int_or_null("4"), "4")
+        self.assertEqual(mod.sql_int_or_null("1; DROP TABLE x"), "NULL")
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        self.assertIn("{sql_int_or_null(passed)}, {sql_int_or_null(failed)}", cli)
+
+    def test_db_persistence_is_strict_for_mutating_runs(self):
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        self.assertIn("DB_STRICT = False", cli)
+        self.assertIn("raise RuntimeError('psql not found for required research DB persistence')", cli)
+        self.assertIn("DB_STRICT = True", cli)
+        self.assertIn("DB_RUN_PERSIST_FAILED", cli)
+        self.assertIn("DB_SUMMARY_PERSIST_FAILED", cli)
+
+    def test_db_latest_orders_by_updated_at_for_resumed_runs(self):
+        cli = (SCRIPTS / "earnings-qc-research").read_text()
+        self.assertIn("ORDER BY updated_at DESC, created_at DESC LIMIT 1", cli)
+        self.assertIn("ORDER BY updated_at DESC, created_at DESC LIMIT {int(limit)}", cli)
+        self.assertNotIn("ORDER BY created_at DESC LIMIT 1", cli)
+
+    def test_status_run_dir_uses_run_dir_name_for_stage_lookup(self):
+        mod = load_script("earnings-qc-research")
+        run_dir = pathlib.Path(tempfile.mkdtemp()) / "older-run"
+        run_dir.mkdir()
+        seen = {}
+        args = types.SimpleNamespace(campaign="camp", run_dir=str(run_dir), run_id=None, chunk_size=25, pretty=False)
+        with mock.patch.object(mod, "latest_db_run", return_value={"run_id": "latest-run", "run_dir": "/tmp/latest"}), \
+             mock.patch.object(mod, "load_chunks", return_value=[]), \
+             mock.patch.object(mod, "aggregate", return_value={"ok": True}), \
+             mock.patch.object(mod, "db_stages", side_effect=lambda run_id: seen.setdefault("run_id", run_id) or []), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc = mod.cmd_status(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen["run_id"], "older-run")
+
+    def test_decision_add_reports_db_insert_failure(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args([
+            "decision", "add",
+            "--campaign", "new-campaign",
+            "--type", "test_decision",
+            "--rationale", "testing failure path",
+        ])
+        buf = io.StringIO()
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign", return_value=None), \
+             mock.patch.object(mod, "db_exec", return_value=None), \
+             contextlib.redirect_stdout(buf):
+            rc = mod.cmd_decision_add(args)
+        self.assertEqual(rc, 1)
+        self.assertIn("DB_INSERT_FAILED", buf.getvalue())
+
+    def test_decision_add_upserts_campaign_before_insert(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args([
+            "decision", "add",
+            "--campaign", "existing-campaign",
+            "--type", "relax_min_bid",
+            "--rationale", "document why",
+            "--parameter-changes-json", '{"QC_MIN_BID":{"from":0.05,"to":0.02}}',
+        ])
+        buf = io.StringIO()
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign", return_value=None) as upsert, \
+             mock.patch.object(mod, "db_exec", return_value=""), \
+             contextlib.redirect_stdout(buf):
+            rc = mod.cmd_decision_add(args)
+        self.assertEqual(rc, 0)
+        upsert.assert_called_once()
+        self.assertIn('"ok": true', buf.getvalue())
+
+    def test_deploy_verifies_research_runs_regclass_exactly(self):
+        workflow = pathlib.Path('.github/workflows/vps-deploy.yml').read_text()
+        self.assertIn("-qAt -c \"SELECT to_regclass('earnings_cache.research_runs') IS NOT NULL\" | grep -qx t", workflow)
 
     def test_stage2_generated_qc_algorithm_contains_finalizers(self):
         mod = load_script("earnings-qc-options-scan")
