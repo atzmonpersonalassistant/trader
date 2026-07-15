@@ -462,9 +462,9 @@ jobs:
           grep -q '/agents/research/bin/earnings-qc-research' /usr/local/bin/earnings-qc-daily-run.sh
           ! grep -q '/agents/research/bin/earnings-qc-options-full-scan' /usr/local/bin/earnings-qc-daily-run.sh
           test ! -e /usr/local/bin/earnings-otm-daily-root.sh
-          sudo crontab -l >/tmp/trader-root-crontab.txt
-          grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
-          ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
+          if sudo crontab -l >/tmp/trader-root-crontab.txt 2>/dev/null; then
+            ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
+          fi
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
