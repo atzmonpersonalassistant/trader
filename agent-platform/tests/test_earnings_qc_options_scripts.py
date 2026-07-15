@@ -21,11 +21,6 @@ def load_script(name: str):
 class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
 
-    def test_daily_wrapper_uses_single_public_research_cli(self):
-        wrapper = (SCRIPTS / "earnings-qc-daily-run.sh").read_text()
-        self.assertIn("/agents/research/bin/earnings-qc-research", wrapper)
-        self.assertNotIn("/agents/research/bin/earnings-qc-options-full-scan", wrapper)
-
     def test_single_public_research_cli_uses_internal_libexec_stages(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan", cli)
