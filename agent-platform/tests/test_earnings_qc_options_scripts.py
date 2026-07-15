@@ -22,7 +22,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
 
     def test_daily_wrapper_uses_single_public_research_cli(self):
-        wrapper = (SCRIPTS / "earnings-otm-daily-root.sh").read_text()
+        wrapper = (SCRIPTS / "earnings-qc-daily-run.sh").read_text()
         self.assertIn("/agents/research/bin/earnings-qc-research", wrapper)
         self.assertNotIn("/agents/research/bin/earnings-qc-options-full-scan", wrapper)
 
