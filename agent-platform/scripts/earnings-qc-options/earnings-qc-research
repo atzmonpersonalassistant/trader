@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, concurrent.futures, datetime, json, os, pathlib, sqlite3, subprocess, sys, threading, time
+import argparse, concurrent.futures, datetime, hashlib, json, os, pathlib, re, shutil, sqlite3, subprocess, sys, threading, time
 
 REPORT_ROOT = pathlib.Path('/agents/research/reports')
 STATE_DIR = pathlib.Path('/agents/research/state/earnings-qc-options-scan')
@@ -8,6 +8,17 @@ ORCH_DB = pathlib.Path('/agents/orchestrator/state/orchestrator.db')
 SCANNER = pathlib.Path(os.environ.get('EARNINGS_QC_STAGE2_CLI', '/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan'))
 MULTIYEAR = pathlib.Path(os.environ.get('EARNINGS_QC_MULTIYEAR_CLI', '/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest'))
 MULTIYEAR_LOCK = threading.Lock()
+PG_DB = os.environ.get('TRADER_RESEARCH_DB', 'trader_research')
+
+def safe_identifier(value: str, default: str) -> str:
+    value = value or default
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,62}', value):
+        return default
+    return value
+
+PG_SCHEMA = safe_identifier(os.environ.get('TRADER_RESEARCH_SCHEMA', 'earnings_cache'), 'earnings_cache')
+DEFAULT_CAMPAIGN = os.environ.get('EARNINGS_QC_CAMPAIGN', 'earnings-runup-cheap-calls')
+DB_STRICT = False
 
 INT_FUNNEL_KEYS = [
     '02_qc_option_chain_available',
@@ -16,6 +27,202 @@ INT_FUNNEL_KEYS = [
     '05_qc_liquidity_greeks_quality_pass',
 ]
 
+
+
+def utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def sql_lit(v) -> str:
+    if v is None:
+        return 'NULL'
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def sql_json(v) -> str:
+    return sql_lit(json.dumps(v if v is not None else {}, ensure_ascii=False, sort_keys=True)) + '::jsonb'
+
+
+def sql_int_or_null(v) -> str:
+    if v is None:
+        return 'NULL'
+    try:
+        return str(int(v))
+    except Exception:
+        return 'NULL'
+
+
+def db_exec(sql: str, fetch: bool = False) -> str | None:
+    if shutil.which('psql') is None:
+        if DB_STRICT:
+            raise RuntimeError('psql not found for required research DB persistence')
+        return None
+    try:
+        p = subprocess.run(['psql', '-d', PG_DB, '-v', 'ON_ERROR_STOP=1', '-qAt', '-c', sql], text=True, capture_output=True, timeout=30)
+    except Exception as e:
+        if DB_STRICT:
+            raise RuntimeError(f'psql execution failed for required research DB persistence: {e!r}')
+        return None
+    if p.returncode != 0:
+        if DB_STRICT:
+            raise RuntimeError('psql failed for required research DB persistence: ' + (p.stderr or p.stdout or '').strip()[:1000])
+        return None
+    return p.stdout if fetch else ''
+
+
+def ensure_research_db() -> bool:
+    sql = f"""
+CREATE SCHEMA IF NOT EXISTS {PG_SCHEMA};
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_campaigns (
+ campaign_id TEXT PRIMARY KEY, name TEXT NOT NULL, goal TEXT, status TEXT NOT NULL DEFAULT 'active',
+ default_parameters_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, notes TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_runs (
+ run_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), status TEXT NOT NULL,
+ started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, parameters_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+ run_dir TEXT, summary_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, final_candidate_count INTEGER NOT NULL DEFAULT 0,
+ bottleneck TEXT, error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_stages (
+ stage_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), run_id TEXT REFERENCES {PG_SCHEMA}.research_runs(run_id),
+ stage_name TEXT NOT NULL, status TEXT NOT NULL, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
+ input_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, input_hash TEXT, output_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+ artifact_path TEXT, parameters_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, passed_count INTEGER, failed_count INTEGER,
+ blocker TEXT, error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(run_id, stage_name)
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.stage_artifacts (
+ artifact_id TEXT PRIMARY KEY, stage_id TEXT REFERENCES {PG_SCHEMA}.research_stages(stage_id), artifact_type TEXT NOT NULL,
+ path TEXT NOT NULL, sha256 TEXT, size_bytes BIGINT, keep BOOLEAN NOT NULL DEFAULT FALSE,
+ metadata_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(stage_id, path)
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.candidate_dossiers (
+ candidate_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), run_id TEXT REFERENCES {PG_SCHEMA}.research_runs(run_id),
+ symbol TEXT NOT NULL, report_date TEXT, contract_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+ liquidity_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, historical_pnl_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+ metrics_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, verdict TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE(run_id, symbol, report_date)
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_decisions (
+ decision_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), previous_run_id TEXT, next_run_id TEXT,
+ actor TEXT NOT NULL, decision_type TEXT NOT NULL, rationale TEXT NOT NULL, parameter_changes_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.cleanup_runs (
+ cleanup_id TEXT PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL DEFAULT now(), finished_at TIMESTAMPTZ,
+ dry_run BOOLEAN NOT NULL, policy_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, deleted_paths_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+ freed_bytes BIGINT NOT NULL DEFAULT 0, error TEXT
+);
+"""
+    return db_exec(sql) is not None
+
+
+def require_research_db() -> bool:
+    return ensure_research_db()
+
+
+def stable_id(prefix: str, *parts) -> str:
+    return prefix + '_' + hashlib.sha256('|'.join(str(p) for p in parts).encode()).hexdigest()[:24]
+
+
+def current_parameters(args=None) -> dict:
+    keys = ['QC_MAX_PREMIUM','QC_MIN_BID','QC_MAX_SPREAD_PCT','QC_MIN_RELATIVE_SPREAD','QC_VOL_SPREAD_FACTOR','QC_EXPECTED_MOVE_SPREAD_FRACTION','QC_FINAL_MIN_SAMPLE_SIZE','QC_FINAL_MIN_WIN_RATE']
+    d = {k: os.environ.get(k) for k in keys if os.environ.get(k) is not None}
+    if args is not None:
+        for k in ['chunk_size','parallel','years','end_to_end','start_offset','max_chunks','from_stage']:
+            if hasattr(args, k): d[k] = getattr(args, k)
+    return d
+
+
+def upsert_campaign(campaign_id: str, goal: str | None = None, params: dict | None = None) -> None:
+    if not ensure_research_db(): return
+    db_exec(f"""INSERT INTO {PG_SCHEMA}.research_campaigns(campaign_id,name,goal,default_parameters_json,updated_at)
+VALUES ({sql_lit(campaign_id)}, {sql_lit(campaign_id)}, {sql_lit(goal or 'Find QC/EODHD-backed pre-earnings option candidates')}, {sql_json(params or {})}, now())
+ON CONFLICT (campaign_id) DO UPDATE SET updated_at=now(), default_parameters_json=EXCLUDED.default_parameters_json;""")
+
+
+def upsert_run(run_id: str, campaign_id: str, status: str, run_dir: pathlib.Path | None, params: dict, summary: dict | None = None, error: str | None = None, finished: bool = False) -> None:
+    if not ensure_research_db(): return
+    summary = summary or {}; final_count = int(summary.get('final_candidate_count') or summary.get('candidate_count') or 0) if summary else 0
+    bottleneck = summary.get('status') if summary else error
+    finished_sql = 'now()' if finished else 'NULL'
+    db_exec(f"""INSERT INTO {PG_SCHEMA}.research_runs(run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,summary_json,final_candidate_count,bottleneck,error,updated_at)
+VALUES ({sql_lit(run_id)}, {sql_lit(campaign_id)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(params)}, {sql_lit(str(run_dir) if run_dir else None)}, {sql_json(summary)}, {final_count}, {sql_lit(bottleneck)}, {sql_lit(error)}, now())
+ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(EXCLUDED.finished_at,{PG_SCHEMA}.research_runs.finished_at), parameters_json=EXCLUDED.parameters_json, run_dir=EXCLUDED.run_dir, summary_json=EXCLUDED.summary_json, final_candidate_count=EXCLUDED.final_candidate_count, bottleneck=EXCLUDED.bottleneck, error=EXCLUDED.error, updated_at=now();""")
+
+
+def upsert_stage(campaign_id: str, run_id: str, stage_name: str, status: str, input_json=None, output_json=None, artifact_path: str | None = None, params=None, passed=None, failed=None, blocker=None, error=None) -> None:
+    if not ensure_research_db(): return
+    sid = stable_id('stage', run_id, stage_name); ih = hashlib.sha256(json.dumps(input_json or {}, sort_keys=True).encode()).hexdigest()
+    db_exec(f"""INSERT INTO {PG_SCHEMA}.research_stages(stage_id,campaign_id,run_id,stage_name,status,started_at,finished_at,input_json,input_hash,output_json,artifact_path,parameters_json,passed_count,failed_count,blocker,error,updated_at)
+VALUES ({sql_lit(sid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(stage_name)}, {sql_lit(status)}, now(), now(), {sql_json(input_json or {})}, {sql_lit(ih)}, {sql_json(output_json or {})}, {sql_lit(artifact_path)}, {sql_json(params or {})}, {sql_int_or_null(passed)}, {sql_int_or_null(failed)}, {sql_lit(blocker)}, {sql_lit(error)}, now())
+ON CONFLICT (run_id, stage_name) DO UPDATE SET status=EXCLUDED.status, finished_at=now(), input_json=EXCLUDED.input_json, input_hash=EXCLUDED.input_hash, output_json=EXCLUDED.output_json, artifact_path=EXCLUDED.artifact_path, parameters_json=EXCLUDED.parameters_json, passed_count=EXCLUDED.passed_count, failed_count=EXCLUDED.failed_count, blocker=EXCLUDED.blocker, error=EXCLUDED.error, updated_at=now();""")
+
+
+def insert_artifact(stage_name: str, run_id: str, path: pathlib.Path, keep: bool=False, artifact_type: str='file', metadata=None) -> None:
+    if not path.exists() or not ensure_research_db(): return
+    sid = stable_id('stage', run_id, stage_name); aid = stable_id('artifact', sid, str(path))
+    try:
+        b=path.read_bytes(); sha=hashlib.sha256(b).hexdigest(); size=len(b)
+    except Exception:
+        sha=None; size=None
+    db_exec(f"""INSERT INTO {PG_SCHEMA}.stage_artifacts(artifact_id,stage_id,artifact_type,path,sha256,size_bytes,keep,metadata_json)
+VALUES ({sql_lit(aid)}, {sql_lit(sid)}, {sql_lit(artifact_type)}, {sql_lit(str(path))}, {sql_lit(sha)}, {size if size is not None else 'NULL'}, {'TRUE' if keep else 'FALSE'}, {sql_json(metadata or {})})
+ON CONFLICT (stage_id,path) DO UPDATE SET sha256=EXCLUDED.sha256, size_bytes=EXCLUDED.size_bytes, keep=EXCLUDED.keep, metadata_json=EXCLUDED.metadata_json;""")
+
+
+def persist_candidates(campaign_id: str, run_id: str, summary: dict) -> None:
+    if not ensure_research_db(): return
+    final = summary.get('final_candidates') or summary.get('candidates') or []
+    forward = summary.get('forward_candidates') or []
+    hist_by_symbol = {r.get('symbol'): r for r in ((summary.get('multiyear_backtest') or {}).get('results') or []) if r.get('symbol')}
+    final_keys = {(c.get('symbol'), c.get('earnings_date') or c.get('report_date')) for c in final}
+    seen = set()
+    combined = []
+    for c in list(final) + list(forward):
+        key = (c.get('symbol'), c.get('earnings_date') or c.get('report_date'))
+        if key in seen:
+            continue
+        seen.add(key); combined.append(c)
+    for c in combined:
+        sym = c.get('symbol') or 'UNKNOWN'; rd = c.get('earnings_date') or c.get('report_date'); cid = stable_id('candidate', run_id, sym, rd)
+        verdict = 'final_candidate' if (sym, rd) in final_keys else 'forward_only_not_final'
+        db_exec(f"""INSERT INTO {PG_SCHEMA}.candidate_dossiers(candidate_id,campaign_id,run_id,symbol,report_date,contract_json,liquidity_json,historical_pnl_json,metrics_json,verdict)
+VALUES ({sql_lit(cid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(sym)}, {sql_lit(rd)}, {sql_json(c.get('contracts') or [])}, {sql_json(c)}, {sql_json(hist_by_symbol.get(sym) or {})}, {sql_json(c)}, {sql_lit(verdict)})
+ON CONFLICT (run_id,symbol,report_date) DO UPDATE SET contract_json=EXCLUDED.contract_json, liquidity_json=EXCLUDED.liquidity_json, historical_pnl_json=EXCLUDED.historical_pnl_json, metrics_json=EXCLUDED.metrics_json, verdict=EXCLUDED.verdict;""")
+
+
+def persist_summary_to_db(campaign_id: str, run_id: str, run_dir: pathlib.Path, summary: dict, params: dict) -> None:
+    upsert_campaign(campaign_id, params=params); upsert_run(run_id, campaign_id, 'completed' if summary.get('ok') else 'blocked', run_dir, params, summary, finished=True)
+    f = summary.get('aggregate_funnel') or {}; years = params.get('years') or 'unknown'
+    upsert_stage(campaign_id, run_id, 'calendar', 'completed', output_json={'row_count': summary.get('calendar_row_count'), 'universe_count': summary.get('calendar_universe_count')}, artifact_path=str(run_dir/'calendar_snapshot.json'), params=params, passed=summary.get('calendar_universe_count'))
+    upsert_stage(campaign_id, run_id, 'qc_chain_scan', 'completed', output_json={'available': f.get('02_qc_option_chain_available'), 'scanned': summary.get('qc_symbols_scanned')}, params=params, passed=f.get('02_qc_option_chain_available'))
+    upsert_stage(campaign_id, run_id, 'liquidity_greeks', 'completed', output_json={'pass': f.get('05_qc_liquidity_greeks_quality_pass'), 'cheap_calls': f.get('04_qc_calls_ask_under_max_premium')}, params=params, passed=f.get('05_qc_liquidity_greeks_quality_pass'))
+    upsert_stage(campaign_id, run_id, f'historical_option_pnl_years_{years}', 'completed' if summary.get('chunk_multiyear_statuses') or summary.get('multiyear_backtest') else 'skipped', output_json={'status': f.get('07_multi_year_backtest_status'), 'chunks': summary.get('chunk_multiyear_statuses') or [], 'final_candidate_count': summary.get('final_candidate_count')}, artifact_path=str(run_dir/'chunk_e2e'), params=params, passed=summary.get('final_candidate_count'), failed=summary.get('forward_candidate_count'), blocker=summary.get('status') if summary.get('historical_gate_blocked') else None)
+    upsert_stage(campaign_id, run_id, 'aggregate_report', 'completed', output_json=summary, artifact_path=str(run_dir/'full_summary.json'), params=params, passed=summary.get('final_candidate_count'), failed=summary.get('failed_chunk_count'), blocker=summary.get('status') if not summary.get('ok') else None)
+    for name, rel in [('aggregate_report','full_summary.json'), ('aggregate_report','hebrew_report.md'), ('calendar','calendar_snapshot.json')]: insert_artifact(name, run_id, run_dir/rel, keep=(rel=='full_summary.json'))
+    persist_candidates(campaign_id, run_id, summary)
+
+
+def latest_db_run(campaign_id: str) -> dict | None:
+    if not ensure_research_db(): return None
+    out = db_exec(f"SELECT row_to_json(t) FROM (SELECT run_id,campaign_id,status,run_dir,summary_json,parameters_json,created_at,updated_at FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT 1) t", fetch=True)
+    if not out or not out.strip(): return None
+    try: return json.loads(out.strip().splitlines()[-1])
+    except Exception: return None
+
+
+def db_history(campaign_id: str, limit: int=10) -> list[dict]:
+    if not ensure_research_db(): return []
+    out = db_exec(f"SELECT COALESCE(json_agg(t),'[]'::json) FROM (SELECT run_id,status,started_at,finished_at,parameters_json,final_candidate_count,bottleneck,run_dir FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT {int(limit)}) t", fetch=True)
+    try: return json.loads(out.strip() or '[]') if out is not None else []
+    except Exception: return []
+
+
+def db_stages(run_id: str) -> list[dict]:
+    if not ensure_research_db(): return []
+    out = db_exec(f"SELECT COALESCE(json_agg(t),'[]'::json) FROM (SELECT stage_name,status,passed_count,failed_count,blocker,error,artifact_path,updated_at FROM {PG_SCHEMA}.research_stages WHERE run_id={sql_lit(run_id)} ORDER BY created_at) t", fetch=True)
+    try: return json.loads(out.strip() or '[]') if out is not None else []
+    except Exception: return []
 
 def latest_run_dir() -> pathlib.Path | None:
     p = STATE_DIR / 'latest-full-run.txt'
@@ -345,60 +552,85 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
 
 
 def cmd_run(args) -> int:
+    campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    if args.from_stage and args.from_stage in ('historical', 'historical_option_pnl'):
+        return cmd_historical(args)
+    if not require_research_db():
+        print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
+    global DB_STRICT
+    DB_STRICT = True
     now = datetime.datetime.now(datetime.timezone.utc)
     run_dir = pathlib.Path(args.run_dir) if args.run_dir else REPORT_ROOT / f'earnings-qc-options-scan-full-{now.strftime("%Y%m%d-%H%M%S")}'
+    run_id = args.run_id or run_dir.name
+    params = current_parameters(args)
+    upsert_campaign(campaign_id, params=params)
+    upsert_run(run_id, campaign_id, 'running', run_dir, params)
+    db_run_check = latest_db_run(campaign_id)
+    if not db_run_check or db_run_check.get('run_id') != run_id:
+        print(json.dumps({'ok': False, 'status': 'DB_RUN_PERSIST_FAILED', 'campaign_id': campaign_id, 'run_id': run_id}, ensure_ascii=False, indent=2)); return 1
     run_dir.mkdir(parents=True, exist_ok=True)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     (STATE_DIR/'latest-full-run.txt').write_text(str(run_dir)+'\n')
     calendar_total = None
     existing_offsets = {int(d.get('_chunk_offset') or 0) for d in load_chunks(run_dir)} if args.resume else set()
     start_offset = args.start_offset
-    if existing_offsets:
-        chunks = load_chunks(run_dir)
-        calendar_total = (chunks[0].get('calendar_row_count') or chunks[0].get('calendar_universe_count')) if chunks else None
-    else:
-        calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end)
-        existing_offsets.add(start_offset)
-    offsets=[]
-    if calendar_total:
-        off = start_offset + args.chunk_size
-        while off < int(calendar_total):
-            if off not in existing_offsets:
-                offsets.append(off)
-            off += args.chunk_size
-        if args.max_chunks is not None:
-            # max_chunks counts total chunks including the discovery chunk.
-            remaining=max(0,args.max_chunks-1)
-            offsets=offsets[:remaining]
-    if offsets and not args.resume:
-        discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
-        if discovery_delay > 0:
-            time.sleep(discovery_delay)
-    run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end)
-    summary = write_summary(run_dir, args.chunk_size, notify=False)
-    mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
-    if mb is not None:
-        # multiyear runner updates full_summary.json; reload if available.
-        fp=run_dir/'full_summary.json'
-        if fp.exists():
-            summary=json.loads(fp.read_text())
-        summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel}
-        fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
-    if not args.no_outbox and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
-        msg = hebrew_report(summary, args.chunk_size)
-        summary['outbox_written'] = write_outbox(msg, summary)
-        (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
-    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if summary.get('ok') else 2
+    try:
+        if existing_offsets:
+            chunks = load_chunks(run_dir)
+            calendar_total = (chunks[0].get('calendar_row_count') or chunks[0].get('calendar_universe_count')) if chunks else None
+        else:
+            calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end)
+            existing_offsets.add(start_offset)
+        offsets=[]
+        if calendar_total:
+            off = start_offset + args.chunk_size
+            while off < int(calendar_total):
+                if off not in existing_offsets:
+                    offsets.append(off)
+                off += args.chunk_size
+            if args.max_chunks is not None:
+                remaining=max(0,args.max_chunks-1)
+                offsets=offsets[:remaining]
+        if offsets and not args.resume:
+            discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
+            if discovery_delay > 0:
+                time.sleep(discovery_delay)
+        run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end)
+        summary = write_summary(run_dir, args.chunk_size, notify=False)
+        mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
+        if mb is not None:
+            fp=run_dir/'full_summary.json'
+            if fp.exists():
+                summary=json.loads(fp.read_text())
+            summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel, 'years': args.years}
+            fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+        summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params
+        persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
+        db_after = latest_db_run(campaign_id)
+        if not db_after or db_after.get('run_id') != run_id:
+            print(json.dumps({'ok': False, 'status': 'DB_SUMMARY_PERSIST_FAILED', 'campaign_id': campaign_id, 'run_id': run_id}, ensure_ascii=False, indent=2)); return 1
+        if not args.no_outbox and (summary.get('candidate_count') or summary.get('forward_candidate_count') or not summary.get('ok')):
+            msg = hebrew_report(summary, args.chunk_size)
+            summary['outbox_written'] = write_outbox(msg, summary)
+            (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
+        print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if summary.get('ok') else 2
+    except Exception as e:
+        upsert_run(run_id, campaign_id, 'failed', run_dir, params, error=repr(e), finished=True)
+        raise
 
 
 def cmd_status(args) -> int:
-    run_dir = pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
+    campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    db_run = latest_db_run(campaign_id)
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else (pathlib.Path(db_run['run_dir']) if db_run and db_run.get('run_dir') else latest_run_dir())
     if not run_dir or not run_dir.exists():
-        print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
+        out = {'ok': False, 'status':'NO_RUN_FOUND', 'campaign_id': campaign_id, 'db_latest_run': db_run}
+        print(json.dumps(out, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True)); return 1
     chunks = load_chunks(run_dir)
     summary = aggregate(chunks)
-    summary.update({'run_dir': str(run_dir), 'chunk_size': args.chunk_size})
+    run_id = args.run_id or (run_dir.name if args.run_dir else (db_run.get('run_id') if db_run else run_dir.name))
+    summary.update({'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'chunk_size': args.chunk_size, 'db_stages': db_stages(run_id), 'db_latest_run': db_run})
     print(json.dumps(summary, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
     return 0 if summary.get('ok') else 2
 
@@ -428,16 +660,129 @@ def cmd_retry_failed(args) -> int:
     return 0 if summary.get('ok') else 2
 
 
+
+def cmd_history(args) -> int:
+    campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    out = {'ok': True, 'campaign_id': campaign_id, 'runs': db_history(campaign_id, args.last)}
+    print(json.dumps(out, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
+    return 0
+
+
+def derive_insights(campaign_id: str, limit: int=20) -> dict:
+    runs = db_history(campaign_id, limit)
+    bottlenecks = {}
+    years_seen = []
+    candidates = 0
+    for r in runs:
+        b = r.get('bottleneck') or r.get('status') or 'unknown'
+        bottlenecks[b] = bottlenecks.get(b, 0) + 1
+        params = r.get('parameters_json') or {}
+        if params.get('years') is not None:
+            years_seen.append(params.get('years'))
+        candidates += int(r.get('final_candidate_count') or 0)
+    suggestions = []
+    if runs:
+        latest = runs[0]
+        if latest.get('final_candidate_count'):
+            suggestions.append({'action': 'inspect_candidates', 'reason': 'latest run has final candidates'})
+        elif 'BLOCKED_HISTORICAL_OPTION_PNL_GATE' in str(latest.get('bottleneck')):
+            suggestions.append({'action': 'try_more_years_or_stop', 'reason': 'forward candidates failed historical PnL gate; compare 1-year vs wider windows before loosening filters'})
+        elif 'PARTIAL' in str(latest.get('bottleneck')):
+            suggestions.append({'action': 'resume', 'reason': 'latest run appears partial'})
+        else:
+            suggestions.append({'action': 'adjust_one_knob', 'reason': 'no final candidates; change one guardrailed parameter and document decision'})
+    else:
+        suggestions.append({'action': 'run_initial_one_year', 'reason': 'no DB history yet', 'command': 'earnings-qc-research run --years 1 --parallel 1 --end-to-end'})
+    return {'ok': True, 'campaign_id': campaign_id, 'run_count': len(runs), 'bottlenecks': bottlenecks, 'years_seen': years_seen, 'final_candidates_seen': candidates, 'suggestions': suggestions, 'runs': runs[:5]}
+
+
+def cmd_insights(args) -> int:
+    out = derive_insights(args.campaign or DEFAULT_CAMPAIGN, args.last)
+    print(json.dumps(out, ensure_ascii=False, indent=2 if args.pretty else None, sort_keys=True))
+    return 0
+
+
+def cmd_decision_add(args) -> int:
+    campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    if not ensure_research_db():
+        print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE'})); return 1
+    changes = json.loads(args.parameter_changes_json or '{}')
+    upsert_campaign(campaign_id, params={'decision_context': True})
+    did = stable_id('decision', campaign_id, args.previous_run_id, args.next_run_id, args.actor, args.decision_type, args.rationale, utc_now())
+    res = db_exec(f"""INSERT INTO {PG_SCHEMA}.research_decisions(decision_id,campaign_id,previous_run_id,next_run_id,actor,decision_type,rationale,parameter_changes_json)
+VALUES ({sql_lit(did)}, {sql_lit(campaign_id)}, {sql_lit(args.previous_run_id)}, {sql_lit(args.next_run_id)}, {sql_lit(args.actor)}, {sql_lit(args.decision_type)}, {sql_lit(args.rationale)}, {sql_json(changes)});""")
+    if res is None:
+        print(json.dumps({'ok': False, 'status': 'DB_INSERT_FAILED', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2))
+        return 1
+    print(json.dumps({'ok': True, 'decision_id': did, 'campaign_id': campaign_id}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_historical(args) -> int:
+    campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    if not require_research_db():
+        print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
+    global DB_STRICT
+    DB_STRICT = True
+    db_run = latest_db_run(campaign_id)
+    run_dir = pathlib.Path(args.run_dir) if args.run_dir else (pathlib.Path(db_run['run_dir']) if db_run and db_run.get('run_dir') else latest_run_dir())
+    if not run_dir or not run_dir.exists():
+        print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND', 'campaign_id': campaign_id, 'db_latest_run': db_run})); return 1
+    run_id = args.run_id or (run_dir.name if args.run_dir else (db_run.get('run_id') if db_run else run_dir.name))
+    params = current_parameters(args)
+    upsert_campaign(campaign_id, params=params)
+    upsert_run(run_id, campaign_id, 'historical_running', run_dir, params)
+    upsert_stage(campaign_id, run_id, f'historical_option_pnl_years_{args.years}', 'running', input_json={'run_dir': str(run_dir), 'years': args.years}, params=params)
+    mb = run_multiyear_if_requested(run_dir, args)
+    summary = json.loads((run_dir/'full_summary.json').read_text()) if (run_dir/'full_summary.json').exists() else {'ok': False, 'status': 'NO_FULL_SUMMARY'}
+    summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params
+    persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
+    db_after = latest_db_run(campaign_id)
+    if not db_after or db_after.get('run_id') != run_id:
+        print(json.dumps({'ok': False, 'status': 'DB_SUMMARY_PERSIST_FAILED', 'campaign_id': campaign_id, 'run_id': run_id}, ensure_ascii=False, indent=2)); return 1
+    upsert_stage(campaign_id, run_id, f'historical_option_pnl_years_{args.years}', 'completed' if mb and mb.get('status') else 'failed', output_json=mb or {}, artifact_path=str(run_dir/'multiyear_backtest'), params=params, passed=summary.get('final_candidate_count'), blocker=summary.get('status') if not summary.get('ok') else None)
+    print(json.dumps({'ok': bool(mb and mb.get('ok')), 'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'years': args.years, 'multiyear': mb, 'summary': summary}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if mb and mb.get('ok') else 2
+
+
+def cmd_cleanup(args) -> int:
+    policy = {'older_than_days': args.older_than_days, 'keep_last': args.keep_last, 'dry_run': args.dry_run}
+    cutoff = time.time() - args.older_than_days * 86400
+    dirs = sorted([p for p in REPORT_ROOT.glob('earnings-qc-options-scan-full-*') if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+    protected = {str(p) for p in dirs[:args.keep_last]}
+    deleted = []; freed = 0
+    for d in dirs[args.keep_last:]:
+        if d.stat().st_mtime >= cutoff or str(d) in protected:
+            continue
+        size = sum((f.stat().st_size for f in d.rglob('*') if f.is_file()), 0)
+        item = {'path': str(d), 'bytes': size}
+        deleted.append(item); freed += size
+        if not args.dry_run:
+            shutil.rmtree(d, ignore_errors=True)
+    cid = stable_id('cleanup', utc_now(), args.dry_run, args.older_than_days, args.keep_last)
+    if ensure_research_db():
+        db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes)
+VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(deleted, ensure_ascii=False))}::jsonb, {freed});""")
+    print(json.dumps({'ok': True, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'freed_bytes': freed, 'policy': policy}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
 def build_parser():
     p = argparse.ArgumentParser(description='Deterministic earnings QC full-scan runner')
     sub = p.add_subparsers(dest='cmd')
     def common(sp):
         sp.add_argument('--run-dir')
+        sp.add_argument('--run-id')
+        sp.add_argument('--campaign', default=DEFAULT_CAMPAIGN)
         sp.add_argument('--chunk-size', type=int, default=int(os.environ.get('QC_FULL_CHUNK_SIZE','25')))
-    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
+    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--from-stage'); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
     s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
+    h=sub.add_parser('history'); h.add_argument('--campaign', default=DEFAULT_CAMPAIGN); h.add_argument('--last', type=int, default=10); h.add_argument('--pretty', action='store_true')
+    ins=sub.add_parser('insights'); ins.add_argument('--campaign', default=DEFAULT_CAMPAIGN); ins.add_argument('--last', type=int, default=20); ins.add_argument('--pretty', action='store_true')
+    hist=sub.add_parser('historical'); common(hist); hist.add_argument('--years', type=int, required=True); hist.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=True); hist.add_argument('--no-end-to-end', dest='end_to_end', action='store_false')
+    dec=sub.add_parser('decision'); dec_sub=dec.add_subparsers(dest='decision_cmd'); da=dec_sub.add_parser('add'); da.add_argument('--campaign', default=DEFAULT_CAMPAIGN); da.add_argument('--previous-run-id'); da.add_argument('--next-run-id'); da.add_argument('--actor', default='llm'); da.add_argument('--type', dest='decision_type', required=True); da.add_argument('--rationale', required=True); da.add_argument('--parameter-changes-json', default='{}')
+    cl=sub.add_parser('cleanup'); cl.add_argument('--older-than-days', type=int, default=14); cl.add_argument('--keep-last', type=int, default=20); cl.add_argument('--dry-run', action='store_true')
     sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
-    rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','8')))
+    rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
     return p
 
 
@@ -450,6 +795,11 @@ def main(argv):
     if args.cmd == 'status': return cmd_status(args)
     if args.cmd == 'summarize': return cmd_summarize(args)
     if args.cmd == 'retry-failed': return cmd_retry_failed(args)
+    if args.cmd == 'history': return cmd_history(args)
+    if args.cmd == 'insights': return cmd_insights(args)
+    if args.cmd == 'historical': return cmd_historical(args)
+    if args.cmd == 'decision' and getattr(args, 'decision_cmd', None) == 'add': return cmd_decision_add(args)
+    if args.cmd == 'cleanup': return cmd_cleanup(args)
     raise SystemExit('missing command')
 
 if __name__ == '__main__':

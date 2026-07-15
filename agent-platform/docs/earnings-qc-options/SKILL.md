@@ -7,16 +7,16 @@ description: Active QC/LEAN-only earnings options research loop for Uriel's Trad
 
 This is an **active research skill**, not a one-shot scanner.
 
-Use the CLI as an experimental research instrument: run the full Nasdaq→QC→multi-year workflow, inspect the funnel, adjust guardrailed parameters, rerun, and continue until either final QC/EODHD-backed candidates emerge or the reasonable search space is exhausted.
+Use the CLI as a resumable, database-backed research instrument: inspect Postgres history/insights first, run the Nasdaq→QC→historical-PnL workflow, document decisions, adjust guardrailed parameters, rerun or resume from a stage, and continue until either final QC/EODHD-backed candidates emerge or the reasonable search space is exhausted.
 
 Research only: no live trading and no broker orders.
 
 ## Canonical CLI
 
-Use one canonical CLI for the full flow:
+Use one canonical CLI for the full flow. Start historical validation with one year unless Uriel asks for a wider window, then expand explicitly (for example to 10 years) and document the decision:
 
 ```bash
-/agents/research/bin/earnings-qc-research run --parallel 1 --end-to-end
+/agents/research/bin/earnings-qc-research run --campaign earnings-runup-cheap-calls --parallel 1 --years 1 --end-to-end
 ```
 
 This CLI owns the complete workflow:
@@ -29,6 +29,20 @@ This CLI owns the complete workflow:
 6. aggregate funnel counts, blockers, final candidates, and reports
 
 The public interface is intentionally one CLI. Stage-specific code may exist internally under `libexec`, but agents and users should not call it directly.
+
+## Database-backed research memory
+
+PostgreSQL (`trader_research`, schema `earnings_cache`) is part of the research loop. The CLI records campaigns, runs, stages, artifacts, candidate dossiers, decisions, and cleanup runs.
+
+Before changing parameters or launching a new run, inspect what is already known:
+
+```bash
+/agents/research/bin/earnings-qc-research status --campaign earnings-runup-cheap-calls --pretty
+/agents/research/bin/earnings-qc-research history --campaign earnings-runup-cheap-calls --last 10 --pretty
+/agents/research/bin/earnings-qc-research insights --campaign earnings-runup-cheap-calls --pretty
+```
+
+Use DB history to look for repeated bottlenecks, promising forward-only leads, years already tested, and parameter changes that helped or hurt. Prefer extracting leads from prior candidate dossiers before widening the search blindly.
 
 ## Runtime invocation
 
@@ -74,15 +88,28 @@ sudo -n -u agent-research env \
   /agents/research/bin/earnings-qc-research run --parallel 1 --end-to-end
 ```
 
-Effective tuning is recorded in output. Compare runs by run directory and tuning.
+Effective tuning is recorded in output and Postgres. Compare runs by campaign, run id, run directory, years, and tuning.
+
+When changing knobs, document the rationale before or immediately after running:
+
+```bash
+/agents/research/bin/earnings-qc-research decision add \
+  --campaign earnings-runup-cheap-calls \
+  --actor llm \
+  --type relax_min_bid \
+  --rationale "Previous runs repeatedly blocked at min bid while otherwise finding cheap calls" \
+  --parameter-changes-json '{"QC_MIN_BID":{"from":0.05,"to":0.02}}'
+```
 
 ## Research loop
 
 When asked to search for candidates:
 
-1. Start with the canonical full-scan defaults.
-2. Read the latest run dir from `/agents/research/state/earnings-qc-options-scan/latest-full-run.txt`.
-3. Inspect funnel and blockers:
+1. Read `status`, `history`, and `insights` for the campaign.
+2. Start new historical validation with `--years 1` unless Uriel explicitly asks for a wider window.
+3. If a one-year result is interesting, document the decision and extend the same run with `historical --years 10 --run-dir <run_dir>` or `run --from-stage historical_option_pnl --years 10 --run-dir <run_dir>`.
+4. Read the latest run dir from `/agents/research/state/earnings-qc-options-scan/latest-full-run.txt` only as a fallback if DB history is unavailable.
+5. Inspect funnel and blockers:
    - Nasdaq universe count
    - QC option chain availability
    - expiry within 0–7 days after earnings
@@ -90,15 +117,38 @@ When asked to search for candidates:
    - liquidity/Greeks gate pass
    - multi-year option-PnL pass/fail
    - final candidates
-4. If no candidates, diagnose the bottleneck:
+6. If no candidates, diagnose the bottleneck:
    - too few contracts under premium → consider raising `QC_MAX_PREMIUM`
    - too many low-bid failures → consider lowering `QC_MIN_BID` carefully
    - spread too strict → consider spread knobs carefully
    - missing Greeks/IV → do not bypass blindly; may indicate QC data limitation
    - historical option-PnL fails → do not promote; refine parameters or conclude no trade
-5. Stop stale runs before starting a replacement run to avoid wasting QC.
-6. Rerun with one controlled parameter change at a time when practical.
-7. Continue until final candidates appear or a clear no-trade conclusion is supported.
+7. Stop stale runs before starting a replacement run to avoid wasting QC.
+8. Rerun with one controlled parameter change at a time when practical.
+9. Continue until final candidates appear or a clear no-trade conclusion is supported.
+
+## Resume and stage expansion
+
+Use the same public CLI to continue work from an existing run:
+
+```bash
+/agents/research/bin/earnings-qc-research run --campaign earnings-runup-cheap-calls --run-dir <run_dir> --resume --parallel 1 --years 1 --end-to-end
+/agents/research/bin/earnings-qc-research historical --campaign earnings-runup-cheap-calls --run-dir <run_dir> --years 10
+/agents/research/bin/earnings-qc-research run --campaign earnings-runup-cheap-calls --run-dir <run_dir> --from-stage historical_option_pnl --years 10
+```
+
+Every historical year window is recorded as its own stage name, e.g. `historical_option_pnl_years_1` and `historical_option_pnl_years_10`.
+
+## Cleanup
+
+No cron is installed. Run cleanup manually/agent-driven when useful:
+
+```bash
+/agents/research/bin/earnings-qc-research cleanup --older-than-days 14 --keep-last 20 --dry-run
+/agents/research/bin/earnings-qc-research cleanup --older-than-days 14 --keep-last 20
+```
+
+Cleanup removes old report directories but keeps DB history and key summaries/artifacts tracked in Postgres.
 
 ## Optimize for chance of success vs profit
 

@@ -294,6 +294,8 @@ jobs:
           EOF_BIN
           sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research run --help >/tmp/trader-earnings-qc-research-help.txt
+          sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research insights --campaign deploy-smoke --pretty >/tmp/trader-earnings-qc-research-insights.txt
+          sudo -n -u agent-research psql -d trader_research -v ON_ERROR_STOP=1 -qAt -c "SELECT to_regclass('earnings_cache.research_runs') IS NOT NULL" | grep -qx t
           sudo -n -u agent-research bash -lc 'test ! -e /agents/research/bin/earnings-qc-options-full-scan && test ! -e /agents/research/bin/earnings-qc-options-scan && test ! -e /agents/research/bin/earnings-qc-multiyear-backtest'
           python3 - <<'PY'
           from pathlib import Path
