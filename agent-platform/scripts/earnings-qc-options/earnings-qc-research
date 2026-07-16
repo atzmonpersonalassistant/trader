@@ -128,8 +128,9 @@ def current_parameters(args=None) -> dict:
     keys = ['QC_MAX_PREMIUM','QC_MIN_BID','QC_MAX_SPREAD_PCT','QC_MIN_RELATIVE_SPREAD','QC_VOL_SPREAD_FACTOR','QC_EXPECTED_MOVE_SPREAD_FRACTION','QC_FINAL_MIN_SAMPLE_SIZE','QC_FINAL_MIN_WIN_RATE']
     d = {k: os.environ.get(k) for k in keys if os.environ.get(k) is not None}
     if args is not None:
-        for k in ['chunk_size','parallel','years','end_to_end','start_offset','max_chunks','from_stage','symbols']:
+        for k in ['chunk_size','parallel','years','end_to_end','start_offset','max_chunks','from_stage','to_stage','symbols']:
             if hasattr(args, k): d[k] = getattr(args, k)
+        d.update(stage_runtime_params(args))
     return d
 
 
@@ -339,12 +340,88 @@ def normalize_symbols_arg(symbols: str | None) -> list[str]:
     return out
 
 
-def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list[str] | None = None) -> dict:
+STAGE_ALIASES = {
+    'calendar': 'calendar',
+    'nasdaq': 'calendar',
+    'chain': 'qc_chain_scan',
+    'qc_scan': 'qc_chain_scan',
+    'qc-chain': 'qc_chain_scan',
+    'qc_chain': 'qc_chain_scan',
+    'candidate': 'candidate_scan',
+    'candidate-scan': 'candidate_scan',
+    'candidate_scan': 'candidate_scan',
+    'historical': 'historical_option_pnl',
+    'historical-option-pnl': 'historical_option_pnl',
+    'historical_option_pnl': 'historical_option_pnl',
+    'intraday': 'intraday_validation',
+    'intraday-validation': 'intraday_validation',
+    'intraday_validation': 'intraday_validation',
+}
+STAGE_ORDER = ['calendar', 'qc_chain_scan', 'candidate_scan', 'historical_option_pnl', 'intraday_validation']
+
+def normalize_stage(value: str | None, default: str | None = None) -> str | None:
+    if value is None or value == '':
+        return default
+    key = value.strip().lower().replace(' ', '_')
+    out = STAGE_ALIASES.get(key)
+    if not out:
+        raise SystemExit(f'invalid stage {value!r}; expected one of: {", ".join(sorted(STAGE_ALIASES))}')
+    return out
+
+def stage_index(stage: str) -> int:
+    return STAGE_ORDER.index(stage)
+
+def stage_in_range(stage: str, from_stage: str, to_stage: str) -> bool:
+    return stage_index(from_stage) <= stage_index(stage) <= stage_index(to_stage)
+
+def add_if_value(cmd: list[str], flag: str, value) -> None:
+    if value is not None:
+        cmd.extend([flag, str(value)])
+
+def stage_runtime_params(args) -> dict:
+    names = [
+        'from_stage','to_stage','as_of_date','calendar_from_days','calendar_to_days','calendar_source',
+        'qc_resolution','option_resolution','min_expiry_after_earnings_days','max_expiry_after_earnings_days',
+        'min_expiration_days','max_expiration_days','strike_range','option_right','delta_range','iv_range',
+        'min_open_interest','min_volume','max_premium','min_bid','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','entry_window','exit_days_before','exit_policy',
+        'historical_resolution','quote_resolution','entry_time_policy','exit_time_policy','slippage_model',
+        'max_contracts','path_metrics'
+    ]
+    return {k: getattr(args, k) for k in names if hasattr(args, k) and getattr(args, k) is not None}
+
+
+def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list[str] | None = None, args=None) -> dict:
     out_path = run_dir / f'chunk-{offset}.stdout.json'
     err_path = run_dir / f'chunk-{offset}.stderr.log'
     cmd = [str(SCANNER), 'run-now', '--no-outbox', '--qc-batch-limit', str(batch_size), '--qc-batch-offset', str(offset)]
     if symbols:
         cmd += ['--symbols', ','.join(symbols)]
+    if args is not None:
+        for attr, flag in [
+            ('as_of_date', '--as-of-date'),
+            ('calendar_from_days', '--calendar-from-days'),
+            ('calendar_to_days', '--calendar-to-days'),
+            ('calendar_source', '--calendar-source'),
+            ('qc_resolution', '--qc-resolution'),
+            ('option_resolution', '--option-resolution'),
+            ('min_expiry_after_earnings_days', '--min-expiry-after-earnings-days'),
+            ('max_expiry_after_earnings_days', '--max-expiry-after-earnings-days'),
+            ('min_expiration_days', '--min-expiration-days'),
+            ('max_expiration_days', '--max-expiration-days'),
+            ('strike_range', '--strike-range'),
+            ('option_right', '--option-right'),
+            ('delta_range', '--delta-range'),
+            ('iv_range', '--iv-range'),
+            ('min_open_interest', '--min-open-interest'),
+            ('min_volume', '--min-volume'),
+            ('max_premium', '--max-premium'),
+            ('min_bid', '--min-bid'),
+            ('max_spread_pct', '--max-spread-pct'),
+            ('min_relative_spread', '--min-relative-spread'),
+            ('vol_spread_factor', '--vol-spread-factor'),
+            ('expected_move_spread_fraction', '--expected-move-spread-fraction'),
+        ]:
+            add_if_value(cmd, flag, getattr(args, attr, None))
     snapshot = run_dir / 'calendar_snapshot.json'
     if snapshot.exists():
         cmd += ['--calendar-snapshot', str(snapshot)]
@@ -363,7 +440,7 @@ def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list
     return d
 
 
-def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int) -> dict | None:
+def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=None) -> dict | None:
     candidates = chunk.get('candidate_details') or []
     if not candidates:
         return None
@@ -387,6 +464,15 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int) -> dict 
     }
     (chunk_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     cmd = [str(MULTIYEAR), '--run-dir', str(chunk_dir), '--years', str(years)]
+    for attr, flag in [
+        ('entry_window', '--entry-window'),
+        ('exit_days_before', '--exit-days-before'),
+        ('exit_policy', '--exit-policy'),
+        ('historical_resolution', '--historical-resolution'),
+        ('max_contracts', '--max-contracts'),
+        ('path_metrics', '--path-metrics'),
+    ]:
+        add_if_value(cmd, flag, getattr(args, attr, None) if args is not None else None)
     # The current multiyear runner uses one QC project name. Serialize this part to avoid project push/backtest collisions.
     with MULTIYEAR_LOCK:
         p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
@@ -399,10 +485,10 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int) -> dict 
     return mb
 
 
-def run_chunk_end_to_end(run_dir: pathlib.Path, offset: int, batch_size: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> dict:
-    d = run_chunk(run_dir, offset, batch_size, symbols)
+def run_chunk_end_to_end(run_dir: pathlib.Path, offset: int, batch_size: int, years: int, end_to_end: bool, symbols: list[str] | None = None, args=None) -> dict:
+    d = run_chunk(run_dir, offset, batch_size, symbols, args=args)
     if end_to_end and d.get('ok') and d.get('candidate_details'):
-        mb = run_chunk_multiyear(run_dir, d, years)
+        mb = run_chunk_multiyear(run_dir, d, years, args=args)
         d['chunk_multiyear_backtest'] = mb
         d['historical_backtest_status'] = (mb or {}).get('status') if mb else 'NO_FORWARD_CANDIDATES'
         # Rewrite chunk stdout with attached e2e result so aggregation/status are deterministic.
@@ -519,9 +605,9 @@ def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) ->
     return summary
 
 
-def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> int | None:
+def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool, symbols: list[str] | None = None, args=None) -> int | None:
     # Run one deterministic chunk first so we know and snapshot the Nasdaq calendar total/order.
-    d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end, symbols)
+    d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end, symbols, args=args)
     report_dir = d.get('report_dir')
     src = pathlib.Path(report_dir) / 'calendar_rows.json' if report_dir else None
     if src and src.exists():
@@ -529,20 +615,20 @@ def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset
     return d.get('calendar_row_count') or d.get('calendar_universe_count')
 
 
-def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: int, parallel: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> None:
+def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: int, parallel: int, years: int, end_to_end: bool, symbols: list[str] | None = None, args=None) -> None:
     if not offsets:
         return
     parallel = max(1, int(parallel or 1))
     if parallel == 1:
         delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
         for i, off in enumerate(offsets):
-            run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end, symbols)
+            run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end, symbols, args=args)
             if delay > 0 and i < len(offsets) - 1:
                 time.sleep(delay)
         return
     # Conservative bounded parallelism for QC Cloud compile/backtest stability.
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as ex:
-        futs = {ex.submit(run_chunk_end_to_end, run_dir, off, batch_size, years, end_to_end, symbols): off for off in offsets}
+        futs = {ex.submit(run_chunk_end_to_end, run_dir, off, batch_size, years, end_to_end, symbols, args): off for off in offsets}
         for fut in concurrent.futures.as_completed(futs):
             off = futs[fut]
             try:
@@ -560,6 +646,15 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
     if not MULTIYEAR.exists():
         return {'ok': False, 'status': 'BLOCKED_MULTIYEAR_RUNNER_MISSING', 'path': str(MULTIYEAR)}
     cmd = [str(MULTIYEAR), '--run-dir', str(run_dir), '--years', str(args.years)]
+    for attr, flag in [
+        ('entry_window', '--entry-window'),
+        ('exit_days_before', '--exit-days-before'),
+        ('exit_policy', '--exit-policy'),
+        ('historical_resolution', '--historical-resolution'),
+        ('max_contracts', '--max-contracts'),
+        ('path_metrics', '--path-metrics'),
+    ]:
+        add_if_value(cmd, flag, getattr(args, attr, None))
     p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
     (run_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
     (run_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
@@ -571,8 +666,22 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
 
 def cmd_run(args) -> int:
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
-    if args.from_stage and args.from_stage in ('historical', 'historical_option_pnl'):
+    args.from_stage = normalize_stage(getattr(args, 'from_stage', None), 'calendar')
+    args.to_stage = normalize_stage(getattr(args, 'to_stage', None), 'historical_option_pnl' if args.end_to_end else 'candidate_scan')
+    if args.from_stage == 'historical_option_pnl':
         return cmd_historical(args)
+    if stage_index(args.from_stage) > stage_index(args.to_stage):
+        print(json.dumps({'ok': False, 'status': 'INVALID_STAGE_RANGE', 'from_stage': args.from_stage, 'to_stage': args.to_stage}, ensure_ascii=False, indent=2)); return 2
+    if args.to_stage == 'intraday_validation':
+        print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_RUN_TARGET', 'to_stage': args.to_stage}, ensure_ascii=False, indent=2)); return 2
+    if stage_index(args.to_stage) >= stage_index('historical_option_pnl') and getattr(args, 'option_right', 'call') != 'call':
+        print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_HISTORICAL_OPTION_RIGHT', 'option_right': args.option_right, 'blocked_reason': 'historical option-PnL runner is currently call-only; use --to-stage candidate-scan for put/both exploration or implement matching historical validation first'}, ensure_ascii=False, indent=2)); return 2
+    if args.from_stage == 'candidate_scan':
+        print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_RUN_START', 'from_stage': args.from_stage, 'blocked_reason': 'candidate_scan start requires persisted QC chain artifacts; rerun from calendar/qc_chain_scan or historical_option_pnl'}, ensure_ascii=False, indent=2)); return 2
+    if args.from_stage not in ('calendar', 'qc_chain_scan'):
+        print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_RUN_START', 'from_stage': args.from_stage}, ensure_ascii=False, indent=2)); return 2
+    if stage_index(args.to_stage) < stage_index('historical_option_pnl'):
+        args.end_to_end = False
     if not require_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
     global DB_STRICT
@@ -597,10 +706,18 @@ def cmd_run(args) -> int:
         if existing_offsets:
             chunks = load_chunks(run_dir)
             calendar_total = (chunks[0].get('calendar_row_count') or chunks[0].get('calendar_universe_count')) if chunks else None
+        elif args.from_stage == 'qc_chain_scan':
+            snapshot = run_dir / 'calendar_snapshot.json'
+            if not snapshot.exists():
+                print(json.dumps({'ok': False, 'status': 'MISSING_CALENDAR_SNAPSHOT_FOR_QC_CHAIN_START', 'from_stage': args.from_stage, 'run_dir': str(run_dir), 'required_artifact': str(snapshot)}, ensure_ascii=False, indent=2)); return 2
+            rows = json.loads(snapshot.read_text())
+            calendar_total = len(rows)
         else:
-            calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end, symbols)
+            calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end, symbols, args=args)
             existing_offsets.add(start_offset)
         offsets=[]
+        if args.from_stage == 'qc_chain_scan' and start_offset not in existing_offsets:
+            offsets.append(start_offset)
         if calendar_total:
             off = start_offset + args.chunk_size
             while off < int(calendar_total):
@@ -608,14 +725,23 @@ def cmd_run(args) -> int:
                     offsets.append(off)
                 off += args.chunk_size
             if args.max_chunks is not None:
-                remaining=max(0,args.max_chunks-1)
+                already_ran = len(existing_offsets) if args.from_stage == 'calendar' else 0
+                remaining=max(0,args.max_chunks-already_ran)
                 offsets=offsets[:remaining]
         if offsets and not args.resume:
             discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
             if discovery_delay > 0:
                 time.sleep(discovery_delay)
-        run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end, symbols)
+        run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end, symbols, args=args)
         summary = write_summary(run_dir, args.chunk_size, notify=False)
+        if args.to_stage == 'candidate_scan' and summary.get('status') == 'BLOCKED_HISTORICAL_OPTION_PNL_GATE':
+            summary['ok'] = True
+            summary['status'] = 'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL'
+            summary['historical_gate_blocked'] = False
+            summary['candidate_scan_only'] = True
+            fp = run_dir/'full_summary.json'
+            if fp.exists():
+                fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
         if mb is not None:
             fp=run_dir/'full_summary.json'
@@ -623,7 +749,7 @@ def cmd_run(args) -> int:
                 summary=json.loads(fp.read_text())
             summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel, 'years': args.years}
             fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
-        summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params
+        summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params; summary['stage_range'] = {'from_stage': args.from_stage, 'to_stage': args.to_stage}
         persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
         db_after = latest_db_run(campaign_id)
         if not db_after or db_after.get('run_id') != run_id:
@@ -785,6 +911,46 @@ VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(
     print(json.dumps({'ok': True, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'freed_bytes': freed, 'policy': policy}, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
+def add_stage_parameter_args(sp):
+    # Pipeline stage addressing: keep one CLI/pipeline, but allow resuming from any implemented stage.
+    sp.add_argument('--as-of-date', help='Calendar/valuation date anchor, YYYY-MM-DD; defaults to today in the stage runner')
+    sp.add_argument('--calendar-from-days', type=int, default=21)
+    sp.add_argument('--calendar-to-days', type=int, default=28)
+    sp.add_argument('--calendar-source', default='nasdaq', choices=['nasdaq'])
+    # QC option universe knobs, mirroring the major QuantConnect option subscription/filter dimensions.
+    sp.add_argument('--qc-resolution', default='hour', choices=['tick','second','minute','hour','daily'])
+    sp.add_argument('--option-resolution', choices=['tick','second','minute','hour','daily'], help='Override option subscription resolution; defaults to --qc-resolution')
+    sp.add_argument('--min-expiry-after-earnings-days', type=int, default=1)
+    sp.add_argument('--max-expiry-after-earnings-days', type=int, default=7)
+    sp.add_argument('--min-expiration-days', type=int, default=0)
+    sp.add_argument('--max-expiration-days', type=int, default=120)
+    sp.add_argument('--strike-range', default='-50:300', help='QC SetFilter strike range, e.g. -50:300')
+    sp.add_argument('--option-right', default='call', choices=['call','put','both'])
+    sp.add_argument('--delta-range', help='Optional candidate gate, e.g. 0.05:0.35')
+    sp.add_argument('--iv-range', help='Optional candidate gate, e.g. 0.20:2.50')
+    sp.add_argument('--min-open-interest', type=int, help='Candidate gate; omit to keep current diagnostic-only OI behavior')
+    sp.add_argument('--min-volume', type=int, help='Candidate gate; omit to keep current diagnostic-only volume behavior')
+    sp.add_argument('--max-premium', type=float, help='Max option ask premium gate; default/env QC_MAX_PREMIUM is 0.50, allowed 0.01..5.00')
+    sp.add_argument('--min-bid', type=float, help='Min option bid gate; default/env QC_MIN_BID is 0.05')
+    sp.add_argument('--max-spread-pct', type=float, help='Max relative bid/ask spread gate; default/env QC_MAX_SPREAD_PCT is 0.60')
+    sp.add_argument('--min-relative-spread', type=float, help='Vol-aware spread floor; default/env QC_MIN_RELATIVE_SPREAD is 0.25')
+    sp.add_argument('--vol-spread-factor', type=float, help='Vol-aware spread factor; default/env QC_VOL_SPREAD_FACTOR is 0.50')
+    sp.add_argument('--expected-move-spread-fraction', type=float, help='Expected option move spread fraction; default/env QC_EXPECTED_MOVE_SPREAD_FRACTION is 0.15')
+    add_historical_parameter_args(sp)
+
+def add_historical_parameter_args(sp):
+    sp.add_argument('--entry-window', default='21:28', help='Days before earnings allowed for historical entry, e.g. 21:28')
+    sp.add_argument('--exit-days-before', default='1', help='Comma-separated pre-earnings exits to evaluate, e.g. 1,3,7')
+    sp.add_argument('--exit-policy', default='before-earnings', choices=['before-earnings','after-market-report-day-close'])
+    sp.add_argument('--historical-resolution', default='daily', choices=['daily','hour','minute'])
+    sp.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute'])
+    sp.add_argument('--quote-resolution', choices=['hour','minute'], help='Reserved for intraday validation stage')
+    sp.add_argument('--entry-time-policy', choices=['open','open+30m','midday','close'])
+    sp.add_argument('--exit-time-policy', choices=['close','before-close-30m','midday'])
+    sp.add_argument('--slippage-model', default='bidask', choices=['bidask','mid','bidask-plus-spread-fraction'])
+    sp.add_argument('--max-contracts', type=int)
+
+
 def build_parser():
     p = argparse.ArgumentParser(description='Deterministic earnings QC full-scan runner')
     sub = p.add_subparsers(dest='cmd')
@@ -793,11 +959,13 @@ def build_parser():
         sp.add_argument('--run-id')
         sp.add_argument('--campaign', default=DEFAULT_CAMPAIGN)
         sp.add_argument('--chunk-size', type=int, default=int(os.environ.get('QC_FULL_CHUNK_SIZE','25')))
-    r=sub.add_parser('run'); common(r); r.add_argument('--symbols', help='Comma-separated ticker symbols to scan from the Nasdaq calendar snapshot/window'); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--from-stage'); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
+    r=sub.add_parser('run'); common(r); r.add_argument('--symbols', help='Comma-separated ticker symbols to scan from the Nasdaq calendar snapshot/window'); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--from-stage'); r.add_argument('--to-stage'); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
+    add_stage_parameter_args(r)
     s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
     h=sub.add_parser('history'); h.add_argument('--campaign', default=DEFAULT_CAMPAIGN); h.add_argument('--last', type=int, default=10); h.add_argument('--pretty', action='store_true')
     ins=sub.add_parser('insights'); ins.add_argument('--campaign', default=DEFAULT_CAMPAIGN); ins.add_argument('--last', type=int, default=20); ins.add_argument('--pretty', action='store_true')
     hist=sub.add_parser('historical'); common(hist); hist.add_argument('--years', type=int, required=True); hist.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=True); hist.add_argument('--no-end-to-end', dest='end_to_end', action='store_false')
+    add_historical_parameter_args(hist)
     dec=sub.add_parser('decision'); dec_sub=dec.add_subparsers(dest='decision_cmd'); da=dec_sub.add_parser('add'); da.add_argument('--campaign', default=DEFAULT_CAMPAIGN); da.add_argument('--previous-run-id'); da.add_argument('--next-run-id'); da.add_argument('--actor', default='llm'); da.add_argument('--type', dest='decision_type', required=True); da.add_argument('--rationale', required=True); da.add_argument('--parameter-changes-json', default='{}')
     cl=sub.add_parser('cleanup'); cl.add_argument('--older-than-days', type=int, default=14); cl.add_argument('--keep-last', type=int, default=20); cl.add_argument('--dry-run', action='store_true')
     sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
