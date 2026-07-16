@@ -522,6 +522,24 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("calendar_snapshot.json", full)
         self.assertIn("--calendar-snapshot", full)
 
+    def test_symbol_filtered_runs_are_supported_by_public_cli_and_stage2(self):
+        scan = load_script("earnings-qc-options-scan")
+        full = load_script("earnings-qc-research")
+        self.assertEqual(full.normalize_symbols_arg(" aapl, MSFT;AAPL "), ["AAPL", "MSFT"])
+        self.assertEqual(scan.normalize_symbols_arg(" ttd,qbts "), ["TTD", "QBTS"])
+        rows = [
+            {"symbol": "TTD", "report_date": "2026-08-07"},
+            {"symbol": "QBTS", "report_date": "2026-08-06"},
+            {"symbol": "AAPL", "report_date": "2026-08-01"},
+        ]
+        self.assertEqual(scan.filter_calendar_rows_by_symbols(rows, ["QBTS", "TTD"]), rows[:2])
+        src_full = (SCRIPTS / "earnings-qc-research").read_text()
+        src_scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("r.add_argument('--symbols'", src_full)
+        self.assertIn("cmd += ['--symbols', ','.join(symbols)]", src_full)
+        self.assertIn("[--calendar-snapshot PATH] [--symbols AAPL,MSFT]", src_scan)
+        self.assertIn("'requested_symbols': requested_symbols", src_scan)
+
     def test_after_market_multiyear_exit_uses_report_day(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
         self.assertIn("normalized_report_time", multi)

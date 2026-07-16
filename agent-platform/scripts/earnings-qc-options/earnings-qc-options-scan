@@ -363,7 +363,30 @@ def qc_capability_probe(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
     return checks
 
 
-def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_offset: int | None = None, calendar_snapshot: str | None = None) -> int:
+def normalize_symbols_arg(symbols: str | None) -> list[str]:
+    if not symbols:
+        return []
+    out = []
+    seen = set()
+    for raw in symbols.replace(';', ',').split(','):
+        sym = raw.strip().upper()
+        if not sym:
+            continue
+        if not all(c.isalnum() or c in {'-', '_'} for c in sym):
+            raise SystemExit(f'invalid symbol for --symbols: {sym!r}')
+        if sym not in seen:
+            out.append(sym); seen.add(sym)
+    return out
+
+
+def filter_calendar_rows_by_symbols(calendar_rows: list[dict[str, Any]], symbols: list[str]) -> list[dict[str, Any]]:
+    if not symbols:
+        return calendar_rows
+    wanted = set(symbols)
+    return [r for r in calendar_rows if str(r.get('symbol') or '').upper() in wanted]
+
+
+def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_offset: int | None = None, calendar_snapshot: str | None = None, symbols_filter: list[str] | None = None) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     today = now.date()
     if qc_batch_limit is None:
@@ -381,6 +404,11 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         calendar_fetches = [{'source': 'full_scan_calendar_snapshot', 'path': calendar_snapshot, 'row_count_normalized': len(calendar_rows)}]
     else:
         calendar_rows, calendar_fetches = nasdaq_calendar_window(start, end)
+    requested_symbols = symbols_filter or []
+    if requested_symbols:
+        original_calendar_row_count = len(calendar_rows)
+        calendar_rows = filter_calendar_rows_by_symbols(calendar_rows, requested_symbols)
+        calendar_fetches.append({'source': 'symbols_filter', 'requested_symbols': requested_symbols, 'row_count_before_filter': original_calendar_row_count, 'row_count_after_filter': len(calendar_rows)})
     (run_dir/'calendar_rows.json').write_text(json.dumps(calendar_rows, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     symbols = sorted({r['symbol'] for r in calendar_rows})
     calendar_fetch_failed = (not bool(calendar_snapshot)) and any(m.get('error') or m.get('parse_error') for m in calendar_fetches)
@@ -439,6 +467,7 @@ def run_now(notify: bool = True, qc_batch_limit: int | None = None, qc_batch_off
         'calendar_sample': calendar_rows[:25],
         'calendar_fetches': calendar_fetches,
         'calendar_fetch_failed': calendar_fetch_failed,
+        'requested_symbols': requested_symbols,
         'qc_batch_limit': qc_batch_limit,
         'qc_batch_count': batch_n,
         'qc_processed_row_count': len((batch.get('parsed_result') or {}).get('rows') or []),
@@ -526,8 +555,12 @@ def main() -> int:
         if '--calendar-snapshot' in sys.argv:
             i = sys.argv.index('--calendar-snapshot')
             snapshot = sys.argv[i+1]
-        return run_now(notify=notify, qc_batch_limit=limit, qc_batch_offset=offset, calendar_snapshot=snapshot)
-    print('usage: earnings-qc-options-scan run-now [--no-outbox] [--qc-batch-limit N] [--qc-batch-offset N] [--calendar-snapshot PATH]', file=sys.stderr)
+        symbols = None
+        if '--symbols' in sys.argv:
+            i = sys.argv.index('--symbols')
+            symbols = normalize_symbols_arg(sys.argv[i+1])
+        return run_now(notify=notify, qc_batch_limit=limit, qc_batch_offset=offset, calendar_snapshot=snapshot, symbols_filter=symbols)
+    print('usage: earnings-qc-options-scan run-now [--no-outbox] [--qc-batch-limit N] [--qc-batch-offset N] [--calendar-snapshot PATH] [--symbols AAPL,MSFT]', file=sys.stderr)
     return 64
 
 if __name__ == '__main__':
