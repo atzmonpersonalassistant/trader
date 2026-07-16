@@ -1,10 +1,12 @@
 import contextlib
+import argparse
 import datetime
 import io
 import importlib.machinery
 import importlib.util
 import json
 import pathlib
+import sys
 import tempfile
 import types
 import unittest
@@ -596,6 +598,185 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("calls_only().strikes(-50, 300).expiration(0, 120)", scan)
         self.assertIn("trader.option_chain_slice_count", scan)
         self.assertIn("trader.option_chain_symbols_sample", scan)
+
+
+
+    def test_scanner_cli_accepts_max_premium_below_half_dollar(self):
+        mod = load_script("earnings-qc-options-scan")
+        captured = {}
+        mod.run_now = lambda **kwargs: captured.update(kwargs) or 0
+        old_argv = sys.argv
+        try:
+            sys.argv = ["earnings-qc-options-scan", "run-now", "--no-outbox", "--max-premium", "0.25", "--min-bid", "0.01"]
+            rc = mod.main()
+        finally:
+            sys.argv = old_argv
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["tuning"]["max_premium"], 0.25)
+        self.assertEqual(captured["tuning"]["min_bid"], 0.01)
+
+    def test_parse_stage2_params_is_idempotent_after_normalization(self):
+        mod = load_script("earnings-qc-options-scan")
+        raw = mod.parse_stage2_params(strike_range="-20:100", delta_range="0.05:0.35", iv_range="0.1:2.5", min_open_interest=10, min_volume=5)
+        again = mod.parse_stage2_params(**raw)
+        self.assertEqual(again["strike_min"], -20)
+        self.assertEqual(again["strike_max"], 100)
+        self.assertEqual(again["delta_min"], 0.05)
+        self.assertEqual(again["iv_max"], 2.5)
+        self.assertEqual(again["min_open_interest_gate"], 10)
+        self.assertEqual(again["min_volume_gate"], 5)
+
+
+
+
+    def test_cmd_run_candidate_scan_only_does_not_fail_historical_gate(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        mod.STATE_DIR = tmp / "state"
+        mod.require_research_db = lambda: True
+        mod.upsert_campaign = lambda *a, **k: None
+        mod.upsert_run = lambda *a, **k: None
+        mod.latest_db_run = lambda campaign: {"run_id": "rid", "run_dir": str(tmp)}
+        mod.discover_calendar_total = lambda *a, **k: 1
+        mod.run_chunks_parallel = lambda *a, **k: None
+        mod.write_summary = lambda run_dir, batch_size, notify=False: {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE", "forward_candidate_count": 1, "candidate_count": 0}
+        persisted = []
+        mod.persist_summary_to_db = lambda campaign_id, run_id, run_dir, summary, params: persisted.append(summary.copy())
+        mod.run_multiyear_if_requested = lambda *a, **k: None
+        args = mod.build_parser().parse_args(["run", "--run-dir", str(tmp), "--run-id", "rid", "--to-stage", "candidate-scan", "--no-end-to-end", "--no-outbox"])
+        rc = mod.cmd_run(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(persisted[-1]["status"], "OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL")
+        self.assertTrue(persisted[-1]["ok"])
+
+    def test_cmd_run_from_qc_chain_scan_runs_start_offset_from_snapshot(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "calendar_snapshot.json").write_text(json.dumps([{"symbol": "OPEN", "report_date": "2026-08-04"}]))
+        calls = []
+        mod.STATE_DIR = tmp / "state"
+        mod.require_research_db = lambda: True
+        mod.upsert_campaign = lambda *a, **k: None
+        mod.upsert_run = lambda *a, **k: None
+        mod.latest_db_run = lambda campaign: {"run_id": "rid", "run_dir": str(tmp)}
+        mod.run_chunks_parallel = lambda run_dir, offsets, batch_size, parallel, years, end_to_end, symbols, args=None: calls.append(list(offsets))
+        mod.write_summary = lambda run_dir, batch_size, notify=False: {"ok": True, "status": "OK_FULL_QC_SCAN"}
+        mod.persist_summary_to_db = lambda *a, **k: None
+        mod.run_multiyear_if_requested = lambda *a, **k: None
+        args = mod.build_parser().parse_args(["run", "--run-dir", str(tmp), "--run-id", "rid", "--from-stage", "qc-chain", "--to-stage", "candidate-scan", "--chunk-size", "25", "--max-chunks", "1", "--no-end-to-end"])
+        rc = mod.cmd_run(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [[0]])
+
+
+    def test_cmd_run_rejects_put_or_both_for_historical_until_supported(self):
+        mod = load_script("earnings-qc-research")
+        mod.require_research_db = lambda: (_ for _ in ()).throw(AssertionError("db should not be touched"))
+        for right in ["put", "both"]:
+            args = mod.build_parser().parse_args(["run", "--option-right", right, "--end-to-end"])
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = mod.cmd_run(args)
+            self.assertEqual(rc, 2)
+            self.assertIn("STAGE_NOT_IMPLEMENTED_FOR_HISTORICAL_OPTION_RIGHT", buf.getvalue())
+
+    def test_cmd_run_rejects_unimplemented_stage_ranges_before_db(self):
+        mod = load_script("earnings-qc-research")
+        mod.require_research_db = lambda: (_ for _ in ()).throw(AssertionError("db should not be touched"))
+        args = mod.build_parser().parse_args(["run", "--from-stage", "candidate-scan", "--to-stage", "candidate-scan"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = mod.cmd_run(args)
+        self.assertEqual(rc, 2)
+        self.assertIn("STAGE_NOT_IMPLEMENTED_FOR_RUN_START", buf.getvalue())
+        args = mod.build_parser().parse_args(["run", "--to-stage", "intraday"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = mod.cmd_run(args)
+        self.assertEqual(rc, 2)
+        self.assertIn("STAGE_NOT_IMPLEMENTED_FOR_RUN_TARGET", buf.getvalue())
+
+    def test_chunk_multiyear_forwards_historical_params(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        fake = tmp / "multi.py"
+        fake.write_text("#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({'ok': True, 'argv': sys.argv[1:]}))\n")
+        fake.chmod(0o755)
+        mod.MULTIYEAR = fake
+        chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday")
+        out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
+        argv = out["argv"]
+        self.assertIn("--entry-window", argv)
+        self.assertIn("14:28", argv)
+        self.assertIn("--historical-resolution", argv)
+        self.assertIn("minute", argv)
+        self.assertIn("--max-contracts", argv)
+        self.assertIn("3", argv)
+
+    def test_run_now_passes_calendar_window_and_stage2_params_to_probe(self):
+        mod = load_script("earnings-qc-options-scan")
+        calls = []
+        old_root = mod.REPORT_ROOT
+        mod.REPORT_ROOT = pathlib.Path(tempfile.mkdtemp())
+        mod.nasdaq_calendar_window = lambda start, end: ([{"symbol": "OPEN", "report_date": end.isoformat()}], [{"start": start.isoformat(), "end": end.isoformat()}])
+        mod.qc_capability_probe = lambda rows, run_dir, batch_limit, today, batch_offset=0, stage2_params=None, tuning=None: calls.append((rows, batch_limit, today, batch_offset, stage2_params, tuning)) or {"qc_option_chain_batch_diagnostic": {"ok": True, "runtime_statistics": {"trader.candidates": "0", "trader.symbols_input": "1"}, "symbols_requested": 1, "parsed_result": {"rows": [{"symbol": "OPEN"}]}}}
+        try:
+            rc = mod.run_now(notify=False, qc_batch_limit=1, as_of_date="2026-07-01", calendar_from_days=10, calendar_to_days=12, stage2_params={"option_resolution": "minute", "option_right": "both", "strike_range": "-20:100"}, tuning={"max_premium": 0.25, "min_bid": 0.01})
+        finally:
+            mod.REPORT_ROOT = old_root
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][2], datetime.date(2026, 7, 1))
+        self.assertEqual(calls[0][4]["option_resolution"], "minute")
+        self.assertEqual(calls[0][5]["max_premium"], 0.25)
+        result_files = list(mod.REPORT_ROOT.glob("*/result.json"))
+        self.assertEqual(result_files, [])
+
+    def test_research_cli_stage_addressable_rich_qc_params(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args([
+            "run", "--from-stage", "chain", "--to-stage", "candidate-scan",
+            "--symbols", "TTD,QBTS", "--qc-resolution", "daily", "--option-resolution", "hour",
+            "--strike-range", "-20:100", "--option-right", "both", "--delta-range", "0.05:0.35",
+            "--iv-range", "0.10:2.50", "--min-open-interest", "10", "--min-volume", "5", "--max-premium", "0.25", "--min-bid", "0.01",
+            "--no-end-to-end",
+        ])
+        params = mod.current_parameters(args)
+        self.assertEqual(args.from_stage, "chain")
+        self.assertEqual(args.to_stage, "candidate-scan")
+        self.assertEqual(params["qc_resolution"], "daily")
+        self.assertEqual(params["option_right"], "both")
+        self.assertEqual(params["delta_range"], "0.05:0.35")
+        self.assertEqual(params["max_premium"], 0.25)
+        self.assertEqual(params["min_bid"], 0.01)
+
+    def test_stage2_generated_qc_algorithm_uses_rich_parameters(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            datetime.date(2026, 7, 14),
+            stage2_params={
+                "qc_resolution": "daily",
+                "option_resolution": "hour",
+                "strike_range": "-20:100",
+                "option_right": "both",
+                "delta_range": "0.05:0.35",
+                "iv_range": "0.10:2.50",
+                "min_open_interest": 10,
+                "min_volume": 5,
+            },
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.add_equity(ticker, Resolution.DAILY)", main)
+        self.assertIn("self.add_option(ticker, Resolution.HOUR)", main)
+        self.assertIn("strikes(-20, 100).expiration(0, 120)", main)
+        self.assertIn("self.option_right = 'both'", main)
+        self.assertIn("self.delta_min = 0.05", main)
+        self.assertIn("failure_reasons.append(\"delta_out_of_range\")", main)
+        self.assertIn("failure_reasons.append(\"low_open_interest\")", main)
 
 
 if __name__ == "__main__":
