@@ -128,7 +128,7 @@ def current_parameters(args=None) -> dict:
     keys = ['QC_MAX_PREMIUM','QC_MIN_BID','QC_MAX_SPREAD_PCT','QC_MIN_RELATIVE_SPREAD','QC_VOL_SPREAD_FACTOR','QC_EXPECTED_MOVE_SPREAD_FRACTION','QC_FINAL_MIN_SAMPLE_SIZE','QC_FINAL_MIN_WIN_RATE']
     d = {k: os.environ.get(k) for k in keys if os.environ.get(k) is not None}
     if args is not None:
-        for k in ['chunk_size','parallel','years','end_to_end','start_offset','max_chunks','from_stage']:
+        for k in ['chunk_size','parallel','years','end_to_end','start_offset','max_chunks','from_stage','symbols']:
             if hasattr(args, k): d[k] = getattr(args, k)
     return d
 
@@ -323,10 +323,28 @@ VALUES (?, 'pending', ?, 'whatsapp', ?, ?, ?, ?, ?, 0)""", (
     con.commit(); con.close(); return True
 
 
-def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int) -> dict:
+def normalize_symbols_arg(symbols: str | None) -> list[str]:
+    if not symbols:
+        return []
+    out = []
+    seen = set()
+    for raw in symbols.replace(';', ',').split(','):
+        sym = raw.strip().upper()
+        if not sym:
+            continue
+        if not all(c.isalnum() or c in {'-', '_'} for c in sym):
+            raise SystemExit(f'invalid symbol for --symbols: {sym!r}')
+        if sym not in seen:
+            out.append(sym); seen.add(sym)
+    return out
+
+
+def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list[str] | None = None) -> dict:
     out_path = run_dir / f'chunk-{offset}.stdout.json'
     err_path = run_dir / f'chunk-{offset}.stderr.log'
     cmd = [str(SCANNER), 'run-now', '--no-outbox', '--qc-batch-limit', str(batch_size), '--qc-batch-offset', str(offset)]
+    if symbols:
+        cmd += ['--symbols', ','.join(symbols)]
     snapshot = run_dir / 'calendar_snapshot.json'
     if snapshot.exists():
         cmd += ['--calendar-snapshot', str(snapshot)]
@@ -381,8 +399,8 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int) -> dict 
     return mb
 
 
-def run_chunk_end_to_end(run_dir: pathlib.Path, offset: int, batch_size: int, years: int, end_to_end: bool) -> dict:
-    d = run_chunk(run_dir, offset, batch_size)
+def run_chunk_end_to_end(run_dir: pathlib.Path, offset: int, batch_size: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> dict:
+    d = run_chunk(run_dir, offset, batch_size, symbols)
     if end_to_end and d.get('ok') and d.get('candidate_details'):
         mb = run_chunk_multiyear(run_dir, d, years)
         d['chunk_multiyear_backtest'] = mb
@@ -501,9 +519,9 @@ def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) ->
     return summary
 
 
-def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool) -> int | None:
+def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> int | None:
     # Run one deterministic chunk first so we know and snapshot the Nasdaq calendar total/order.
-    d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end)
+    d = run_chunk_end_to_end(run_dir, start_offset, batch_size, years, end_to_end, symbols)
     report_dir = d.get('report_dir')
     src = pathlib.Path(report_dir) / 'calendar_rows.json' if report_dir else None
     if src and src.exists():
@@ -511,20 +529,20 @@ def discover_calendar_total(run_dir: pathlib.Path, batch_size: int, start_offset
     return d.get('calendar_row_count') or d.get('calendar_universe_count')
 
 
-def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: int, parallel: int, years: int, end_to_end: bool) -> None:
+def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: int, parallel: int, years: int, end_to_end: bool, symbols: list[str] | None = None) -> None:
     if not offsets:
         return
     parallel = max(1, int(parallel or 1))
     if parallel == 1:
         delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
         for i, off in enumerate(offsets):
-            run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end)
+            run_chunk_end_to_end(run_dir, off, batch_size, years, end_to_end, symbols)
             if delay > 0 and i < len(offsets) - 1:
                 time.sleep(delay)
         return
     # Conservative bounded parallelism for QC Cloud compile/backtest stability.
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as ex:
-        futs = {ex.submit(run_chunk_end_to_end, run_dir, off, batch_size, years, end_to_end): off for off in offsets}
+        futs = {ex.submit(run_chunk_end_to_end, run_dir, off, batch_size, years, end_to_end, symbols): off for off in offsets}
         for fut in concurrent.futures.as_completed(futs):
             off = futs[fut]
             try:
@@ -574,12 +592,13 @@ def cmd_run(args) -> int:
     calendar_total = None
     existing_offsets = {int(d.get('_chunk_offset') or 0) for d in load_chunks(run_dir)} if args.resume else set()
     start_offset = args.start_offset
+    symbols = normalize_symbols_arg(args.symbols)
     try:
         if existing_offsets:
             chunks = load_chunks(run_dir)
             calendar_total = (chunks[0].get('calendar_row_count') or chunks[0].get('calendar_universe_count')) if chunks else None
         else:
-            calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end)
+            calendar_total = discover_calendar_total(run_dir, args.chunk_size, start_offset, args.years, args.end_to_end, symbols)
             existing_offsets.add(start_offset)
         offsets=[]
         if calendar_total:
@@ -595,7 +614,7 @@ def cmd_run(args) -> int:
             discovery_delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
             if discovery_delay > 0:
                 time.sleep(discovery_delay)
-        run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end)
+        run_chunks_parallel(run_dir, offsets, args.chunk_size, args.parallel, args.years, args.end_to_end, symbols)
         summary = write_summary(run_dir, args.chunk_size, notify=False)
         mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
         if mb is not None:
@@ -774,7 +793,7 @@ def build_parser():
         sp.add_argument('--run-id')
         sp.add_argument('--campaign', default=DEFAULT_CAMPAIGN)
         sp.add_argument('--chunk-size', type=int, default=int(os.environ.get('QC_FULL_CHUNK_SIZE','25')))
-    r=sub.add_parser('run'); common(r); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--from-stage'); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
+    r=sub.add_parser('run'); common(r); r.add_argument('--symbols', help='Comma-separated ticker symbols to scan from the Nasdaq calendar snapshot/window'); r.add_argument('--max-chunks', type=int); r.add_argument('--start-offset', type=int, default=0); r.add_argument('--from-stage'); r.add_argument('--resume', action='store_true'); r.add_argument('--no-outbox', action='store_true'); r.add_argument('--parallel', type=int, default=int(os.environ.get('QC_FULL_PARALLEL','1'))); r.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); r.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); r.add_argument('--years', type=int, default=int(os.environ.get('QC_MULTIYEAR_YEARS','1')))
     s=sub.add_parser('status'); common(s); s.add_argument('--pretty', action='store_true')
     h=sub.add_parser('history'); h.add_argument('--campaign', default=DEFAULT_CAMPAIGN); h.add_argument('--last', type=int, default=10); h.add_argument('--pretty', action='store_true')
     ins=sub.add_parser('insights'); ins.add_argument('--campaign', default=DEFAULT_CAMPAIGN); ins.add_argument('--last', type=int, default=20); ins.add_argument('--pretty', action='store_true')
