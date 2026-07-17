@@ -263,6 +263,7 @@ jobs:
           awk '
             /# BEGIN trader managed daily earnings research/ {skip=1; next}
             /# END trader managed daily earnings research/ {skip=0; next}
+            /^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
