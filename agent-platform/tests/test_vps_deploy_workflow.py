@@ -32,7 +32,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('0 6 * * * /agents/research/bin/earnings-otm-daily.sh', workflow)
         self.assertIn('earnings-qc-research run', workflow)
         self.assertIn('--campaign daily-earnings-otm', workflow)
-        self.assertNotIn('0 9 * * * /agents/research/bin/earnings-otm-daily.sh', workflow)
+        self.assertIn(r'/^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}', workflow)
+        self.assertNotIn("'0 9 * * * /agents/research/bin/earnings-otm-daily.sh'", workflow)
         self.assertNotIn('earnings-qc-options-scan run-now', workflow)
 
     def test_research_postgres_cache_db_is_provisioned(self):
