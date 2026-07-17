@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -29,6 +30,10 @@ LEAN_WORKSPACE = Path(os.environ.get("TRADING_RESEARCH_LEAN_WORKSPACE", "/agents
 QC_CLOUD_RUN = os.environ.get("TRADING_QC_CLOUD_RUN", "/usr/local/bin/trading-research-qc-cloud-run")
 QC_EXTRACT = os.environ.get("TRADING_QC_API_EXTRACT", "/usr/local/bin/trading-research-qc-api-extract")
 QC_ENV = Path(os.environ.get("TRADING_QUANTCONNECT_ENV_FILE", "/etc/trading-agents/secrets/quantconnect/env"))
+RESEARCH_DB = Path(os.environ.get("TRADING_RESEARCH_DB", "/agents/research/state/research_backtests.db"))
+
+ALLOWED_BACKTEST_RESOLUTIONS = {"daily", "hour", "minute"}
+QC_RESOLUTION_NAMES = {"daily": "DAILY", "hour": "HOUR", "minute": "MINUTE"}
 
 ALLOWED_FAMILIES = {
     "bull_put_spread",
@@ -72,6 +77,83 @@ def parse_day(value: str, name: str) -> date:
     except ValueError as exc:
         raise ManifestError(f"{name} invalid date: {value}") from exc
 
+
+
+def normalize_backtest_resolution(value: Any) -> str:
+    resolution = str(value or "daily").strip().lower()
+    aliases = {"day": "daily", "d": "daily", "h": "hour", "hourly": "hour", "m": "minute", "min": "minute", "minutes": "minute"}
+    resolution = aliases.get(resolution, resolution)
+    require(resolution in ALLOWED_BACKTEST_RESOLUTIONS, "backtest resolution must be one of: daily, hour, minute")
+    return resolution
+
+
+def get_backtest_resolution(manifest: dict[str, Any]) -> str:
+    validation = manifest.get("validation") or {}
+    return normalize_backtest_resolution(validation.get("backtest_resolution", "daily"))
+
+
+def apply_resolution_override(manifest: dict[str, Any], resolution: str | None) -> dict[str, Any]:
+    if resolution is None:
+        return manifest
+    manifest = copy.deepcopy(manifest)
+    manifest.setdefault("validation", {})["backtest_resolution"] = normalize_backtest_resolution(resolution)
+    return manifest
+
+
+def init_research_db(db_path: Path | None = None) -> None:
+    db_path = db_path or RESEARCH_DB
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS research_backtests(
+                run_id TEXT PRIMARY KEY,
+                hypothesis_id TEXT NOT NULL,
+                strategy_family TEXT NOT NULL,
+                symbols_json TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                backtest_resolution TEXT NOT NULL CHECK(backtest_resolution IN ('daily','hour','minute')),
+                run_dir TEXT NOT NULL,
+                status TEXT NOT NULL,
+                project_id TEXT,
+                backtest_id TEXT,
+                verdict_status TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(research_backtests)")}
+        if "backtest_resolution" not in columns:
+            conn.execute("ALTER TABLE research_backtests ADD COLUMN backtest_resolution TEXT NOT NULL DEFAULT 'daily'")
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_research_backtests_resolution_updated
+            ON research_backtests(backtest_resolution, updated_at)
+        """)
+        try:
+            db_path.chmod(0o600)
+        except FileNotFoundError:
+            pass
+
+
+def record_research_backtest(manifest: dict[str, Any], run_dir: Path, status: str, *, project_id: str | None = None, backtest_id: str | None = None, verdict_status: str | None = None) -> None:
+    ts = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    resolution = get_backtest_resolution(manifest)
+    init_research_db()
+    with sqlite3.connect(RESEARCH_DB) as conn:
+        conn.execute("""
+            INSERT INTO research_backtests(run_id, hypothesis_id, strategy_family, symbols_json, start_date, end_date, backtest_resolution, run_dir, status, project_id, backtest_id, verdict_status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                status=excluded.status,
+                project_id=COALESCE(excluded.project_id, research_backtests.project_id),
+                backtest_id=COALESCE(excluded.backtest_id, research_backtests.backtest_id),
+                verdict_status=COALESCE(excluded.verdict_status, research_backtests.verdict_status),
+                updated_at=excluded.updated_at
+        """, (
+            run_dir.name, manifest["hypothesis"]["id"], manifest["strategy"]["family"],
+            json.dumps(manifest["universe"]["underlyings"], sort_keys=True), manifest["validation"]["start"], manifest["validation"]["end"],
+            resolution, str(run_dir), status, project_id, backtest_id, verdict_status, ts, ts,
+        ))
 
 def validate_manifest(m: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
@@ -137,8 +219,11 @@ def validate_manifest(m: dict[str, Any]) -> list[str]:
     require(start < end, "validation.start must be before validation.end")
     require(validation.get("candidate_requires_2018_present_or_oos") is True, "candidate gate must require 2018-present or OOS")
     require(validation.get("walk_forward_or_oos_required") is True, "candidate gate must require walk-forward/OOS")
+    resolution = get_backtest_resolution(m)
     max_variations = validation.get("max_variations")
     require(isinstance(max_variations, int) and 1 <= max_variations <= 50, "max_variations must be 1..50")
+    if resolution in {"hour", "minute"}:
+        warnings.append(f"{resolution} backtests use higher-resolution QC option QuoteBar data and may be slower/more expensive than daily runs")
     if start > date(2018, 1, 2):
         warnings.append("validation window starts after 2018; this run can be diagnostic/refine only, not candidate status")
 
@@ -189,6 +274,7 @@ def write_candidate_from_manifest(manifest: dict[str, Any], path: Path) -> None:
         "symbol": manifest["universe"]["underlyings"][0],
         "start": manifest["validation"]["start"],
         "end": manifest["validation"]["end"],
+        "backtest_resolution": get_backtest_resolution(manifest),
         "payoff_objective": manifest.get("payoff_objective"),
         "manifest_driven": True,
     }
@@ -201,6 +287,8 @@ def generate_qc_algorithm(manifest: dict[str, Any]) -> str:
     start = manifest["validation"]["start"]
     end = manifest["validation"]["end"]
     family = manifest["strategy"]["family"]
+    resolution = get_backtest_resolution(manifest)
+    qc_resolution = QC_RESOLUTION_NAMES[resolution]
     target_multiple = manifest.get("payoff_objective", {}).get("target_multiple_per_year", 1)
     opt = manifest.get("option_filters") or {}
     dte_min = int(opt.get("dte_min", 21))
@@ -213,13 +301,13 @@ def generate_qc_algorithm(manifest: dict[str, Any]) -> str:
     low_delta = min(delta_min, delta_max)
     high_delta = max(delta_min, delta_max)
     if family == "bull_put_spread":
-        return _generate_bull_put_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta)
+        return _generate_bull_put_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta, resolution, qc_resolution)
     if family == "bull_call_spread":
-        return _generate_bull_call_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta)
-    return _generate_diagnostics_algorithm(symbols, start, end, family, target_multiple, dte_min, dte_max)
+        return _generate_bull_call_spread_algorithm(symbols, start, end, target_multiple, dte_min, dte_max, min_oi, min_vol, max_bid_ask_pct, low_delta, high_delta, resolution, qc_resolution)
+    return _generate_diagnostics_algorithm(symbols, start, end, family, target_multiple, dte_min, dte_max, resolution, qc_resolution)
 
 
-def _generate_diagnostics_algorithm(symbols: list[str], start: str, end: str, family: str, target_multiple: float, dte_min: int, dte_max: int) -> str:
+def _generate_diagnostics_algorithm(symbols: list[str], start: str, end: str, family: str, target_multiple: float, dte_min: int, dte_max: int, resolution: str, qc_resolution: str) -> str:
     symbols_literal = repr(symbols)
     return f'''# region imports
 from AlgorithmImports import *
@@ -239,14 +327,16 @@ class TraderManifestDiagnostics(QCAlgorithm):
         self.last_day_by_symbol = {{}}
         self.option_symbols = {{}}
         for name in self.symbol_names:
-            eq = self.add_equity(name, Resolution.DAILY)
+            eq = self.add_equity(name, Resolution.{qc_resolution})
             eq.set_data_normalization_mode(DataNormalizationMode.RAW)
-            opt = self.add_option(name, Resolution.DAILY)
+            opt = self.add_option(name, Resolution.{qc_resolution})
             opt.set_filter(lambda u: u.include_weeklys().expiration({dte_min}, {dte_max}).strikes(-20, 20))
             self.option_symbols[eq.symbol] = opt.symbol
         self.set_runtime_statistic("trader.manifest_family", self.strategy_family)
         self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
         self.set_runtime_statistic("trader.target_multiple_per_year", str({target_multiple!r}))
+        self.set_runtime_statistic("trader.backtest_resolution", "{resolution}")
+        self.set_runtime_statistic("trader.option_quote_resolution", "{resolution}")
 
     def on_data(self, data):
         for underlying, option_symbol in self.option_symbols.items():
@@ -286,7 +376,7 @@ class TraderManifestDiagnostics(QCAlgorithm):
 '''
 
 
-def _generate_bull_put_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float) -> str:
+def _generate_bull_put_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float, resolution: str, qc_resolution: str) -> str:
     symbols_literal = repr(symbols)
     return f'''# region imports
 from AlgorithmImports import *
@@ -306,9 +396,9 @@ class TraderBullPutSpreadManifest(QCAlgorithm):
         self.max_bid_ask_pct = {max_bid_ask_pct!r}
         self.delta_min = {delta_min!r}
         self.delta_max = {delta_max!r}
-        self.underlying = self.add_equity(self.symbol_names[0], Resolution.DAILY).symbol
+        self.underlying = self.add_equity(self.symbol_names[0], Resolution.{qc_resolution}).symbol
         self.securities[self.underlying].set_data_normalization_mode(DataNormalizationMode.RAW)
-        opt = self.add_option(self.symbol_names[0], Resolution.DAILY)
+        opt = self.add_option(self.symbol_names[0], Resolution.{qc_resolution})
         opt.set_filter(lambda u: u.include_weeklys().puts_only().expiration(self.dte_min, self.dte_max).strikes(-30, 5))
         self.option_symbol = opt.symbol
         self.sma200 = self.sma(self.underlying, 200, Resolution.DAILY)
@@ -339,6 +429,8 @@ class TraderBullPutSpreadManifest(QCAlgorithm):
         self.set_runtime_statistic("trader.manifest_family", "bull_put_spread")
         self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
         self.set_runtime_statistic("trader.target_multiple_per_year", str(self.target_multiple))
+        self.set_runtime_statistic("trader.backtest_resolution", "{resolution}")
+        self.set_runtime_statistic("trader.option_quote_resolution", "{resolution}")
         self.set_runtime_statistic("trader.template", "bull_put_spread_v1")
 
     def on_data(self, data):
@@ -528,7 +620,7 @@ class TraderBullPutSpreadManifest(QCAlgorithm):
 '''
 
 
-def _generate_bull_call_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float) -> str:
+def _generate_bull_call_spread_algorithm(symbols: list[str], start: str, end: str, target_multiple: float, dte_min: int, dte_max: int, min_oi: int, min_vol: int, max_bid_ask_pct: float, delta_min: float, delta_max: float, resolution: str, qc_resolution: str) -> str:
     symbols_literal = repr(symbols)
     return f'''# region imports
 from AlgorithmImports import *
@@ -548,9 +640,9 @@ class TraderBullCallSpreadManifest(QCAlgorithm):
         self.max_bid_ask_pct = {max_bid_ask_pct!r}
         self.delta_min = {delta_min!r}
         self.delta_max = {delta_max!r}
-        self.underlying = self.add_equity(self.symbol_names[0], Resolution.DAILY).symbol
+        self.underlying = self.add_equity(self.symbol_names[0], Resolution.{qc_resolution}).symbol
         self.securities[self.underlying].set_data_normalization_mode(DataNormalizationMode.RAW)
-        opt = self.add_option(self.symbol_names[0], Resolution.DAILY)
+        opt = self.add_option(self.symbol_names[0], Resolution.{qc_resolution})
         opt.set_filter(lambda u: u.include_weeklys().calls_only().expiration(self.dte_min, self.dte_max).strikes(-5, 30))
         self.option_symbol = opt.symbol
         self.sma50 = self.sma(self.underlying, 50, Resolution.DAILY)
@@ -582,6 +674,8 @@ class TraderBullCallSpreadManifest(QCAlgorithm):
         self.set_runtime_statistic("trader.manifest_family", "bull_call_spread")
         self.set_runtime_statistic("trader.manifest_symbols", ",".join(self.symbol_names))
         self.set_runtime_statistic("trader.target_multiple_per_year", str(self.target_multiple))
+        self.set_runtime_statistic("trader.backtest_resolution", "{resolution}")
+        self.set_runtime_statistic("trader.option_quote_resolution", "{resolution}")
         self.set_runtime_statistic("trader.template", "bull_call_spread_v1")
 
     def on_data(self, data):
@@ -883,7 +977,7 @@ def verdict_from_extract(extract: dict[str, Any], warnings: list[str]) -> dict[s
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    manifest = load_json(Path(args.manifest))
+    manifest = apply_resolution_override(load_json(Path(args.manifest)), getattr(args, "backtest_resolution", None))
     warnings = validate_manifest(manifest)
     print(json.dumps({"ok": True, "warnings": warnings}, ensure_ascii=False, indent=2))
     return 0
@@ -898,7 +992,7 @@ def normalize_qc_run_id(run_id: str) -> str:
 
 def cmd_prepare(args: argparse.Namespace) -> int:
     manifest_path = Path(args.manifest)
-    manifest = load_json(manifest_path)
+    manifest = apply_resolution_override(load_json(manifest_path), args.backtest_resolution)
     warnings = validate_manifest(manifest)
     run_id = args.run_id or f"qc-run-{manifest['hypothesis']['id']}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
     safe_id = normalize_qc_run_id(run_id)
@@ -917,7 +1011,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     (project_dir / "main.py").write_text(generate_qc_algorithm(manifest), encoding="utf-8")
     _update_project_metadata(project_dir, manifest)
     _archive_project(project_dir, run_dir / "qc_cloud_project.tgz")
-    result = {"ok": True, "run_dir": str(run_dir), "project_ref": cloud_manifest.get("project_ref"), "warnings": warnings}
+    resolution = get_backtest_resolution(manifest)
+    cloud_manifest["backtest_resolution"] = resolution
+    (run_dir / "qc_cloud_run_manifest.json").write_text(json.dumps(cloud_manifest, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+    record_research_backtest(manifest, run_dir, "prepared")
+    result = {"ok": True, "run_dir": str(run_dir), "project_ref": cloud_manifest.get("project_ref"), "backtest_resolution": resolution, "warnings": warnings}
     (run_dir / "qc_run_prepare.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
@@ -1062,7 +1160,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         if log_path.exists():
             text += "\n" + log_path.read_text(encoding="utf-8", errors="replace")
     project_id, backtest_id = parse_backtest_ids(text)
-    result: dict[str, Any] = {"ok": False, "submit_returncode": rc, "run_dir": str(run_dir), "projectId": project_id, "backtestId": backtest_id}
+    result: dict[str, Any] = {"ok": False, "submit_returncode": rc, "run_dir": str(run_dir), "projectId": project_id, "backtestId": backtest_id, "backtest_resolution": get_backtest_resolution(manifest)}
     final_rc = rc
     evidence_ok = False
     if rc == 0 and not (project_id and backtest_id):
@@ -1087,6 +1185,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             result["evidence_error"] = "backtest extract failed or did not create qc_backtest_extract.json"
             final_rc = 1
     result["ok"] = rc == 0 and evidence_ok
+    record_research_backtest(manifest, run_dir, "completed" if result["ok"] else "failed", project_id=project_id, backtest_id=backtest_id, verdict_status=result.get("verdict"))
     (run_dir / "qc_run_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     summary = run_dir / "qc_cloud_run_summary.md"
     status = "completed" if rc == 0 else "failed"
@@ -1208,7 +1307,7 @@ def _score_summary(summary: dict[str, Any]) -> float:
 
 
 def cmd_sweep(args: argparse.Namespace) -> int:
-    manifest = load_json(Path(args.manifest))
+    manifest = apply_resolution_override(load_json(Path(args.manifest)), args.backtest_resolution)
     warnings = validate_manifest(manifest)
     max_runs = max(1, min(int(args.max_runs), int(manifest.get("validation", {}).get("max_variations", args.max_runs))))
     sweep_id = args.sweep_id or f"qc-sweep-{manifest['hypothesis']['id']}-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}"
@@ -1252,10 +1351,12 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate")
     v.add_argument("manifest")
+    v.add_argument("--backtest-resolution", choices=sorted(ALLOWED_BACKTEST_RESOLUTIONS), help="Override validation.backtest_resolution for CLI validation")
     v.set_defaults(func=cmd_validate)
     pr = sub.add_parser("prepare")
     pr.add_argument("manifest")
     pr.add_argument("--run-id")
+    pr.add_argument("--backtest-resolution", choices=sorted(ALLOWED_BACKTEST_RESOLUTIONS), help="Override validation.backtest_resolution and generate QC code at daily/hour/minute QuoteBar resolution")
     pr.set_defaults(func=cmd_prepare)
     rn = sub.add_parser("run")
     rn.add_argument("run_dir")
@@ -1263,6 +1364,7 @@ def main() -> int:
     sw = sub.add_parser("sweep")
     sw.add_argument("manifest")
     sw.add_argument("--sweep-id")
+    sw.add_argument("--backtest-resolution", choices=sorted(ALLOWED_BACKTEST_RESOLUTIONS), help="Override validation.backtest_resolution for all sweep variations")
     sw.add_argument("--max-runs", type=int, default=3)
     sw.add_argument("--execute", action="store_true")
     sw.add_argument("--sleep-seconds", type=int, default=300)
