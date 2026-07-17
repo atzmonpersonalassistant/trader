@@ -71,7 +71,8 @@
         "candidate_requires_2018_present_or_oos": {"type": "boolean", "const": true},
         "walk_forward_or_oos_required": {"type": "boolean", "const": true},
         "max_variations": {"type": "integer", "minimum": 1, "maximum": 50},
-        "timeframe_label": {"type": "string", "maxLength": 80}
+        "timeframe_label": {"type": "string", "maxLength": 80},
+        "backtest_resolution": {"type": "string", "enum": ["daily", "hour", "minute"], "default": "daily"}
       }
     },
     "payoff_objective": {

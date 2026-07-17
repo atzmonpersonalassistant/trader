@@ -41,6 +41,45 @@ The research agent should treat QuantConnect as the primary research/backtest pl
      - `candidate_for_validator_review`.
    - Never output a trade recommendation from a weak or technically blocked run.
 
+
+## Backtest resolution support
+
+The mandate-aware QC runner supports end-to-end backtest resolution selection at three levels:
+
+- `daily` — default, cheapest/coarsest validation.
+- `hour` — higher-resolution option/equity QuoteBar validation when entry/exit timing matters.
+- `minute` — highest-resolution supported mode for short-dated/timing-sensitive validation; expect slower and more expensive QC runs.
+
+Resolution can be set either in the manifest:
+
+```json
+"validation": {
+  "start": "2018-01-03",
+  "end": "2026-01-01",
+  "backtest_resolution": "hour",
+  "candidate_requires_2018_present_or_oos": true,
+  "walk_forward_or_oos_required": true,
+  "max_variations": 1
+}
+```
+
+or overridden at the CLI:
+
+```bash
+trading-research-qc-run validate manifest.json --backtest-resolution minute
+trading-research-qc-run prepare manifest.json --backtest-resolution hour
+trading-research-qc-run sweep manifest.json --backtest-resolution daily
+```
+
+The runner persists the selected resolution into:
+
+- `candidate.json` as `backtest_resolution`;
+- `qc_cloud_run_manifest.json` as `backtest_resolution`;
+- generated QC runtime statistics: `trader.backtest_resolution` and `trader.option_quote_resolution`;
+- SQLite DB table `research_backtests.backtest_resolution` at `$TRADING_RESEARCH_DB` or `/agents/research/state/research_backtests.db`.
+
+Indicators such as SMA/RSI may still use daily bars inside a higher-resolution backtest; the option/equity subscriptions used for trading and QuoteBar-driven option-chain data follow the chosen resolution.
+
 ## Platform workspace layout
 
 - Role-private Lean workspaces live at `/agents/{research,coding,review,validator}/lean-workspace`.
