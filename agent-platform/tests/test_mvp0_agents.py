@@ -158,6 +158,176 @@ class MVP0AgentTests(unittest.TestCase):
 
 
 
+
+    def test_qc_runner_diagnostics_honors_explicit_contract_cap(self):
+        qc = load("trading_research_qc_run_diagnostics_cap", "agent-platform/scripts/trading-research-qc-run")
+        manifest = {
+            "version": 1,
+            "hypothesis": {"id": "diagnostics-cap-test", "title": "Diagnostics cap test", "description": "Validate diagnostics cap."},
+            "strategy": {"asset_class": "options", "family": "diagnostic_only", "structure": "Diagnostic", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"], "benchmark": "SPY"},
+            "option_filters": {"dte_min": 7, "dte_max": 30, "delta_min": -0.25, "delta_max": -0.08, "max_bid_ask_pct": 0.35, "min_open_interest": 0, "min_volume": 0, "max_contracts_considered": 123},
+            "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1},
+            "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "income", "must_not_override_evidence": True},
+            "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        code = qc.generate_qc_algorithm(manifest)
+        self.assertIn("contracts = list(chain)[:123]", code)
+        compile(code, "<generated-qc-diagnostics-cap>", "exec")
+
+    def test_qc_runner_strategy_knobs_are_manifest_configurable_in_generated_qc_code(self):
+        qc = load("trading_research_qc_run_strategy_config", "agent-platform/scripts/trading-research-qc-run")
+        manifest = {
+            "version": 1,
+            "hypothesis": {"id": "strategy-config-test", "title": "Strategy config test", "description": "Validate configurable QC strategy knobs."},
+            "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "Defined-risk bull put spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"], "benchmark": "SPY"},
+            "option_filters": {
+                "dte_min": 7, "dte_max": 30, "delta_min": -0.25, "delta_max": -0.08,
+                "max_bid_ask_pct": 0.35, "min_open_interest": 0, "min_volume": 0,
+                "spread_width": 10, "strike_range_min": -40, "strike_range_max": 10,
+                "max_contracts_considered": 123, "max_short_candidates": 7, "max_long_candidates": 4,
+                "min_credit": 0.2, "max_credit_to_width": 0.3
+            },
+            "backtest_config": {
+                "cash": 123456, "position_size": 2, "per_contract_fee": 0.65, "slippage_pct": 0.01,
+                "fill_price_buffer_pct": 0.02, "trend_sma_period": 150, "rsi_period": 10, "warmup_days": 180,
+                "entry_rsi_min": 40, "entry_rsi_max": 70, "profit_target_debit_pct": 0.25,
+                "stop_loss_max_loss_pct": 0.7, "exit_dte": 5, "require_iv": True, "min_iv": 0.1, "max_iv": 1.5
+            },
+            "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1},
+            "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "income", "must_not_override_evidence": True},
+            "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        qc.validate_manifest(manifest)
+        code = qc.generate_qc_algorithm(manifest)
+        compile(code, "<generated-qc-strategy-config>", "exec")
+        self.assertIn("set_cash(123456.0)", code)
+        self.assertIn("strikes(-40, 10)", code)
+        self.assertIn("self.trend_sma = self.sma(self.underlying, 150", code)
+        self.assertIn("self.rsi = self.rsi(self.underlying, 10", code)
+        self.assertIn("self.set_warmup(180, Resolution.DAILY)", code)
+        self.assertIn("contracts = list(chain)[:200]", code)
+        self.assertIn("contracts = [c for c in list(chain)[:123]", code)
+        self.assertIn("viable[:7]", code)
+        self.assertIn("longs[:4]", code)
+        self.assertIn("self.buy(strategy, 2", code)
+        self.assertIn("credit <= 0.2 or credit > width * 0.3", code)
+        self.assertIn("credit * 0.25", code)
+        self.assertIn("max_loss * 0.7", code)
+        self.assertIn("dte <= 5", code)
+        self.assertIn("self.require_iv = True", code)
+        self.assertIn("trader.fees_slippage", code)
+
+    def test_qc_runner_bull_call_strategy_knobs_are_manifest_configurable_in_generated_qc_code(self):
+        qc = load("trading_research_qc_run_bull_call_strategy_config", "agent-platform/scripts/trading-research-qc-run")
+        manifest = {
+            "version": 1,
+            "hypothesis": {"id": "bull-call-config", "title": "Bull call config", "description": "Validate configurable bull call QC strategy knobs."},
+            "strategy": {"asset_class": "options", "family": "bull_call_spread", "structure": "Defined-risk bull call spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"], "benchmark": "SPY"},
+            "option_filters": {
+                "dte_min": 7, "dte_max": 30, "delta_min": 0.35, "delta_max": 0.65,
+                "max_bid_ask_pct": 0.35, "min_open_interest": 0, "min_volume": 0,
+                "spread_width": 10, "strike_range_min": -8, "strike_range_max": 40,
+                "max_contracts_considered": 111, "max_short_candidates": 6, "max_long_candidates": 3,
+                "max_debit_to_width": 0.42
+            },
+            "backtest_config": {
+                "cash": 234567, "position_size": 3, "fast_sma_period": 20, "trend_sma_period": 120,
+                "rsi_period": 9, "warmup_days": 160, "entry_rsi_min": 45, "entry_rsi_max": 75,
+                "profit_target_debit_pct": 0.8, "stop_loss_debit_pct": 0.35, "exit_dte": 4,
+                "require_iv": True, "min_iv": 0.12, "max_iv": 1.2
+            },
+            "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1},
+            "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "balanced_positive_expectancy", "must_not_override_evidence": True},
+            "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        qc.validate_manifest(manifest)
+        code = qc.generate_qc_algorithm(manifest)
+        compile(code, "<generated-qc-bull-call-strategy-config>", "exec")
+        self.assertIn("set_cash(234567.0)", code)
+        self.assertIn("strikes(-8, 40)", code)
+        self.assertIn("self.fast_sma = self.sma(self.underlying, 20", code)
+        self.assertIn("self.trend_sma = self.sma(self.underlying, 120", code)
+        self.assertIn("self.rsi = self.rsi(self.underlying, 9", code)
+        self.assertIn("contracts = list(chain)[:200]", code)
+        self.assertIn("contracts = [c for c in list(chain)[:111]", code)
+        self.assertIn("for long_call in viable[:3]", code)
+        self.assertIn("shorts = [c for c in contracts", code)
+        self.assertIn("and passes_iv_gate(c)", code)
+        self.assertIn("for short_call in shorts[:6]", code)
+        self.assertIn("self.buy(strategy, 3", code)
+        self.assertIn("debit >= width * 0.42", code)
+        self.assertIn("max_gain * 0.8", code)
+        self.assertIn("debit * 0.35", code)
+        self.assertIn("dte <= 4", code)
+        self.assertIn("self.require_iv = True", code)
+        self.assertIn("iv < self.min_iv", code)
+
+    def test_qc_runner_strategy_config_preserves_bull_call_defaults_and_rejects_bad_bounds(self):
+        qc = load("trading_research_qc_run_strategy_config_defaults", "agent-platform/scripts/trading-research-qc-run")
+        manifest = {
+            "version": 1,
+            "hypothesis": {"id": "bull-call-defaults", "title": "Bull call defaults", "description": "Validate bull call default preservation and config bounds."},
+            "strategy": {"asset_class": "options", "family": "bull_call_spread", "structure": "Defined-risk bull call spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"]},
+            "option_filters": {"dte_min": 7, "dte_max": 30, "delta_min": 0.35, "delta_max": 0.65, "max_bid_ask_pct": 0.35, "min_open_interest": 0, "min_volume": 0},
+            "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1},
+            "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "balanced_positive_expectancy", "must_not_override_evidence": True},
+            "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        code = qc.generate_qc_algorithm(manifest)
+        self.assertIn("debit >= width * 0.8", code)
+        self.assertIn("max_gain * 0.65", code)
+        self.assertIn("debit * 0.45", code)
+        bad = json.loads(json.dumps(manifest))
+        bad["backtest_config"] = {"position_size": 0}
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["option_filters"]["max_debit_to_width"] = 1.5
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["option_filters"]["spread_width"] = 1000
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["option_filters"]["spread_width_tolerance"] = 1000
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["backtest_config"] = {"not_in_schema": 1}
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        for invalid_config in (False, 0, "", []):
+            bad = json.loads(json.dumps(manifest))
+            bad["backtest_config"] = invalid_config
+            with self.assertRaises(qc.ManifestError):
+                qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["backtest_config"] = {"cash": float("inf")}
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["option_filters"]["max_bid_ask_pct"] = float("inf")
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        bad = json.loads(json.dumps(manifest))
+        bad["backtest_config"] = {"stop_loss_max_loss_pct": 0.7}
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(bad)
+        put_manifest = json.loads(json.dumps(manifest))
+        put_manifest["strategy"]["family"] = "bull_put_spread"
+        put_manifest["backtest_config"] = {"stop_loss_debit_pct": 0.7}
+        with self.assertRaises(qc.ManifestError):
+            qc.validate_manifest(put_manifest)
+
     def test_qc_runner_supports_daily_hour_minute_resolution_cli_db_and_qc_code(self):
         qc = load("trading_research_qc_run_resolution", "agent-platform/scripts/trading-research-qc-run")
         base = {
@@ -727,7 +897,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("one_backtest_at_a_time", text)
         self.assertIn("_generate_bull_call_spread_algorithm", text)
         self.assertIn("bull_call_spread_v1", text)
-        self.assertIn('tickets = self.buy(strategy, 1, asynchronous=False, tag="manifest bull put spread")', text)
+        self.assertIn('tickets = self.buy(strategy, {cfg["position_size"]}, asynchronous=False, tag="manifest bull put spread")', text)
         self.assertLess(text.index('self.liquidate(short_symbol, "exit bull call short leg")'), text.index('self.liquidate(long_symbol, "exit bull call long leg")'))
         self.assertIn("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", text)
         self.assertIn("login.returncode != 0", text)

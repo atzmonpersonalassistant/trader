@@ -80,6 +80,51 @@ The runner persists the selected resolution into:
 
 Indicators such as SMA/RSI may still use daily bars inside a higher-resolution backtest; the option/equity subscriptions used for trading and QuoteBar-driven option-chain data follow the chosen resolution.
 
+## Configurable QC backtest mechanics
+
+The generated QC backtest templates should not hide strategy mechanics in code constants. These knobs can be supplied in the manifest while preserving conservative defaults:
+
+- `option_filters.spread_width` and `spread_width_tolerance` — target vertical width and accepted deviation.
+- `option_filters.strike_range_min/max` — QC option universe strike range.
+- `option_filters.max_contracts_considered`, `max_short_candidates`, `max_long_candidates` — chain/candidate search bounds.
+- `option_filters.min_credit`, `max_credit_to_width`, `max_debit_to_width` — spread pricing sanity gates.
+- `backtest_config.cash` and `position_size` — portfolio cash and contracts per spread.
+- `backtest_config.trend_sma_period`, `fast_sma_period`, `rsi_period`, `warmup_days` — indicator periods/warmup.
+- `backtest_config.require_price_above_trend_sma`, `require_price_above_fast_sma`, `entry_rsi_min/max` — entry filters.
+- `backtest_config.profit_target_debit_pct`, `stop_loss_max_loss_pct`, `stop_loss_debit_pct`, `exit_dte` — exit rules.
+- `backtest_config.per_contract_fee`, `slippage_pct`, `fill_price_buffer_pct` — recorded as fees/slippage assumptions for now; wire to custom QC fill/fee models before treating them as fully simulated.
+- `backtest_config.require_iv`, `min_iv`, `max_iv`, `require_iv_skew_proxy`, `min_iv_skew_abs`, `require_term_structure_proxy`, `min_term_structure_abs` — pricing diagnostics/gates. Current templates enforce IV range directly; skew/term-structure fields are persisted as explicit runtime config until a robust chain-level implementation is added.
+
+Example:
+
+```json
+"option_filters": {
+  "dte_min": 7,
+  "dte_max": 30,
+  "delta_min": -0.25,
+  "delta_max": -0.08,
+  "spread_width": 10,
+  "strike_range_min": -40,
+  "strike_range_max": 10,
+  "min_credit": 0.2
+},
+"backtest_config": {
+  "cash": 100000,
+  "position_size": 1,
+  "trend_sma_period": 200,
+  "rsi_period": 14,
+  "entry_rsi_min": 35,
+  "entry_rsi_max": 100,
+  "profit_target_debit_pct": 0.35,
+  "stop_loss_max_loss_pct": 0.6,
+  "exit_dte": 7,
+  "require_iv": true,
+  "min_iv": 0.1,
+  "max_iv": 1.5
+}
+```
+
+
 ## Platform workspace layout
 
 - Role-private Lean workspaces live at `/agents/{research,coding,review,validator}/lean-workspace`.

@@ -58,7 +58,47 @@
         "delta_max": {"type": "number", "minimum": -1, "maximum": 1},
         "max_bid_ask_pct": {"type": "number", "minimum": 0, "maximum": 1},
         "min_open_interest": {"type": "integer", "minimum": 0},
-        "min_volume": {"type": "integer", "minimum": 0}
+        "min_volume": {"type": "integer", "minimum": 0},
+        "spread_width": {"type": "number", "exclusiveMinimum": 0, "maximum": 100},
+        "spread_width_tolerance": {"type": "number", "minimum": 0, "maximum": 100},
+        "strike_range_min": {"type": "integer", "minimum": -200, "maximum": 200},
+        "strike_range_max": {"type": "integer", "minimum": -200, "maximum": 200},
+        "max_contracts_considered": {"type": "integer", "minimum": 1, "maximum": 5000},
+        "max_short_candidates": {"type": "integer", "minimum": 1, "maximum": 500},
+        "max_long_candidates": {"type": "integer", "minimum": 1, "maximum": 500},
+        "min_credit": {"type": "number", "minimum": 0},
+        "max_credit_to_width": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_debit_to_width": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "backtest_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cash": {"type": "number", "exclusiveMinimum": 0},
+        "position_size": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "per_contract_fee": {"type": "number", "minimum": 0, "maximum": 100},
+        "slippage_pct": {"type": "number", "minimum": 0, "maximum": 1},
+        "fill_price_buffer_pct": {"type": "number", "minimum": 0, "maximum": 1},
+        "trend_sma_period": {"type": "integer", "minimum": 2, "maximum": 500},
+        "fast_sma_period": {"type": "integer", "minimum": 2, "maximum": 500},
+        "rsi_period": {"type": "integer", "minimum": 2, "maximum": 100},
+        "warmup_days": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "require_price_above_trend_sma": {"type": "boolean"},
+        "require_price_above_fast_sma": {"type": "boolean"},
+        "entry_rsi_min": {"type": "number", "minimum": 0, "maximum": 100},
+        "entry_rsi_max": {"type": "number", "minimum": 0, "maximum": 100},
+        "profit_target_debit_pct": {"type": "number", "minimum": 0, "maximum": 2},
+        "stop_loss_max_loss_pct": {"type": "number", "minimum": 0, "maximum": 5},
+        "stop_loss_debit_pct": {"type": "number", "minimum": 0, "maximum": 2},
+        "exit_dte": {"type": "integer", "minimum": 0, "maximum": 365},
+        "require_iv": {"type": "boolean"},
+        "min_iv": {"type": "number", "minimum": 0, "maximum": 10},
+        "max_iv": {"type": "number", "minimum": 0, "maximum": 10},
+        "require_iv_skew_proxy": {"type": "boolean"},
+        "min_iv_skew_abs": {"type": "number", "minimum": 0, "maximum": 10},
+        "require_term_structure_proxy": {"type": "boolean"},
+        "min_term_structure_abs": {"type": "number", "minimum": 0, "maximum": 10}
       }
     },
     "validation": {
