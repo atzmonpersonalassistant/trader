@@ -25,6 +25,15 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('agent-platform/scripts/earnings-qc-options/earnings-qc-options-full-scan', workflow)
         self.assertNotIn('/agents/research/bin/earnings-qc-options-scan --help', workflow)
         self.assertNotIn('/agents/research/bin/earnings-qc-options-full-scan --help', workflow)
+        self.assertIn('/agents/research/bin/earnings-otm-daily.sh', workflow)
+        self.assertIn('export HOME=/home/agent-research', workflow)
+        self.assertIn('# BEGIN trader managed daily earnings research', workflow)
+        self.assertIn('# END trader managed daily earnings research', workflow)
+        self.assertIn('0 6 * * * /agents/research/bin/earnings-otm-daily.sh', workflow)
+        self.assertIn('earnings-qc-research run', workflow)
+        self.assertIn('--campaign daily-earnings-otm', workflow)
+        self.assertNotIn('0 9 * * * /agents/research/bin/earnings-otm-daily.sh', workflow)
+        self.assertNotIn('earnings-qc-options-scan run-now', workflow)
 
     def test_research_postgres_cache_db_is_provisioned(self):
         workflow = Path('.github/workflows/vps-deploy.yml').read_text()
