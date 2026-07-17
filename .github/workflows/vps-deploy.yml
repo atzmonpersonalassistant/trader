@@ -243,6 +243,36 @@ jobs:
           rm -f "$tmp_cron"
           sudo rm -f /usr/local/bin/earnings-qc-daily-run.sh /usr/local/bin/earnings-otm-daily-root.sh
           sudo rm -f /agents/research/bin/earnings-qc-options-full-scan /agents/research/bin/earnings-qc-options-scan /agents/research/bin/earnings-qc-multiyear-backtest
+          sudo install -d -o agent-research -g agent-research -m 750 /agents/research/state/earnings-qc-research /agents/research/logs/earnings-qc-research
+          sudo tee /agents/research/bin/earnings-otm-daily.sh >/dev/null <<'EOF_DAILY_EARNINGS'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export TZ=Asia/Jerusalem
+          export HOME=/home/agent-research
+          export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+          LOCK=/agents/research/state/earnings-qc-research/daily.lock
+          LOG_DIR=/agents/research/logs/earnings-qc-research
+          mkdir -p /agents/research/state/earnings-qc-research "$LOG_DIR"
+          exec flock -n "$LOCK" earnings-qc-research run             --campaign daily-earnings-otm             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end             >> "$LOG_DIR/daily-$(date +%Y%m%d).log" 2>&1
+          EOF_DAILY_EARNINGS
+          sudo chown agent-research:agent-research /agents/research/bin/earnings-otm-daily.sh
+          sudo chmod 755 /agents/research/bin/earnings-otm-daily.sh
+          tmp_research_cron="$(mktemp)"
+          tmp_research_cron_new="$(mktemp)"
+          sudo -n -u agent-research crontab -l >"$tmp_research_cron" 2>/dev/null || true
+          awk '
+            /# BEGIN trader managed daily earnings research/ {skip=1; next}
+            /# END trader managed daily earnings research/ {skip=0; next}
+            !skip {print}
+          ' "$tmp_research_cron" >"$tmp_research_cron_new"
+          cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
+          # BEGIN trader managed daily earnings research
+          CRON_TZ=Asia/Jerusalem
+          0 6 * * * /agents/research/bin/earnings-otm-daily.sh
+          # END trader managed daily earnings research
+          EOF_RESEARCH_CRON
+          sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
+          rm -f "$tmp_research_cron" "$tmp_research_cron_new"
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
