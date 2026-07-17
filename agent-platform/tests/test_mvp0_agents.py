@@ -1,6 +1,7 @@
 import argparse
 import importlib.machinery
 import importlib.util
+import importlib.machinery
 import json
 import os
 import subprocess
@@ -13,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load(name, rel):
-    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
+    path = ROOT / rel
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None:
+        loader = importlib.machinery.SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[name] = module
@@ -151,6 +156,94 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(len(research.load_queue(queue)), len(items))
 
 
+
+
+    def test_qc_runner_supports_daily_hour_minute_resolution_cli_db_and_qc_code(self):
+        qc = load("trading_research_qc_run_resolution", "agent-platform/scripts/trading-research-qc-run")
+        base = {
+            "version": 1,
+            "hypothesis": {"id": "spy-resolution-test", "title": "SPY resolution test", "description": "Validate configurable QC backtest resolution support."},
+            "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "Defined-risk bull put spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+            "universe": {"underlyings": ["SPY"], "benchmark": "SPY"},
+            "option_filters": {"dte_min": 7, "dte_max": 30, "delta_min": -0.25, "delta_max": -0.08, "max_bid_ask_pct": 0.35, "min_open_interest": 0, "min_volume": 0},
+            "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1},
+            "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "income", "must_not_override_evidence": True},
+            "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+            "pivot_policy": {"must_document_deviation": True},
+        }
+        expected = {"daily": "Resolution.DAILY", "hour": "Resolution.HOUR", "minute": "Resolution.MINUTE"}
+        for resolution, qc_name in expected.items():
+            manifest = json.loads(json.dumps(base))
+            manifest["validation"]["backtest_resolution"] = resolution
+            warnings = qc.validate_manifest(manifest)
+            if resolution == "daily":
+                self.assertFalse(any("higher-resolution" in w for w in warnings))
+            else:
+                self.assertTrue(any("higher-resolution" in w for w in warnings))
+            code = qc.generate_qc_algorithm(manifest)
+            self.assertIn(qc_name, code)
+            self.assertIn(f'"trader.backtest_resolution", "{resolution}"', code)
+            self.assertEqual(qc.get_backtest_resolution(manifest), resolution)
+
+    def test_qc_runner_migrates_existing_research_db_with_no_resolution_column(self):
+        qc = load("trading_research_qc_run_db_migration", "agent-platform/scripts/trading-research-qc-run")
+        with TemporaryDirectory() as tmp:
+            old_db = qc.RESEARCH_DB
+            try:
+                qc.RESEARCH_DB = Path(tmp) / "research_backtests.db"
+                import sqlite3
+                with sqlite3.connect(qc.RESEARCH_DB) as conn:
+                    conn.execute("""
+                        CREATE TABLE research_backtests(
+                            run_id TEXT PRIMARY KEY,
+                            hypothesis_id TEXT NOT NULL,
+                            strategy_family TEXT NOT NULL,
+                            symbols_json TEXT NOT NULL,
+                            start_date TEXT NOT NULL,
+                            end_date TEXT NOT NULL,
+                            run_dir TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            project_id TEXT,
+                            backtest_id TEXT,
+                            verdict_status TEXT,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        )
+                    """)
+                qc.init_research_db()
+                with sqlite3.connect(qc.RESEARCH_DB) as conn:
+                    cols = {row[1] for row in conn.execute("PRAGMA table_info(research_backtests)")}
+                    indexes = [row[1] for row in conn.execute("PRAGMA index_list(research_backtests)")]
+                self.assertIn("backtest_resolution", cols)
+                self.assertIn("idx_research_backtests_resolution_updated", indexes)
+            finally:
+                qc.RESEARCH_DB = old_db
+
+    def test_qc_runner_records_backtest_resolution_in_sqlite_db(self):
+        qc = load("trading_research_qc_run_db", "agent-platform/scripts/trading-research-qc-run")
+        with TemporaryDirectory() as tmp:
+            old_db = qc.RESEARCH_DB
+            try:
+                qc.RESEARCH_DB = Path(tmp) / "research_backtests.db"
+                run_dir = Path(tmp) / "qc-run-resolution-db-test"
+                run_dir.mkdir()
+                manifest = {
+                    "version": 1,
+                    "hypothesis": {"id": "resolution-db-test", "title": "Resolution DB test", "description": "Validate DB storage for backtest resolution."},
+                    "strategy": {"asset_class": "options", "family": "bull_put_spread", "structure": "Defined-risk bull put spread", "risk": {"bounded": True, "naked_short_options_allowed": False}},
+                    "universe": {"underlyings": ["SPY"]},
+                    "validation": {"start": "2018-01-03", "end": "2020-01-03", "candidate_requires_2018_present_or_oos": True, "walk_forward_or_oos_required": True, "max_variations": 1, "backtest_resolution": "minute"},
+                    "payoff_objective": {"target_multiple_per_year": 1, "objective_type": "income", "must_not_override_evidence": True},
+                    "guards": {"one_backtest_at_a_time": True, "no_live_trading": True, "no_naked_shorts": True, "rate_limit_seconds": 300},
+                    "pivot_policy": {"must_document_deviation": True},
+                }
+                qc.record_research_backtest(manifest, run_dir, "prepared")
+                import sqlite3
+                with sqlite3.connect(qc.RESEARCH_DB) as conn:
+                    row = conn.execute("SELECT backtest_resolution, status FROM research_backtests WHERE run_id=?", (run_dir.name,)).fetchone()
+                self.assertEqual(row, ("minute", "prepared"))
+            finally:
+                qc.RESEARCH_DB = old_db
 
 
     def test_research_no_follow_writer_rejects_symlink_logs(self):
