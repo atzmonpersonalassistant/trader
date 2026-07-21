@@ -29,6 +29,8 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn("review/recommendation only", text)
+        self.assertIn("postrun-mode override wins over any conflicting skill text", text)
+        self.assertIn("do not execute it here; record exactly one recommended next action instead", text)
         self.assertIn("Do not send any message yourself", text)
 
     def test_runner_permissions_are_prepared_for_approved_isolated_runner(self):
