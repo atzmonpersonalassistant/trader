@@ -72,7 +72,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             self.assertIn('trading-research-bounded-earnings-qc', text)
             self.assertIn('agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *', text)
 
-        self.assertIn('sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID <COMMAND...>', postrun)
+        self.assertIn('sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir __ACTION_DIR__ --bounded-action-id __BOUNDED_ACTION_ID__ <COMMAND...>', postrun)
         self.assertNotIn('REVIEW/RECOMMENDATION ONLY', postrun)
         self.assertNotIn('Do not execute follow-up QC/LEAN/CLI actions', postrun)
 
