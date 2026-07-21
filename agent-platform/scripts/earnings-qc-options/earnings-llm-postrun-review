@@ -102,6 +102,12 @@ if [[ ! -d "$RUN_DIR" || ! -f "$RUN_DIR/full_summary.json" ]]; then
   exit 66
 fi
 
+MARKER="$STATE_DIR/${RUN_ID}.done"
+if [[ -e "$MARKER" ]]; then
+  echo "ALREADY_REVIEWED run_id=$RUN_ID marker=$MARKER"
+  exit 0
+fi
+
 TS="$(date -u +%Y%m%d-%H%M%S)"
 SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr -c 'A-Za-z0-9._-' '-')"
 TASK_FILE="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${TS}-task.txt"
@@ -185,7 +191,9 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
 META
 
 if [[ "$RC" -eq 0 ]]; then
-  echo "REVIEW_COMPLETED run_id=$RUN_ID output=$OUTPUT_DIR"
+  printf '%s	%s	%s	%s
+' "$RUN_ID" "$FINISHED_AT" "$OUTPUT_DIR" "$FINISHED_REVIEW_AT" > "$MARKER"
+  echo "REVIEW_COMPLETED run_id=$RUN_ID output=$OUTPUT_DIR marker=$MARKER"
 else
   echo "REVIEW_FAILED run_id=$RUN_ID rc=$RC output=$OUTPUT_DIR" >&2
   exit "$RC"

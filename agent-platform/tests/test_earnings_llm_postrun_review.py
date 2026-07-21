@@ -24,13 +24,14 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn("POSTRUN_REVIEW_ALREADY_RUNNING", text)
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
+        self.assertIn("ALREADY_REVIEWED", text)
+        self.assertIn("${RUN_ID}.done", text)
         self.assertIn("flock -n 9", text)
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn("review/recommendation only", text)
         self.assertIn("Do not send any message yourself", text)
-        self.assertNotIn("ALREADY_REVIEWED", text)
 
     def test_runner_permissions_are_prepared_for_approved_isolated_runner(self):
         text = SCRIPT.read_text()
