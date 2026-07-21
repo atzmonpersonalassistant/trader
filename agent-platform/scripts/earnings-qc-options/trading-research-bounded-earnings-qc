@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bounded public interface for autonomous research follow-ups.
+# Intended sudoers path: agent-research-runner -> agent-research only for this wrapper.
+
+export HOME=/home/agent-research
+export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+
+CLI=/agents/research/bin/earnings-qc-research
+DEFAULT_CAMPAIGN=daily-earnings-otm
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: trading-research-bounded-earnings-qc COMMAND [ARGS...]
+
+Allowed commands:
+  --help | COMMAND --help
+  status [--pretty]
+  history [--last N] [--pretty]
+  insights [--last N] [--pretty]
+  summarize --run-dir DIR
+  run --symbols A,B[,C...] --years 1 --parallel 1 --end-to-end
+  run --max-chunks 1|2 --years 1 --parallel 1 --end-to-end
+  historical --run-dir DIR --years 1..10 --end-to-end
+  retry-failed --offset N --years 1 --end-to-end
+  decision add --type TYPE --rationale TEXT [--previous-run-id ID] [--next-run-id ID] [--parameter-changes-json JSON]
+
+The wrapper rejects notify/outbox abbreviations, broad historical runs,
+unbounded symbol lists, broad re-runs, unsafe paths, and unsupported flags.
+USAGE
+}
+
+fail() { echo "ERROR: $*" >&2; exit 64; }
+
+safe_id() { [[ "$1" =~ ^[A-Za-z0-9._:-]{1,160}$ ]]; }
+safe_campaign() { [[ "$1" == "$DEFAULT_CAMPAIGN" ]]; }
+safe_int() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
+check_common_arg_safety() {
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --notify|--notif*|--not*|--no*) fail "notify/no-* flags are not accepted from the LLM" ;;
+      *$'\n'*|*$'\r'*|*$'\t'*) fail "control whitespace is not allowed" ;;
+    esac
+  done
+}
+
+validate_run_dir() {
+  local d="$1"
+  [[ "$d" = /agents/research/reports/* || "$d" = /agents/research/state/* ]] || fail "run-dir outside approved research roots"
+  [[ "$d" != *..* ]] || fail "run-dir must not contain .."
+  [[ -d "$d" ]] || fail "run-dir does not exist"
+  local real
+  real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$d")"
+  [[ "$real" = /agents/research/reports/* || "$real" = /agents/research/state/* ]] || fail "resolved run-dir outside approved research roots"
+  [[ "$real" == "$d" ]] || fail "run-dir must not be a symlink or alias"
+}
+
+validate_symbols() {
+  local symbols="$1"
+  [[ "$symbols" =~ ^[A-Z0-9][A-Z0-9.-]{0,9}(,[A-Z0-9][A-Z0-9.-]{0,9}){0,4}$ ]] || fail "symbols must be 1-5 uppercase tickers"
+}
+
+validate_json_knobs() {
+  local json="$1"
+  [[ ${#json} -le 1000 ]] || fail "parameter JSON too long"
+  python3 - "$json" <<'PY'
+import json, sys
+allowed = {
+    'QC_MAX_PREMIUM': (0.01, 5.00),
+    'QC_MIN_BID': (0.00, 5.00),
+    'QC_MAX_SPREAD_PCT': (0.01, 5.00),
+    'QC_MIN_RELATIVE_SPREAD': (0.00, 5.00),
+    'QC_VOL_SPREAD_FACTOR': (0.00, 10.00),
+    'QC_EXPECTED_MOVE_SPREAD_FRACTION': (0.00, 5.00),
+}
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    raise SystemExit(f'invalid JSON: {exc}')
+if not isinstance(data, dict):
+    raise SystemExit('parameter JSON must be an object')
+if len(data) > 1:
+    raise SystemExit('ordinary bounded experiments may change exactly one knob')
+for k, v in data.items():
+    if k not in allowed:
+        raise SystemExit(f'unsupported knob: {k}')
+    try:
+        f = float(v)
+    except Exception:
+        raise SystemExit(f'non-numeric knob value: {k}')
+    lo, hi = allowed[k]
+    if not lo <= f <= hi:
+        raise SystemExit(f'knob {k} outside allowed range {lo}-{hi}')
+PY
+}
+
+[[ $# -ge 1 ]] || { usage; exit 64; }
+check_common_arg_safety "$@"
+
+ACTION_ID=""
+ACTION_DIR="/agents/research/state/earnings-qc-research/llm-postrun-review/actions"
+if [[ "${1:-}" == "--bounded-action-dir" ]]; then
+  ACTION_DIR="${2:-}"
+  validate_run_dir "$ACTION_DIR"
+  shift 2
+fi
+if [[ "${1:-}" == "--bounded-action-id" ]]; then
+  ACTION_ID="${2:-}"
+  [[ "$ACTION_ID" =~ ^[A-Za-z0-9._:-]{16,128}$ ]] || fail "invalid bounded action id"
+  shift 2
+fi
+[[ $# -ge 1 ]] || fail "missing command after action id"
+
+require_bounded_action_once() {
+  [[ -n "$ACTION_ID" ]] || fail "mutating follow-up requires --bounded-action-id"
+  local action_dir="$ACTION_DIR"
+  validate_run_dir "$action_dir"
+  local action_file="$action_dir/$ACTION_ID"
+  local used_dir="$action_dir/$ACTION_ID.used"
+  local expired_dir="$action_dir/$ACTION_ID.expired"
+  [[ -f "$action_file" ]] || fail "bounded action id is not registered"
+  [[ -O "$action_file" && ! -L "$action_file" ]] || fail "bounded action id file ownership invalid"
+  [[ "$(stat -c %a "$action_file" 2>/dev/null || stat -f %Lp "$action_file")" =~ ^6[04]0$ ]] || fail "bounded action id file mode invalid"
+  [[ ! -d "$expired_dir" ]] || fail "bounded action id expired"
+  local issued_at output_dir runner_pid now age recorded_pid
+  issued_at="$(awk -F= '$1=="issued_at" {print $2}' "$action_file" 2>/dev/null || true)"
+  output_dir="$(awk -F= '$1=="output_dir" {print $2}' "$action_file" 2>/dev/null || true)"
+  runner_pid="$(awk -F= '$1=="runner_pid" {print $2}' "$action_file" 2>/dev/null || true)"
+  [[ "$issued_at" =~ ^[0-9]+$ ]] || fail "bounded action id missing issued_at"
+  validate_run_dir "$output_dir"
+  local pwd_real output_real
+  pwd_real="$(python3 -c 'import os; print(os.path.realpath(os.getcwd()))')"
+  output_real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$output_dir")"
+  [[ "$pwd_real" == "$output_real" ]] || fail "bounded action id output context mismatch"
+  [[ "$runner_pid" =~ ^[0-9]+$ ]] || fail "bounded action id missing runner pid"
+  if ! ps -p "$runner_pid" >/dev/null 2>&1; then
+    fail "bounded action id runner is not active"
+  fi
+  now="$(date +%s)"
+  age=$(( now - issued_at ))
+  (( age >= 0 && age <= 21600 )) || fail "bounded action id expired"
+  if ! mkdir "$used_dir" 2>/dev/null; then
+    fail "bounded action id already used"
+  fi
+  printf '%s\n' "$CMD $*" > "$used_dir/command.txt" 2>/dev/null || true
+  date -Is > "$used_dir/used_at.txt" 2>/dev/null || true
+}
+
+case "$1" in
+  -h|--help)
+    usage
+    exec "$CLI" --help
+    ;;
+  run|historical|status|history|insights|summarize|retry-failed|decision)
+    CMD="$1"; shift
+    ;;
+  *) fail "unsupported command: $1" ;;
+esac
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  exec "$CLI" "$CMD" --help
+fi
+
+case "$CMD" in
+  status)
+    OUT=(status --campaign "$DEFAULT_CAMPAIGN")
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --pretty) OUT+=(--pretty); shift ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported status arg: $1" ;;
+      esac
+    done
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  history|insights)
+    OUT=("$CMD" --campaign "$DEFAULT_CAMPAIGN")
+    LAST=10
+    [[ "$CMD" == insights ]] && LAST=20
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --pretty) OUT+=(--pretty); shift ;;
+        --last) safe_int "${2:-}" || fail "invalid --last"; (( 1 <= 10#$2 && 10#$2 <= 50 )) || fail "--last must be 1..50"; LAST="$2"; shift 2 ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported $CMD arg: $1" ;;
+      esac
+    done
+    OUT+=(--last "$LAST")
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  summarize)
+    require_bounded_action_once "$@"
+    OUT=(summarize --campaign "$DEFAULT_CAMPAIGN")
+    SCOPED=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --run-dir) validate_run_dir "${2:-}"; OUT+=(--run-dir "$2"); SCOPED=1; shift 2 ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported summarize arg: $1" ;;
+      esac
+    done
+    (( SCOPED == 1 )) || fail "summarize must be scoped by --run-dir"
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  run)
+    require_bounded_action_once "$@"
+    OUT=(run --campaign "$DEFAULT_CAMPAIGN" --no-outbox)
+    HAVE_SCOPE=0; HAVE_SYMBOLS=0; HAVE_MAX_CHUNKS=0; YEARS=1; PARALLEL=1; CHUNK_SIZE=25
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --symbols) validate_symbols "${2:-}"; OUT+=(--symbols "$2"); HAVE_SCOPE=1; HAVE_SYMBOLS=1; shift 2 ;;
+        --max-chunks) safe_int "${2:-}" || fail "invalid --max-chunks"; (( 1 <= 10#$2 && 10#$2 <= 2 )) || fail "--max-chunks must be 1..2"; OUT+=(--max-chunks "$2"); HAVE_SCOPE=1; HAVE_MAX_CHUNKS=1; shift 2 ;;
+        --start-offset) safe_int "${2:-}" || fail "invalid --start-offset"; (( 0 <= 10#$2 && 10#$2 <= 2000 )) || fail "--start-offset must be 0..2000"; OUT+=(--start-offset "$2"); shift 2 ;;
+        --years) safe_int "${2:-}" || fail "invalid --years"; (( 1 <= 10#$2 && 10#$2 <= 2 )) || fail "run --years must be 1..2"; YEARS="$2"; shift 2 ;;
+        --parallel) safe_int "${2:-}" || fail "invalid --parallel"; (( 10#$2 == 1 )) || fail "--parallel must be 1"; PARALLEL="$2"; shift 2 ;;
+        --chunk-size) safe_int "${2:-}" || fail "invalid --chunk-size"; (( 1 <= 10#$2 && 10#$2 <= 25 )) || fail "--chunk-size must be 1..25"; CHUNK_SIZE="$2"; shift 2 ;;
+        --end-to-end) OUT+=(--end-to-end); shift ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported run arg: $1" ;;
+      esac
+    done
+    (( HAVE_SCOPE == 1 )) || fail "run requires --symbols or --max-chunks"
+    (( HAVE_SYMBOLS == 0 || HAVE_MAX_CHUNKS == 0 )) || fail "use either --symbols or --max-chunks, not both"
+    OUT+=(--years "$YEARS" --parallel "$PARALLEL" --chunk-size "$CHUNK_SIZE")
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  historical)
+    require_bounded_action_once "$@"
+    OUT=(historical --campaign "$DEFAULT_CAMPAIGN")
+    SCOPED=0; YEARS=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --run-dir) validate_run_dir "${2:-}"; OUT+=(--run-dir "$2"); SCOPED=1; shift 2 ;;
+        --years) safe_int "${2:-}" || fail "invalid --years"; (( 1 <= 10#$2 && 10#$2 <= 10 )) || fail "historical --years must be 1..10"; YEARS="$2"; shift 2 ;;
+        --chunk-size) safe_int "${2:-}" || fail "invalid --chunk-size"; (( 1 <= 10#$2 && 10#$2 <= 25 )) || fail "--chunk-size must be 1..25"; OUT+=(--chunk-size "$2"); shift 2 ;;
+        --end-to-end) OUT+=(--end-to-end); shift ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported historical arg: $1" ;;
+      esac
+    done
+    (( SCOPED == 1 )) || fail "historical must be scoped by --run-dir"
+    [[ -n "$YEARS" ]] || fail "historical requires --years"
+    OUT+=(--years "$YEARS")
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  retry-failed)
+    require_bounded_action_once "$@"
+    OUT=(retry-failed --campaign "$DEFAULT_CAMPAIGN")
+    OFFSET=""; YEARS=1; CHUNK_SIZE=25
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --offset) safe_int "${2:-}" || fail "invalid --offset"; (( 0 <= 10#$2 && 10#$2 <= 2000 )) || fail "--offset must be 0..2000"; OFFSET="$2"; shift 2 ;;
+        --years) safe_int "${2:-}" || fail "invalid --years"; (( 1 <= 10#$2 && 10#$2 <= 2 )) || fail "retry-failed --years must be 1..2"; YEARS="$2"; shift 2 ;;
+        --chunk-size) safe_int "${2:-}" || fail "invalid --chunk-size"; (( 1 <= 10#$2 && 10#$2 <= 25 )) || fail "--chunk-size must be 1..25"; CHUNK_SIZE="$2"; shift 2 ;;
+        --end-to-end) OUT+=(--end-to-end); shift ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported retry-failed arg: $1" ;;
+      esac
+    done
+    [[ -n "$OFFSET" ]] || fail "retry-failed requires --offset"
+    OUT+=(--offset "$OFFSET" --years "$YEARS" --chunk-size "$CHUNK_SIZE")
+    exec "$CLI" "${OUT[@]}"
+    ;;
+
+  decision)
+    require_bounded_action_once "$@"
+    [[ "${1:-}" == add ]] || fail "only decision add is supported"
+    shift
+    OUT=(decision add --campaign "$DEFAULT_CAMPAIGN" --actor llm)
+    HAVE_TYPE=0; HAVE_RATIONALE=0; PARAM_JSON='{}'
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --type) [[ "${2:-}" =~ ^[A-Za-z0-9_.:-]{1,64}$ ]] || fail "unsafe decision type"; OUT+=(--type "$2"); HAVE_TYPE=1; shift 2 ;;
+        --rationale) [[ ${#2} -ge 1 && ${#2} -le 1000 ]] || fail "rationale length must be 1..1000"; OUT+=(--rationale "$2"); HAVE_RATIONALE=1; shift 2 ;;
+        --previous-run-id) safe_id "${2:-}" || fail "unsafe previous run id"; OUT+=(--previous-run-id "$2"); shift 2 ;;
+        --next-run-id) safe_id "${2:-}" || fail "unsafe next run id"; OUT+=(--next-run-id "$2"); shift 2 ;;
+        --parameter-changes-json) PARAM_JSON="${2:-}"; validate_json_knobs "$PARAM_JSON"; shift 2 ;;
+        --campaign) safe_campaign "${2:-}" || fail "campaign must be $DEFAULT_CAMPAIGN"; shift 2 ;;
+        *) fail "unsupported decision arg: $1" ;;
+      esac
+    done
+    (( HAVE_TYPE == 1 && HAVE_RATIONALE == 1 )) || fail "decision add requires --type and --rationale"
+    OUT+=(--parameter-changes-json "$PARAM_JSON")
+    exec "$CLI" "${OUT[@]}"
+    ;;
+esac

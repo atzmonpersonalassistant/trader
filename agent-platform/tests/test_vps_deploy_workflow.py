@@ -58,6 +58,42 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('ALTER DATABASE trader_research SET search_path TO earnings_cache, public', workflow)
         self.assertIn('SELECT 1 AS research_postgres_ready', workflow)
 
+    def test_llm_postrun_has_bounded_execution_wrapper(self):
+        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+        bootstrap = Path('agent-platform/scripts/bootstrap-new-vps.sh').read_text()
+        wrapper = Path('agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc').read_text()
+        postrun = Path('agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review').read_text()
+
+        self.assertIn('trading-research-bounded-earnings-qc --help', workflow)
+        self.assertNotIn('trading-research-bounded-earnings-qc status --pretty', workflow)
+        self.assertIn('EARNINGS_DIR="${SCRIPTS_DIR}/earnings-qc-options"', bootstrap)
+
+        for text in (workflow, bootstrap):
+            self.assertIn('trading-research-bounded-earnings-qc', text)
+            self.assertIn('agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *', text)
+
+        self.assertIn('sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID <COMMAND...>', postrun)
+        self.assertNotIn('REVIEW/RECOMMENDATION ONLY', postrun)
+        self.assertNotIn('Do not execute follow-up QC/LEAN/CLI actions', postrun)
+
+        self.assertNotIn('cleanup)', wrapper)
+        self.assertIn('--bounded-action-id', wrapper)
+        self.assertIn('bounded action id already used', wrapper)
+        self.assertIn('bounded action id expired', wrapper)
+        self.assertIn('bounded action id output context mismatch', wrapper)
+        self.assertIn('bounded action id runner is not active', wrapper)
+        self.assertIn('bounded action id file ownership invalid', wrapper)
+        self.assertIn('bounded action id file mode invalid', wrapper)
+        self.assertIn('resolved run-dir outside approved research roots', wrapper)
+        self.assertIn('run-dir must not be a symlink or alias', wrapper)
+        self.assertIn('--not*', wrapper)
+        self.assertIn('run --years must be 1..2', wrapper)
+        self.assertIn('historical must be scoped by --run-dir', wrapper)
+        self.assertIn('summarize must be scoped by --run-dir', wrapper)
+        self.assertNotIn('--run-id) safe_id', wrapper)
+        self.assertIn('ordinary bounded experiments may change exactly one knob', wrapper)
+        self.assertIn('symbols must be 1-5 uppercase tickers', wrapper)
+
 
 if __name__ == '__main__':
     unittest.main()
