@@ -136,9 +136,13 @@ require_bounded_action_once() {
   pwd_real="$(python3 -c 'import os; print(os.path.realpath(os.getcwd()))')"
   output_real="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$output_dir")"
   [[ "$pwd_real" == "$output_real" ]] || fail "bounded action id output context mismatch"
-  [[ "$runner_pid" =~ ^[0-9]+$ ]] || fail "bounded action id missing runner pid"
-  if ! ps -p "$runner_pid" >/dev/null 2>&1; then
-    fail "bounded action id runner is not active"
+  if [[ "$runner_pid" == "host-postrun" ]]; then
+    : # Host postrun executes a Codex-requested action after the sandboxed runner exits.
+  else
+    [[ "$runner_pid" =~ ^[0-9]+$ ]] || fail "bounded action id missing runner pid"
+    if ! ps -p "$runner_pid" >/dev/null 2>&1; then
+      fail "bounded action id runner is not active"
+    fi
   fi
   now="$(date +%s)"
   age=$(( now - issued_at ))
