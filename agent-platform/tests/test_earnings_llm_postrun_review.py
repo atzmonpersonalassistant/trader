@@ -28,9 +28,11 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
         self.assertIn("trading-research-runner-codex", text)
-        self.assertIn("review/recommendation only", text)
-        self.assertIn("postrun-mode override wins over any conflicting skill text", text)
-        self.assertIn("do not execute it here; record exactly one recommended next action instead", text)
+        self.assertIn("trading-research-bounded-earnings-qc", text)
+        self.assertIn("execute exactly one bounded follow-up action", text)
+        self.assertIn("The wrapper is the execution guardrail", text)
+        self.assertIn("--bounded-action-dir $ACTION_DIR", text)
+        self.assertIn("The action id is one-use", text)
         self.assertIn("Do not send any message yourself", text)
 
     def test_runner_permissions_are_prepared_for_approved_isolated_runner(self):
@@ -38,7 +40,10 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("make_runner_inputs_usable", text)
         self.assertIn("agent-research-runner:rwx", text)
         self.assertIn("trading-research-runner-codex", text)
-        self.assertIn("Do not execute follow-up", text)
+        self.assertIn("trading-research-bounded-earnings-qc", text)
+        self.assertIn("execute exactly one bounded follow-up action", text)
+        self.assertNotIn("REVIEW/RECOMMENDATION ONLY", text)
+        self.assertNotIn("Do not execute follow-up", text)
 
 
 if __name__ == "__main__":

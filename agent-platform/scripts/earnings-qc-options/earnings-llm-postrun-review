@@ -108,14 +108,18 @@ TS="$(date -u +%Y%m%d-%H%M%S)"
 SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr -c 'A-Za-z0-9._-' '-')"
 TASK_FILE="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${TS}-task.txt"
 OUTPUT_DIR="$REPORT_ROOT/research-pass-postrun-${DATE_COMPACT}-${TS}-${SAFE_RUN_ID}"
+BOUNDED_ACTION_ID="postrun-${DATE_COMPACT}-${TS}-${SAFE_RUN_ID}"
+ACTION_DIR="$STATE_DIR/actions"
+ACTION_FILE="$ACTION_DIR/$BOUNDED_ACTION_ID"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "WOULD_RUN run_id=$RUN_ID task=$TASK_FILE output=$OUTPUT_DIR model=$MODEL"
   exit 0
 fi
 
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR" "$ACTION_DIR"
 chmod 750 "$OUTPUT_DIR"
+chmod 750 "$ACTION_DIR"
 
 cat > "$TASK_FILE" <<TASK
 You are running the full trader-research-system skill for Uriel's VPS earnings-options research system.
@@ -136,7 +140,11 @@ Context:
 - bottleneck: $BOTTLENECK
 - error: $RUN_ERROR
 
-Apply the full trader-research-system skill above, with this postrun-mode override: this invocation is REVIEW/RECOMMENDATION ONLY. If the skill says an action should be executed, do not execute it here; record exactly one recommended next action instead. This postrun-mode override wins over any conflicting skill text.
+Apply the full trader-research-system skill above. This invocation is allowed to execute exactly one bounded follow-up action when the skill calls for it. Execute follow-up actions only through this sudo wrapper, never by invoking the research CLI directly:
+
+sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID <COMMAND...>
+
+The wrapper is the execution guardrail. If it rejects an action, record that as the blocker instead of working around it.
 
 Short reminders:
 - You are a skeptical research agent, not an autonomous trader.
@@ -146,15 +154,15 @@ Short reminders:
 - Allowed outcomes: Final candidate, Candidate worth manual review, Meaningful blocker, Parameter experiment result, No-trade conclusion.
 - Hard guardrails: no live trading, no broker orders, no final candidate without QC/EODHD multi-year historical option-PnL evidence, no bypassing/loosening gates to force a candidate, no broad/expensive universe runs without staged gates, no 0DTE/1DTE, no naked options, no fabricated/interpolated data, no Yahoo/yfinance unless explicitly approved.
 - Nasdaq calendar is only stage-1 forward earnings discovery; evidence after discovery must come from QC/LEAN or QC/EODHD.
-- This postrun invocation is review/recommendation only. Do not execute follow-up QC/LEAN/CLI actions from this isolated runner.
-- If a follow-up action would be justified by the skill, record it as the single recommended next action in the review artifact.
-- Do not re-spend QC/QCC from this postrun review.
+- This postrun invocation may execute exactly one bounded follow-up action through `/usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID` when justified by the skill. The action id is one-use; a second mutating call will fail and must not be worked around.
+- Do not invoke `/agents/research/bin/earnings-qc-research` directly; use the bounded wrapper only.
+- Do not re-spend QC/QCC on duplicate work. Read prior artifacts first; if the wrapper refuses a broad or unsafe action, stop and record the blocker.
 - Reporting threshold: final candidate, manual-review candidate, meaningful new bottleneck, system failure, major parameter change, or QC/QCC budget risk. Routine no-candidate/no-change should be logged, not pushed.
 
 Task:
 1. Read $RUN_DIR/full_summary.json and relevant small artifacts in $RUN_DIR.
 2. Classify the finished run according to the skill.
-3. If the skill would justify one allowed next action, record exactly one recommended next action; do not execute it in this postrun review.
+3. If the skill justifies one allowed next action, execute exactly one action through the bounded wrapper; otherwise record why no action was justified.
 4. Write a durable review artifact to this output directory:
    $OUTPUT_DIR/review.md
    and, if useful, $OUTPUT_DIR/review.json
@@ -162,15 +170,41 @@ Task:
    - NO_NOTIFY
    - or a concise Hebrew WhatsApp-style message that meets the reporting threshold.
 6. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
+7. Record the exact bounded-wrapper command you ran, or `NO_ACTION`, in the artifact.
 TASK
 chmod 0640 "$TASK_FILE"
 make_runner_inputs_usable "$TASK_FILE" "$OUTPUT_DIR"
 
 STARTED_AT="$(date -Is)"
+ISSUED_AT="$(date +%s)"
+{
+  printf 'issued_at=%s
+' "$ISSUED_AT"
+  printf 'output_dir=%s
+' "$OUTPUT_DIR"
+  printf 'runner_pid=pending
+'
+} > "$ACTION_FILE"
+chmod 0640 "$ACTION_FILE"
 set +e
 sudo -n -u agent-research-runner /usr/local/bin/trading-research-runner-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" \
-  > "$OUTPUT_DIR/runner.stdout.log" 2> "$OUTPUT_DIR/runner.stderr.log"
+  > "$OUTPUT_DIR/runner.stdout.log" 2> "$OUTPUT_DIR/runner.stderr.log" &
+RUNNER_PID=$!
+{
+  printf 'issued_at=%s
+' "$ISSUED_AT"
+  printf 'output_dir=%s
+' "$OUTPUT_DIR"
+  printf 'runner_pid=%s
+' "$RUNNER_PID"
+} > "$ACTION_FILE"
+chmod 0640 "$ACTION_FILE"
+wait "$RUNNER_PID"
 RC=$?
+if [[ ! -d "$ACTION_FILE.used" && ! -d "$ACTION_FILE.expired" ]]; then
+  mkdir "$ACTION_FILE.expired" 2>/dev/null || true
+  date -Is > "$ACTION_FILE.expired/expired_at.txt" 2>/dev/null || true
+fi
 set -e
 FINISHED_REVIEW_AT="$(date -Is)"
 
@@ -188,6 +222,7 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
   "review_finished_at": "$FINISHED_REVIEW_AT",
   "model": "$MODEL",
   "returncode": $RC,
+  "bounded_action_id": "$BOUNDED_ACTION_ID",
   "task_file": "$TASK_FILE",
   "runner": "trading-research-runner-codex",
   "output_dir": "$OUTPUT_DIR"

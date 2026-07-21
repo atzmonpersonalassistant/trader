@@ -19,6 +19,7 @@ fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$(cd -- "${SCRIPT_DIR}/../tools" && pwd)"
 SCRIPTS_DIR="$SCRIPT_DIR"
+EARNINGS_DIR="${SCRIPTS_DIR}/earnings-qc-options"
 
 log() { printf '[bootstrap-new-vps] %s\n' "$*"; }
 
@@ -198,6 +199,7 @@ install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-cloud-run" /u
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
+install -o root -g root -m 755 "${EARNINGS_DIR}/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
 
 
 log "preparing isolated research runner Codex auth directory"
@@ -269,6 +271,8 @@ chmod 755 /usr/local/bin/trading-research-runner-codex
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
 # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+# Allow the isolated runner to execute only bounded public earnings-QC research actions.
+agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
 SUDOERS_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
 visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
