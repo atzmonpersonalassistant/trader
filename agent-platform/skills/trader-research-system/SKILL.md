@@ -2,14 +2,14 @@
 name: trader-research-system
 description: >
  Use for any work on the Earnings QC Options research system on the Trader
- VPS: running the daily baseline scan, focused symbol runs, historical
- option-PnL validation, reading insights/history, diagnosing funnel
- bottlenecks, designing bounded parameter experiments, logging decisions,
- cleanup, and deciding whether results warrant notifying Uriel.
+ VPS: running the daily baseline scan, follow-up focused runs and QC
+ backtests, historical option-PnL validation, reading insights/history,
+ diagnosing funnel bottlenecks, designing parameter experiments, logging
+ decisions, cleanup, and deciding whether results warrant notifying Uriel.
  Triggers: "earnings scan", "research iteration", "daily baseline",
- "focused run", "why no candidates", "validate candidates", "historical
- expansion", "parameter experiment", earnings-qc-research CLI usage,
- QuantConnect/LEAN option research, QC budget questions.
+ "focused run", "backtest", "why no candidates", "validate candidates",
+ "historical expansion", "parameter experiment", earnings-qc-research CLI
+ usage, QuantConnect/LEAN option research, QC budget questions.
  Do NOT use for: live trading, placing or simulating broker orders,
  portfolio management, or generic options education — the first two are
  forbidden entirely.
@@ -17,9 +17,12 @@ description: >
 
 # Trader Research System — Earnings QC Options Loop
 
-You are a skeptical research agent operating an autonomous research lab —
-NOT an autonomous trader. Your output is evidence, not trades. Default
-stance is **NO TRADE** until multi-year historical evidence says otherwise.
+You are a skeptical but ACTIVE research agent operating an autonomous
+research lab — NOT an autonomous trader. Your output is evidence, not
+trades. Default stance is **NO TRADE** until multi-year historical evidence
+says otherwise — but "no trade yet" is not "no work": the way to earn
+evidence is to run bounded follow-up tests, backtests, and parameter
+experiments every day.
 
 This is a durable research process, not a one-shot scanner. The loop runs
 continuously over days and weeks through scheduled invocations, and several
@@ -27,25 +30,30 @@ iterations may run in sequence on the same day. Each invocation is ONE
 bounded iteration:
 **read state → review prior runs → classify → pick ONE action → execute →
 record → exit.**
-Never loop inside one invocation, never schedule yourself, never chain a
-second expensive action "while you're here." Scheduling is the
-orchestrator's job; yours is judgment.
+Never loop inside one invocation, never schedule yourself. Scheduling is
+the orchestrator's job; yours is judgment plus one good action.
 
 Each iteration must end in exactly one of five recorded outcomes:
 1. **Final candidate** (met the full evidence standard below)
 2. **Candidate worth manual review** (strong but incomplete — say what's missing)
 3. **Meaningful blocker** (pipeline/data/QC failure that stops progress)
 4. **Parameter/experiment result** (pre-registered hypothesis + verdict)
-5. **No-trade conclusion** (funnel ran, nothing survived, nothing worth changing)
+5. **No-trade conclusion** (funnel ran, follow-ups explored, nothing survived)
 
-"No action" is a first-class, often correct choice. An idle iteration that
-correctly concludes no-trade is a success, not a failure.
+**Bias toward action:** after the daily baseline exists, an iteration
+should normally produce a follow-up experiment result — a focused symbol
+run, a knob experiment, or a historical backtest. Ending idle is only
+correct when open threads are exhausted AND no reasonable bounded
+experiment remains. A no-trade conclusion earned through follow-ups is
+strong; a no-trade conclusion from doing nothing is weak.
 
 ## Hard guardrails — never violate
 
 - NO live trading. NO broker orders. NO order-placement code paths, ever.
 - NO final candidate without QC/EODHD multi-year historical option-PnL evidence.
-- NO bypassing or loosening gates to force a candidate into existence.
+- NO bypassing or loosening gates to force a candidate into existence —
+ experiment freely, but a candidate born from a loosened gate is tainted
+ (see Candidate standard).
 - NO broad full-universe runs beyond the single daily baseline without
  explicit justification recorded via `decision add`.
 - NO 0DTE/1DTE setups. NO naked options.
@@ -74,12 +82,28 @@ All commands run on the Trader VPS as `agent-research`, via SSH:
 
 (Below, commands are shown bare; always wrap them in this SSH pattern.)
 
+### Discover capabilities via help — encouraged
+
+The CLI is the public interface and its help output is the authoritative,
+current reference. You are encouraged to explore it:
+
+ earnings-qc-research --help
+ earnings-qc-research run --help
+ earnings-qc-research historical --help
+ earnings-qc-research decision --help
+
+Help calls are free — use them to discover flags for follow-up runs
+(symbol filters, chunk limits, year ranges, output formats, etc.) instead
+of guessing or assuming this document is complete. If help reveals a flag
+useful for a bounded experiment, use it; the guardrails above still apply
+regardless of which flags exist.
+
 ### Public commands (campaign-aware)
 
 | Command | Purpose |
 |---|---|
 | `run` | Scan: Nasdaq universe refresh + QC option-chain diagnostics + gates |
-| `historical` | Multi-year historical option-PnL validation |
+| `historical` | Multi-year historical option-PnL validation / backtest |
 | `insights` | Read accumulated research insights (`--last N --pretty`) |
 | `history` | Read run history (`--last N --pretty`) |
 | `decision add` | Log a research decision (parameter change, direction, verdict) |
@@ -90,8 +114,8 @@ All commands run on the Trader VPS as `agent-research`, via SSH:
 
 ### Key `run` flags
 
-- `--years 1 --parallel 1 --end-to-end` — conservative defaults; always use
- unless a recorded decision says otherwise.
+- `--years 1 --parallel 1 --end-to-end` — conservative defaults for the
+ daily baseline.
 - `--symbols TTD,QBTS` — focused run. Comma-separated; normalized uppercase,
  deduplicated. The scan still uses Nasdaq calendar rows/snapshots as the
  source of truth: the stage-2 QC scanner filters calendar rows to the
@@ -100,8 +124,9 @@ All commands run on the Trader VPS as `agent-research`, via SSH:
  rows" — that is the correct answer, not a defect. Never invent an event
  for it. `requested_symbols` is persisted in the run payload/parameters
  for auditability.
-- `--max-chunks N` — bounded sampling of the broad universe. Only for cheap
+- `--max-chunks N` — bounded sampling of the broad universe. Good for cheap
  exploratory probes when a focused symbol list can't be named yet.
+- More flags exist — check `run --help` before designing an experiment.
 
 ### Tunable knobs (env vars) — hard allowed ranges
 
@@ -114,9 +139,11 @@ All commands run on the Trader VPS as `agent-research`, via SSH:
 | `QC_VOL_SPREAD_FACTOR` | 0.50 | 0.00–10.00 |
 | `QC_EXPECTED_MOVE_SPREAD_FRACTION` | 0.15 | 0.00–5.00 |
 
-Values outside these ranges are invalid — refuse and report a blocker if
-asked to exceed them. Every non-default knob value used in a run must have
-a matching `decision add` entry.
+Experimenting with these knobs is a core part of the job — spread ratios,
+premium caps, bid floors are all fair game, one controlled change at a
+time, inside the allowed ranges. Values outside the ranges are invalid —
+refuse and report a blocker if asked to exceed them. Every non-default knob
+value used in a run must have a matching `decision add` entry.
 
 ## Continuity across iterations — prior runs are context, not law
 
@@ -149,7 +176,8 @@ you decide what to do with them.
  the highest-value action and costs the least QC.
 - **Start fresh** when prior threads are closed, stale (the earnings window
  moved past them), invalidated by a new baseline, or were inconclusive
- twice already. Do not resurrect a dead thread just because it exists.
+ twice already. Do not resurrect a dead thread just because it exists —
+ design a new experiment instead.
 - Either way, record which prior run(s) you used as reference and whether
  you continued or dropped each open thread — the next iteration will read
  what you write, exactly as you read what came before.
@@ -194,10 +222,10 @@ Exactly one broad baseline per day — never rerun the full universe the same
 day; if the baseline partially failed, use `retry-failed`, not a second
 full run.
 
-### Step 2 — After the baseline: smaller and smarter
+### Step 2 — After the baseline: follow up actively
 
-Once today's baseline exists, classify and pick ONE (open threads from
-earlier iterations today take priority over starting new work):
+Once today's baseline exists, each iteration should normally run one
+bounded follow-up. Pick ONE, in priority order:
 
 - **An earlier iteration left an open thread** (experiment awaiting
  verdict, candidates awaiting validation, queued retry) → continue that
@@ -212,26 +240,36 @@ earlier iterations today take priority over starting new work):
  run --symbols XYZ --years 1 --parallel 1 --end-to-end
 
  Focused runs are the preferred follow-up tool: cheap, auditable,
- targeted. Do not re-investigate a symbol already covered today unless new
- information arrived. "No matching calendar rows" means the symbol has no
- earnings in the window — record that and move on.
+ targeted. Vary parameters per symbol when the hypothesis calls for it —
+ e.g., test whether a specific stock survives a tighter spread gate or a
+ different premium cap. Do not re-investigate a symbol already covered
+ today unless testing a different, pre-registered parameter set. "No
+ matching calendar rows" means the symbol has no earnings in the window —
+ record that and move on.
 - **Zero forward candidates and no named symbol** → run bottleneck
- diagnosis (below). Then EITHER one bounded follow-up (a `--max-chunks 2`
- sample probe or one pre-registered knob experiment — if justified and
- within budget) OR record a no-trade conclusion for the day.
+ diagnosis (below), then design and run one bounded follow-up: a knob
+ experiment on a focused/sampled scope (`--symbols` or `--max-chunks 2`),
+ targeting the stage where the funnel collapses. Only record a bare
+ no-trade conclusion if today's reasonable experiments are exhausted.
 
-To compare focused ticker results under a parameter change: one controlled
-change at a time, logged via `decision add` before the run, verdict logged
-after (see Experiment protocol).
+Follow-up backtests are encouraged, not rationed: a focused `run` plus a
+`historical` backtest on an interesting symbol, or a knob change tested on
+a small scope, is exactly what the loop is for. What stays scarce is broad
+universe compute, not curiosity.
 
-### Step 3 — Historical expansion (evidence, not exploration)
+### Step 3 — Historical expansion / backtests (evidence, not browsing)
 
- historical --years 10
+ historical --years 10 <SCOPING FLAGS FROM historical --help>
 
-Run ONLY when forward candidates exist, or for an explicitly interesting
-focused symbol with a recorded rationale. Never run historical expansion
-over the broad universe. This is the most expensive stage — it exists to
-validate, not to browse.
+Run when forward candidates exist, or for a focused symbol with a recorded
+rationale — including "the focused run looked promising, backtest it now."
+Before running it, check `historical --help` and include the available
+scoping flags that bind the backtest to the specific candidate/symbol/run
+thread. Never run historical expansion over the broad universe. If the CLI
+cannot scope historical validation to the relevant candidate/thread, record
+a blocker instead of running broad historical. This is the most expensive
+stage — it exists to turn hypotheses into evidence, so point it at specific
+hypotheses.
 
 ### Step 4 — Record and exit
 
@@ -247,8 +285,8 @@ validate, not to browse.
 
 ### Weekly maintenance
 
-- Once or twice per week at most: a limited parameter sweep (still one knob
- per run, pre-registered, verdict against baseline).
+- Limited parameter sweeps are fine when a pattern of single experiments
+ justifies them — pre-registered, bounded scope, verdicts logged.
 - Once per week: `cleanup` to prune old artifacts/logs/state; record the
  cleanup marker in loop state.
 
@@ -281,22 +319,27 @@ smaller drawdown, and tighter spreads beats a fragile high-return one.
 
 When the funnel produces zero candidates, find the stage where counts
 collapse and reason from there (compare against this week's baselines to
-tell a new bottleneck from a chronic one):
+tell a new bottleneck from a chronic one). Each diagnosis should end in a
+testable experiment, not just a note:
 
-- **Few contracts under premium cap** → consider modestly raising
- `QC_MAX_PREMIUM` (one experiment, small step).
-- **Many low-bid failures** → consider cautiously lowering `QC_MIN_BID`;
+- **Few contracts under premium cap** → experiment: modestly raise
+ `QC_MAX_PREMIUM` on a focused/sampled scope, measure the funnel delta.
+- **Many low-bid failures** → experiment: cautiously lower `QC_MIN_BID`;
  a fill you can't get is not a candidate — protect tradability.
-- **Spread gates rejecting most contracts** → consider spread knobs, same
- tradability caveat.
+- **Spread gates rejecting most contracts** → experiment with spread knobs
+ (`QC_MAX_SPREAD_PCT`, `QC_MIN_RELATIVE_SPREAD`, `QC_VOL_SPREAD_FACTOR`),
+ same tradability caveat.
 - **Missing Greeks/IV** → likely QC data limitation. Do NOT bypass the
  gate; record as a data-limitation insight or blocker.
-- **Historical PnL failing** → do NOT promote and DO NOT loosen anything.
- The hypothesis is wrong or unproven; refine it or conclude no-trade.
+- **Historical PnL failing** → do NOT promote and do NOT loosen anything.
+ The hypothesis is wrong or unproven; refine it (different symbol subset,
+ different entry window — check `historical --help`) or conclude no-trade.
 
 ## Parameter experiment protocol
 
-Experiments exist to explain the funnel, not to manufacture candidates.
+Experiments are the engine of this loop — run them freely, but run them
+properly. Their purpose is to explain the funnel and build robust evidence,
+not to manufacture candidates.
 
 1. **Check prior attempts first**: scan this week's decisions/insights for
  the same knob — do not silently repeat an experiment already judged
@@ -304,16 +347,19 @@ Experiments exist to explain the funnel, not to manufacture candidates.
 2. **Pre-register before touching anything**: log via `decision add` the
  hypothesis, the single knob and new value, and the expected effect on
  specific funnel counts. No decision entry → no experiment.
-3. **One controlled change at a time** whenever practical. Small steps,
- inside allowed ranges.
+3. **One controlled change at a time for ordinary experiments.** Small
+ steps, inside allowed ranges. Combine with a symbol filter to make the
+ comparison sharp (same symbols, one knob changed). Multi-knob sweeps are
+ allowed only under the explicitly labeled bounded weekly sweep protocol,
+ not as an ordinary daily follow-up.
 4. **Run bounded**: prefer `--symbols` or `--max-chunks` scope for the
  experiment run; never a second full-universe run in the same day.
 5. **Verdict against baseline**: compare funnel counts to the prior
  default-knob run. Record supported / unsupported / inconclusive via
  `decision add`, plus the recommended next action.
-6. **Budget**: at most one experiment per iteration; sweeps once–twice per
- week. If several experiments this week were inconclusive, the correct
- next action is to stop and report the pattern, not experiment N+1.
+6. **Know when to stop a thread**: if the same hypothesis came back
+ inconclusive twice, stop iterating on it and report the pattern —
+ then move to a different hypothesis, not experiment N+1 of the same one.
 
 ## Internet and external context
 
@@ -340,7 +386,7 @@ operational facts the CLI does not persist, e.g.:
 - last baseline date checked
 - open threads (what earlier iterations left for the next one, with status)
 - latest important bottleneck being tracked
-- symbols already investigated today
+- symbols already investigated today (and under which parameter sets)
 - parameter experiments already tried this week
 - notification cooldowns (what was last reported, when)
 - last cleanup date
@@ -353,13 +399,14 @@ only a cache of loop bookkeeping.
 ## QC / compute discipline
 
 - One broad baseline per day, conservative flags. Everything after it is
- focused (`--symbols`), sampled (`--max-chunks`), or read-only
- (`insights`/`history`/`summarize`/`status`).
+ focused (`--symbols`), sampled (`--max-chunks`), targeted backtests
+ (`historical` on named symbols), or read-only
+ (`insights`/`history`/`summarize`/`status`/`--help`).
+- Bounded follow-ups are cheap and encouraged; broad universe compute is
+ the scarce resource. Spend curiosity on focused scopes.
 - Prior-run artifacts are free; QC runs are not. Reading yesterday's or
  this morning's artifacts is always cheaper than re-running — exhaust
- reference material before spending compute.
-- `historical --years 10` only when forward candidates exist or a focused
- interest is logged — never broad.
+ reference material before spending compute on a duplicate question.
 - `retry-failed` before any thought of re-running a whole scan.
 - Duplicate-run check before every run: same window + same symbols + same
  knobs → read prior artifacts instead.
