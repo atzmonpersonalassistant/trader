@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export TZ=Asia/Jerusalem
+export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+
+MODEL="gpt-5.4-mini"
+DATE="$(date +%F)"
+DRY_RUN=0
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: earnings-llm-postrun-review [--date YYYY-MM-DD] [--model MODEL] [--dry-run]
+
+No-op unless today's deterministic earnings-qc-research run has finished.
+No-op if another earnings LLM postrun review is currently running.
+Otherwise, run one trader-research-system bounded postrun review via the
+approved isolated Codex research runner.
+
+This script does not schedule itself and does not send push notifications.
+USAGE
+}
+
+json_escape() {
+  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
+}
+
+make_runner_inputs_usable() {
+  local task_file="$1"
+  local output_dir="$2"
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:agent-research-runner:--x" /agents /agents/research "$REPORT_ROOT" 2>/dev/null || true
+    setfacl -m "u:agent-research:rwx,u:agent-research-runner:rwx,m::rwx,d:u:agent-research:rwx,d:u:agent-research-runner:rwx,d:m::rwx" "$output_dir"
+    setfacl -m "u:agent-research-runner:r--" "$task_file"
+    chmod u+rw,o-rwx "$task_file"
+  else
+    chgrp agent-research-runner "$output_dir"
+    chmod 2770 "$output_dir"
+    chgrp agent-research-runner "$task_file"
+    chmod 0640 "$task_file"
+  fi
+}
+
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --date) DATE="${2:?missing --date value}"; shift 2 ;;
+    --model) MODEL="${2:?missing --model value}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "ERROR: unknown argument: $1" >&2; usage; exit 64 ;;
+  esac
+done
+
+if [[ ! "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: --date must be YYYY-MM-DD" >&2
+  exit 64
+fi
+case "$MODEL" in
+  *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 64 ;;
+esac
+
+DATE_COMPACT="${DATE//-/}"
+STATE_DIR="/agents/research/state/earnings-qc-research/llm-postrun-review"
+HANDOFF_DIR="/agents/research/handoff"
+REPORT_ROOT="/agents/research/reports"
+LOCK="${STATE_DIR}/earnings-llm-postrun-review.lock"
+mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
+
+# User-requested behavior: if a postrun review is already running, do nothing.
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "POSTRUN_REVIEW_ALREADY_RUNNING"
+  exit 0
+fi
+
+# Source of truth: DB row with finished_at. If today's daily run has not ended,
+# this script is a no-op.
+ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
+SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+FROM earnings_cache.research_runs
+WHERE campaign_id = 'daily-earnings-otm'
+  AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
+  AND finished_at IS NOT NULL
+ORDER BY finished_at DESC
+LIMIT 1;
+")"
+
+if [[ -z "$ROW" ]]; then
+  echo "NO_FINISHED_DAILY_RUN date=$DATE"
+  exit 0
+fi
+
+IFS=$'\t' read -r RUN_ID RUN_STATUS FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
+if [[ -z "${RUN_ID:-}" || -z "${RUN_DIR:-}" ]]; then
+  echo "ERROR: malformed DB row for date=$DATE: $ROW" >&2
+  exit 70
+fi
+if [[ ! -d "$RUN_DIR" || ! -f "$RUN_DIR/full_summary.json" ]]; then
+  echo "ERROR: finished DB row exists but run artifacts are missing: run_id=$RUN_ID run_dir=$RUN_DIR" >&2
+  exit 66
+fi
+
+TS="$(date -u +%Y%m%d-%H%M%S)"
+SAFE_RUN_ID="$(printf '%s' "$RUN_ID" | tr -c 'A-Za-z0-9._-' '-')"
+TASK_FILE="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${TS}-task.txt"
+OUTPUT_DIR="$REPORT_ROOT/research-pass-postrun-${DATE_COMPACT}-${TS}-${SAFE_RUN_ID}"
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "WOULD_RUN run_id=$RUN_ID task=$TASK_FILE output=$OUTPUT_DIR model=$MODEL"
+  exit 0
+fi
+
+mkdir -p "$OUTPUT_DIR"
+chmod 750 "$OUTPUT_DIR"
+
+cat > "$TASK_FILE" <<TASK
+You are running the trader-research-system skill for Uriel's VPS earnings-options research system.
+
+Context:
+- Deterministic daily scan has finished.
+- run_id: $RUN_ID
+- status: $RUN_STATUS
+- finished_at: $FINISHED_AT
+- run_dir: $RUN_DIR
+- final_candidate_count: $FINAL_COUNT
+- bottleneck: $BOTTLENECK
+- error: $RUN_ERROR
+
+Apply the trader-research-system rules exactly:
+- You are a skeptical research agent, not an autonomous trader.
+- Output is evidence, not trades. Default stance is NO TRADE until multi-year historical evidence says otherwise.
+- This invocation is one bounded iteration only: read state -> classify -> pick ONE action if justified -> execute -> record -> exit.
+- Never loop, never schedule yourself, never chain a second expensive action.
+- Allowed outcomes: Final candidate, Candidate worth manual review, Meaningful blocker, Parameter experiment result, No-trade conclusion.
+- Hard guardrails: no live trading, no broker orders, no final candidate without QC/EODHD multi-year historical option-PnL evidence, no bypassing/loosening gates to force a candidate, no broad/expensive universe runs without staged gates, no 0DTE/1DTE, no naked options, no fabricated/interpolated data, no Yahoo/yfinance unless explicitly approved.
+- Nasdaq calendar is only stage-1 forward earnings discovery; evidence after discovery must come from QC/LEAN or QC/EODHD.
+- This postrun invocation is review/recommendation only. Do not execute follow-up QC/LEAN/CLI actions from this isolated runner.
+- If a follow-up action would be justified by the skill, record it as the single recommended next action in the review artifact.
+- Do not re-spend QC/QCC from this postrun review.
+- Reporting threshold: final candidate, manual-review candidate, meaningful new bottleneck, system failure, major parameter change, or QC/QCC budget risk. Routine no-candidate/no-change should be logged, not pushed.
+
+Task:
+1. Read $RUN_DIR/full_summary.json and relevant small artifacts in $RUN_DIR.
+2. Classify the finished run according to the skill.
+3. If the skill would justify one allowed next action, record exactly one recommended next action; do not execute it in this postrun review.
+4. Write a durable review artifact to this output directory:
+   $OUTPUT_DIR/review.md
+   and, if useful, $OUTPUT_DIR/review.json
+5. Also write $OUTPUT_DIR/notify.txt containing either:
+   - NO_NOTIFY
+   - or a concise Hebrew WhatsApp-style message that meets the reporting threshold.
+6. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
+TASK
+chmod 0640 "$TASK_FILE"
+make_runner_inputs_usable "$TASK_FILE" "$OUTPUT_DIR"
+
+STARTED_AT="$(date -Is)"
+set +e
+sudo -n -u agent-research-runner /usr/local/bin/trading-research-runner-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" \
+  > "$OUTPUT_DIR/runner.stdout.log" 2> "$OUTPUT_DIR/runner.stderr.log"
+RC=$?
+set -e
+FINISHED_REVIEW_AT="$(date -Is)"
+
+RUN_ID_JSON="$(printf '%s' "$RUN_ID" | json_escape)"
+RUN_STATUS_JSON="$(printf '%s' "$RUN_STATUS" | json_escape)"
+FINISHED_AT_JSON="$(printf '%s' "$FINISHED_AT" | json_escape)"
+RUN_DIR_JSON="$(printf '%s' "$RUN_DIR" | json_escape)"
+cat > "$OUTPUT_DIR/run_metadata.json" <<META
+{
+  "run_id": "$RUN_ID_JSON",
+  "daily_run_status": "$RUN_STATUS_JSON",
+  "daily_finished_at": "$FINISHED_AT_JSON",
+  "run_dir": "$RUN_DIR_JSON",
+  "review_started_at": "$STARTED_AT",
+  "review_finished_at": "$FINISHED_REVIEW_AT",
+  "model": "$MODEL",
+  "returncode": $RC,
+  "task_file": "$TASK_FILE",
+  "runner": "trading-research-runner-codex",
+  "output_dir": "$OUTPUT_DIR"
+}
+META
+
+if [[ "$RC" -eq 0 ]]; then
+  echo "REVIEW_COMPLETED run_id=$RUN_ID output=$OUTPUT_DIR"
+else
+  echo "REVIEW_FAILED run_id=$RUN_ID rc=$RC output=$OUTPUT_DIR" >&2
+  exit "$RC"
+fi

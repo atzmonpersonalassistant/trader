@@ -120,6 +120,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
+            agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
@@ -234,6 +235,7 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-research" /agents/research/bin/earnings-qc-research
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-postrun-review" /agents/research/bin/earnings-llm-postrun-review
           tmp_cron="$(mktemp)"
           if sudo crontab -l >"$tmp_cron" 2>/dev/null; then
             grep -v -e '/usr/local/bin/earnings-qc-daily-run\.sh' -e '/usr/local/bin/earnings-otm-daily-root\.sh' "$tmp_cron" >"$tmp_cron.cleaned" || true
@@ -253,7 +255,15 @@ jobs:
           LOCK=/agents/research/state/earnings-qc-research/daily.lock
           LOG_DIR=/agents/research/logs/earnings-qc-research
           mkdir -p /agents/research/state/earnings-qc-research "$LOG_DIR"
-          exec flock -n "$LOCK" earnings-qc-research run             --campaign daily-earnings-otm             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end             >> "$LOG_DIR/daily-$(date +%Y%m%d).log" 2>&1
+          (
+            flock -n 9 || exit 0
+            set +e
+            earnings-qc-research run             --campaign daily-earnings-otm             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end
+            scan_rc=$?
+            set -e
+            earnings-llm-postrun-review || true
+            exit "$scan_rc"
+          ) 9>"$LOCK" >> "$LOG_DIR/daily-$(date +%Y%m%d).log" 2>&1
           EOF_DAILY_EARNINGS
           sudo chown agent-research:agent-research /agents/research/bin/earnings-otm-daily.sh
           sudo chmod 755 /agents/research/bin/earnings-otm-daily.sh
@@ -505,6 +515,7 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
+          bash -n /agents/research/bin/earnings-llm-postrun-review
           grep -q "Option Pricing / Volatility Intelligence" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker preflight" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker research-artifact" /usr/local/bin/trading-research-agent-loop
