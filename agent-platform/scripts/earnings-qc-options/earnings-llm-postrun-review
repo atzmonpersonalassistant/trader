@@ -144,28 +144,28 @@ mkdir -p "$OUTPUT_DIR" "$ACTION_DIR"
 chmod 750 "$OUTPUT_DIR"
 chmod 750 "$ACTION_DIR"
 
-cat > "$TASK_FILE" <<TASK
+cat > "$TASK_FILE" <<'TASK'
 You are running the full trader-research-system skill for Uriel's VPS earnings-options research system.
 
-Full skill content deployed on the VPS from GitHub at: $SKILL_FILE
+Full skill content deployed on the VPS from GitHub at: __SKILL_FILE__
 
 <TRADER_RESEARCH_SYSTEM_SKILL>
-$(cat "$SKILL_FILE")
+__SKILL_CONTENT__
 </TRADER_RESEARCH_SYSTEM_SKILL>
 
 Context:
 - Deterministic daily scan has finished.
-- run_id: $RUN_ID
-- status: $RUN_STATUS
-- finished_at: $FINISHED_AT
-- run_dir: $RUN_DIR
-- final_candidate_count: $FINAL_COUNT
-- bottleneck: $BOTTLENECK
-- error: $RUN_ERROR
+- run_id: __RUN_ID__
+- status: __RUN_STATUS__
+- finished_at: __FINISHED_AT__
+- run_dir: __RUN_DIR__
+- final_candidate_count: __FINAL_COUNT__
+- bottleneck: __BOTTLENECK__
+- error: __RUN_ERROR__
 
 Apply the full trader-research-system skill above. This invocation is allowed to execute exactly one bounded follow-up action when the skill calls for it. Execute follow-up actions only through this sudo wrapper, never by invoking the research CLI directly:
 
-sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID <COMMAND...>
+sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir __ACTION_DIR__ --bounded-action-id __BOUNDED_ACTION_ID__ <COMMAND...>
 
 The wrapper is the execution guardrail. If it rejects an action, record that as the blocker instead of working around it.
 
@@ -177,24 +177,47 @@ Short reminders:
 - Allowed outcomes: Final candidate, Candidate worth manual review, Meaningful blocker, Parameter experiment result, No-trade conclusion.
 - Hard guardrails: no live trading, no broker orders, no final candidate without QC/EODHD multi-year historical option-PnL evidence, no bypassing/loosening gates to force a candidate, no broad/expensive universe runs without staged gates, no 0DTE/1DTE, no naked options, no fabricated/interpolated data, no Yahoo/yfinance unless explicitly approved.
 - Nasdaq calendar is only stage-1 forward earnings discovery; evidence after discovery must come from QC/LEAN or QC/EODHD.
-- This postrun invocation may execute exactly one bounded follow-up action through `/usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir $ACTION_DIR --bounded-action-id $BOUNDED_ACTION_ID` when justified by the skill. The action id is one-use; a second mutating call will fail and must not be worked around.
+- This postrun invocation may execute exactly one bounded follow-up action through `/usr/local/sbin/trading-research-bounded-earnings-qc --bounded-action-dir __ACTION_DIR__ --bounded-action-id __BOUNDED_ACTION_ID__` when justified by the skill. The action id is one-use; a second mutating call will fail and must not be worked around.
 - Do not invoke `/agents/research/bin/earnings-qc-research` directly; use the bounded wrapper only.
 - Do not re-spend QC/QCC on duplicate work. Read prior artifacts first; if the wrapper refuses a broad or unsafe action, stop and record the blocker.
 - Reporting threshold: final candidate, manual-review candidate, meaningful new bottleneck, system failure, major parameter change, or QC/QCC budget risk. Routine no-candidate/no-change should be logged, not pushed.
 
 Task:
-1. Read $RUN_DIR/full_summary.json and relevant small artifacts in $RUN_DIR.
+1. Read __RUN_DIR__/full_summary.json and relevant small artifacts in __RUN_DIR__.
 2. Classify the finished run according to the skill.
 3. If the skill justifies one allowed next action, execute exactly one action through the bounded wrapper; otherwise record why no action was justified.
 4. Write a durable review artifact to this output directory:
-   $OUTPUT_DIR/review.md
-   and, if useful, $OUTPUT_DIR/review.json
-5. Also write $OUTPUT_DIR/notify.txt containing either:
+   __OUTPUT_DIR__/review.md
+   and, if useful, __OUTPUT_DIR__/review.json
+5. Also write __OUTPUT_DIR__/notify.txt containing either:
    - NO_NOTIFY
    - or a concise Hebrew WhatsApp-style message that meets the reporting threshold.
 6. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
 7. Record the exact bounded-wrapper command you ran, or `NO_ACTION`, in the artifact.
 TASK
+python3 - "$TASK_FILE" "$SKILL_FILE" "$RUN_ID" "$RUN_STATUS" "$FINISHED_AT" "$RUN_DIR" "$FINAL_COUNT" "$BOTTLENECK" "$RUN_ERROR" "$ACTION_DIR" "$BOUNDED_ACTION_ID" "$OUTPUT_DIR" <<'PY'
+import pathlib, sys
+(task_file, skill_file, run_id, run_status, finished_at, run_dir, final_count, bottleneck, run_error, action_dir, bounded_action_id, output_dir) = sys.argv[1:]
+text = pathlib.Path(task_file).read_text()
+skill = pathlib.Path(skill_file).read_text()
+replacements = {
+    '__SKILL_FILE__': skill_file,
+    '__SKILL_CONTENT__': skill,
+    '__RUN_ID__': run_id,
+    '__RUN_STATUS__': run_status,
+    '__FINISHED_AT__': finished_at,
+    '__RUN_DIR__': run_dir,
+    '__FINAL_COUNT__': final_count,
+    '__BOTTLENECK__': bottleneck,
+    '__RUN_ERROR__': run_error,
+    '__ACTION_DIR__': action_dir,
+    '__BOUNDED_ACTION_ID__': bounded_action_id,
+    '__OUTPUT_DIR__': output_dir,
+}
+for old, new in replacements.items():
+    text = text.replace(old, new)
+pathlib.Path(task_file).write_text(text)
+PY
 chmod 0640 "$TASK_FILE"
 make_runner_inputs_usable "$TASK_FILE" "$OUTPUT_DIR"
 

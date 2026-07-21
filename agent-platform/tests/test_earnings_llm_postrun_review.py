@@ -34,9 +34,16 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("trading-research-bounded-earnings-qc", text)
         self.assertIn("execute exactly one bounded follow-up action", text)
         self.assertIn("The wrapper is the execution guardrail", text)
-        self.assertIn("--bounded-action-dir $ACTION_DIR", text)
+        self.assertIn("--bounded-action-dir __ACTION_DIR__", text)
         self.assertIn("The action id is one-use", text)
         self.assertIn("Do not send any message yourself", text)
+
+    def test_task_heredoc_is_single_quoted_to_prevent_prompt_command_substitution(self):
+        text = SCRIPT.read_text()
+        self.assertIn("cat > \"$TASK_FILE\" <<'TASK'", text)
+        self.assertIn("__BOUNDED_ACTION_ID__", text)
+        self.assertIn("__SKILL_CONTENT__", text)
+        self.assertIn("pathlib.Path(task_file).write_text(text)", text)
 
     def test_runner_permissions_are_prepared_for_approved_isolated_runner(self):
         text = SCRIPT.read_text()
