@@ -337,6 +337,23 @@ PY
   set -e
   if [[ "$BOUNDED_ACTION_RC" -eq 0 ]]; then
     BOUNDED_ACTION_STATUS="EXECUTED"
+  elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3 - "$BOUNDED_STDOUT" <<'PY_STATUS'
+import json, pathlib, sys
+try:
+    data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+status = str(data.get('status') or '')
+ok = data.get('ok')
+# earnings-qc-research returns rc=2 for completed research no-trade/blocker
+# outcomes as well as for invalid requests. Treat only known research blocker
+# payloads as executed; wrapper/request errors still remain FAILED.
+if ok is False and status.startswith(('BLOCKED_', 'PARTIAL_')):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY_STATUS
+  then
+    BOUNDED_ACTION_STATUS="EXECUTED_RESEARCH_BLOCKED"
   else
     BOUNDED_ACTION_STATUS="FAILED"
   fi
@@ -415,7 +432,7 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
 }
 META
 
-if [[ "$RC" -eq 0 && ( "$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED" ) ]]; then
+if [[ "$RC" -eq 0 && ( "$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED" || "$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED" ) ]]; then
   mkdir -p "$STATE_DIR/completed-runs"
   if mkdir "$COMPLETED_MARKER_DIR" 2>/dev/null; then
     printf '%s
