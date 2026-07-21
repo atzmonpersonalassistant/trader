@@ -15,6 +15,7 @@ on:
       - "agent-platform/scripts/trading-research-qc-api-extract"
       - "agent-platform/scripts/trading-research-qc-docker-run"
       - "agent-platform/scripts/earnings-qc-options/**"
+      - "agent-platform/skills/trader-research-system/**"
       - "agent-platform/scripts/trading-orchestrator-tick"
       - ".github/workflows/vps-deploy.yml"
   workflow_dispatch:
@@ -121,6 +122,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
             agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review \
+            agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
@@ -236,6 +238,8 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-postrun-review" /agents/research/bin/earnings-llm-postrun-review
+          sudo install -d -o agent-research -g agent-research -m 755 /agents/research/skills/trader-research-system
+          sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/SKILL.md" /agents/research/skills/trader-research-system/SKILL.md
           tmp_cron="$(mktemp)"
           if sudo crontab -l >"$tmp_cron" 2>/dev/null; then
             grep -v -e '/usr/local/bin/earnings-qc-daily-run\.sh' -e '/usr/local/bin/earnings-otm-daily-root\.sh' "$tmp_cron" >"$tmp_cron.cleaned" || true
