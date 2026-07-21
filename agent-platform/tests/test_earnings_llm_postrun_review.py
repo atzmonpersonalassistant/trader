@@ -122,5 +122,14 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertLess(text.index('-e "$REQUEST_FILE"'), text.index('invalid bounded_action_request.json'))
 
 
+    def test_research_blocker_returncode_two_counts_as_executed_action(self):
+        text = SCRIPT.read_text()
+        self.assertIn('EXECUTED_RESEARCH_BLOCKED', text)
+        self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3', text)
+        self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_'))", text)
+        self.assertIn('earnings-qc-research returns rc=2 for completed research no-trade/blocker', text)
+        self.assertIn('"$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
+
+
 if __name__ == "__main__":
     unittest.main()
