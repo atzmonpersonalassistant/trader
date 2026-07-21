@@ -257,12 +257,7 @@ jobs:
           mkdir -p /agents/research/state/earnings-qc-research "$LOG_DIR"
           (
             flock -n 9 || exit 0
-            set +e
             earnings-qc-research run             --campaign daily-earnings-otm             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end
-            scan_rc=$?
-            set -e
-            earnings-llm-postrun-review || true
-            exit "$scan_rc"
           ) 9>"$LOCK" >> "$LOG_DIR/daily-$(date +%Y%m%d).log" 2>&1
           EOF_DAILY_EARNINGS
           sudo chown agent-research:agent-research /agents/research/bin/earnings-otm-daily.sh
