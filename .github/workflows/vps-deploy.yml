@@ -121,6 +121,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
+            agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc \
             agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
@@ -237,6 +238,7 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-research" /agents/research/bin/earnings-qc-research
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-postrun-review" /agents/research/bin/earnings-llm-postrun-review
           sudo install -d -o agent-research -g agent-research -m 755 /agents/research/skills/trader-research-system
           sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/SKILL.md" /agents/research/skills/trader-research-system/SKILL.md
@@ -468,6 +470,8 @@ jobs:
           sudo tee /etc/sudoers.d/trading-agent-research-runner >/dev/null <<'EOF_SUDOERS_RUNNER'
           # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
           agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+          # Allow the isolated runner to execute only bounded public earnings-QC research actions.
+          agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
           EOF_SUDOERS_RUNNER
           sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
@@ -521,7 +525,13 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
+          bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
+          sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'
+          sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc cleanup --dry-run'
+          sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc run --symbols AAPL,MSFT,GOOG,AMZN,META,NVDA --years 1 --parallel 1 --end-to-end'
+          sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc run --max-chunks 2 --years 999 --parallel 1 --end-to-end'
+          sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc summarize --run-id smoke --not'
           grep -q "Option Pricing / Volatility Intelligence" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker preflight" /usr/local/bin/trading-research-agent-loop
           grep -q "trading-research-qc-broker research-artifact" /usr/local/bin/trading-research-agent-loop
@@ -543,6 +553,8 @@ jobs:
           grep -q "cost_credit_guardrail_required" /usr/local/bin/trading-research-qc-broker
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
+          grep -q -- "trading-research-bounded-earnings-qc" /agents/research/bin/earnings-llm-postrun-review
+          grep -q -- "agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *" /etc/sudoers.d/trading-agent-research-runner
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
           grep -q -- "approval_policy=\"never\"" /usr/local/bin/trading-research-runner-codex
           ! grep -q -- "sandbox_workspace_write.network_access=true" /usr/local/bin/trading-research-runner-codex
