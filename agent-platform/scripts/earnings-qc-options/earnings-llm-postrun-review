@@ -15,10 +15,11 @@ usage: earnings-llm-postrun-review [--date YYYY-MM-DD] [--model MODEL] [--dry-ru
 
 No-op unless today's deterministic earnings-qc-research run has finished.
 No-op if another earnings LLM postrun review is currently running.
-Otherwise, run one trader-research-system bounded postrun review via the
+Otherwise, run one trader-research-system bounded iteration via the
 approved isolated Codex research runner.
 
-This script does not schedule itself and does not send push notifications.
+The LLM may execute at most one allowed public earnings-qc-research CLI action
+per invocation. This script does not schedule itself and does not send push notifications.
 USAGE
 }
 
@@ -136,39 +137,47 @@ Context:
 - bottleneck: $BOTTLENECK
 - error: $RUN_ERROR
 
-Apply the full trader-research-system skill above, with this postrun-mode override: this invocation is REVIEW/RECOMMENDATION ONLY. If the skill says an action should be executed, do not execute it here; record exactly one recommended next action instead. This postrun-mode override wins over any conflicting skill text.
+Apply the full trader-research-system skill above. This invocation is allowed to execute exactly ONE permitted public earnings-qc-research CLI action when the skill justifies it. Do not execute more than one action. If no action is justified, record a no-action/no-trade outcome and exit.
+
+Runtime override: you are already running on the Trader VPS inside the isolated research runner. Do not SSH back into the VPS. When executing the public CLI, you MUST use this bounded wrapper and only this wrapper: sudo -n /usr/local/sbin/trading-research-bounded-earnings-qc <COMMAND...>
+The wrapper allows read-only state commands (status/history/insights), enforces that state is read before any mutating/expensive action, and enforces at most one mutating/expensive earnings-qc-research action per Codex runner invocation. summarize is treated as an action because it can write artifacts. It runs the CLI as agent-research, rejects cleanup, rejects --notify/outbox behavior, and a second action call in the same iteration will fail.
 
 Short reminders:
 - You are a skeptical research agent, not an autonomous trader.
 - Output is evidence, not trades. Default stance is NO TRADE until multi-year historical evidence says otherwise.
-- This invocation is one bounded iteration only: read state -> classify -> pick ONE action if justified -> execute -> record -> exit.
+- This invocation is one bounded iteration only: read state -> review prior runs -> classify -> pick ONE action if justified -> execute -> record -> exit.
 - Never loop, never schedule yourself, never chain a second expensive action.
 - Allowed outcomes: Final candidate, Candidate worth manual review, Meaningful blocker, Parameter experiment result, No-trade conclusion.
 - Hard guardrails: no live trading, no broker orders, no final candidate without QC/EODHD multi-year historical option-PnL evidence, no bypassing/loosening gates to force a candidate, no broad/expensive universe runs without staged gates, no 0DTE/1DTE, no naked options, no fabricated/interpolated data, no Yahoo/yfinance unless explicitly approved.
 - Nasdaq calendar is only stage-1 forward earnings discovery; evidence after discovery must come from QC/LEAN or QC/EODHD.
-- This postrun invocation is review/recommendation only. Do not execute follow-up QC/LEAN/CLI actions from this isolated runner.
-- If a follow-up action would be justified by the skill, record it as the single recommended next action in the review artifact.
-- Do not re-spend QC/QCC from this postrun review.
+- You may use read-only CLI commands for state, then execute at most one allowed public CLI action from this isolated runner, exactly as the skill permits.
+- Execute it only via sudo -n /usr/local/sbin/trading-research-bounded-earnings-qc <COMMAND...>.
+- Never call internal libexec/stage scripts directly. Never bypass the public CLI or bounded wrapper. Never pass --notify. Never run cleanup.
+- Do not run live trading, broker orders, order simulation, or order-placement code paths.
+- Respect QC/compute discipline: read status/history/insights/artifacts before spending QC, prefer retry/focused/sampled actions over broad work, and never run a second full-universe baseline the same day.
 - Reporting threshold: final candidate, manual-review candidate, meaningful new bottleneck, system failure, major parameter change, or QC/QCC budget risk. Routine no-candidate/no-change should be logged, not pushed.
 
 Task:
-1. Read $RUN_DIR/full_summary.json and relevant small artifacts in $RUN_DIR.
-2. Classify the finished run according to the skill.
-3. If the skill would justify one allowed next action, record exactly one recommended next action; do not execute it in this postrun review.
-4. Write a durable review artifact to this output directory:
+1. Read status/history/insights and $RUN_DIR/full_summary.json plus relevant small artifacts in $RUN_DIR.
+2. Classify the current research state according to the skill and prior iterations.
+3. Pick at most ONE allowed action. Execute it only if justified by the skill and compute guardrails; otherwise choose no action.
+4. Record what you read, what action you chose, the exact command if executed, stdout/stderr summary, resulting artifacts/run IDs, and the final outcome.
+5. Write a durable iteration artifact to this output directory:
    $OUTPUT_DIR/review.md
    and, if useful, $OUTPUT_DIR/review.json
-5. Also write $OUTPUT_DIR/notify.txt containing either:
+6. Also write $OUTPUT_DIR/notify.txt containing either:
    - NO_NOTIFY
    - or a concise Hebrew WhatsApp-style message that meets the reporting threshold.
-6. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
+7. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
 TASK
 chmod 0640 "$TASK_FILE"
 make_runner_inputs_usable "$TASK_FILE" "$OUTPUT_DIR"
 
 STARTED_AT="$(date -Is)"
+INVOCATION_ID="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+sudo -n /usr/local/sbin/trading-research-register-bounded-invocation "$INVOCATION_ID" "$OUTPUT_DIR"
 set +e
-sudo -n -u agent-research-runner /usr/local/bin/trading-research-runner-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" \
+sudo -n -u agent-research-runner /usr/local/bin/trading-research-runner-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" "$INVOCATION_ID" \
   > "$OUTPUT_DIR/runner.stdout.log" 2> "$OUTPUT_DIR/runner.stderr.log"
 RC=$?
 set -e
@@ -190,7 +199,8 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
   "returncode": $RC,
   "task_file": "$TASK_FILE",
   "runner": "trading-research-runner-codex",
-  "output_dir": "$OUTPUT_DIR"
+  "output_dir": "$OUTPUT_DIR",
+  "bounded_invocation_id": "$INVOCATION_ID"
 }
 META
 

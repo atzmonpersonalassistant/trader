@@ -28,9 +28,14 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
         self.assertIn("trading-research-runner-codex", text)
-        self.assertIn("review/recommendation only", text)
-        self.assertIn("postrun-mode override wins over any conflicting skill text", text)
-        self.assertIn("do not execute it here; record exactly one recommended next action instead", text)
+        self.assertIn("trading-research-register-bounded-invocation", text)
+        self.assertIn("INVOCATION_ID", text)
+        self.assertIn("allowed to execute exactly ONE permitted public earnings-qc-research CLI action", text)
+        self.assertIn("Do not execute more than one action", text)
+        self.assertIn("Do not SSH back into the VPS", text)
+        self.assertIn("sudo -n /usr/local/sbin/trading-research-bounded-earnings-qc", text)
+        self.assertIn("at most one mutating/expensive earnings-qc-research action per Codex runner invocation", text)
+        self.assertIn("summarize is treated as an action", text)
         self.assertIn("Do not send any message yourself", text)
 
     def test_runner_permissions_are_prepared_for_approved_isolated_runner(self):
@@ -38,7 +43,13 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("make_runner_inputs_usable", text)
         self.assertIn("agent-research-runner:rwx", text)
         self.assertIn("trading-research-runner-codex", text)
-        self.assertIn("Do not execute follow-up", text)
+        self.assertIn("trading-research-register-bounded-invocation", text)
+        self.assertIn("INVOCATION_ID", text)
+        self.assertIn("execute at most one allowed public CLI action", text)
+        self.assertIn("Never call internal libexec/stage scripts directly", text)
+        self.assertIn("bounded wrapper", text)
+        self.assertIn("Never pass --notify", text)
+        self.assertIn("Never run cleanup", text)
 
 
 if __name__ == "__main__":

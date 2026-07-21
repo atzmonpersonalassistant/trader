@@ -220,15 +220,19 @@ visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
 cat > /usr/local/bin/trading-research-runner-codex <<'RUNNER_CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-  echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
+if [[ "$#" -lt 2 || "$#" -gt 4 ]]; then
+  echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR [MODEL] [BOUNDED_INVOCATION_ID]" >&2
   exit 64
 fi
 TASK_FILE="$1"
 OUTPUT_DIR="$2"
 MODEL="${3:-gpt-5.4-mini}"
+BOUNDED_INVOCATION_ID="${4:-}"
 case "$MODEL" in
   *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
+esac
+case "$BOUNDED_INVOCATION_ID" in
+  *[!A-Fa-f0-9]* ) echo "ERROR: unsafe bounded invocation id" >&2; exit 72 ;;
 esac
 case "$TASK_FILE" in
   /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
@@ -256,6 +260,8 @@ cd "$OUT_REAL"
 export HOME=/home/agent-research-runner
 export PATH=/usr/local/bin:/usr/bin:/bin
 export PYTHONDONTWRITEBYTECODE=1
+export TRADING_RESEARCH_BOUNDED_INVOCATION_ID="$BOUNDED_INVOCATION_ID"
+export TRADING_RESEARCH_BOUNDED_OUTPUT_DIR="$OUT_REAL"
 umask 0007
 if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
   echo "ERROR: runner user can read QuantConnect secrets" >&2
@@ -265,6 +271,244 @@ exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandb
 RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
+cat > /usr/local/sbin/trading-research-register-bounded-invocation <<'REGISTER_BOUNDED_INVOCATION'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${SUDO_USER:-}" != "agent-research" ]]; then
+  echo "ERROR: register helper may only be invoked by agent-research" >&2
+  exit 77
+fi
+if [[ "$#" -ne 2 ]]; then
+  echo "usage: trading-research-register-bounded-invocation INVOCATION_ID OUTPUT_DIR" >&2
+  exit 64
+fi
+INVOCATION_ID="$1"
+OUTPUT_DIR="$2"
+case "$INVOCATION_ID" in
+  *[!A-Fa-f0-9]*|"" ) echo "ERROR: unsafe invocation id" >&2; exit 65 ;;
+esac
+OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
+case "$OUT_REAL" in
+  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
+  *) echo "ERROR: output dir must be an approved research reports directory" >&2; exit 67 ;;
+esac
+if [[ -L "$OUTPUT_DIR" || ! -d "$OUTPUT_DIR" ]]; then
+  echo "ERROR: output dir is not usable" >&2
+  exit 66
+fi
+STATE_ROOT="/agents/research/state/earnings-qc-research/bounded-llm-actions"
+install -d -o root -g root -m 700 "$STATE_ROOT"
+REG="$STATE_ROOT/${INVOCATION_ID}.registered"
+python3 - "$REG" "$OUT_REAL" <<'PY_REGISTER'
+import os, stat, sys, time
+path, out_real = sys.argv[1], sys.argv[2]
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+try:
+    fd = os.open(path, flags, 0o600)
+except FileExistsError:
+    raise SystemExit(68)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0:
+        raise SystemExit('registry is not root-owned regular file')
+    os.write(fd, f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')}\t{out_real}\n".encode())
+finally:
+    os.close(fd)
+PY_REGISTER
+chown root:root "$REG"
+chmod 600 "$REG"
+REGISTER_BOUNDED_INVOCATION
+chown root:root /usr/local/sbin/trading-research-register-bounded-invocation
+chmod 755 /usr/local/sbin/trading-research-register-bounded-invocation
+cat > /usr/local/sbin/trading-research-bounded-earnings-qc <<'BOUNDED_EARNINGS_QC'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${SUDO_USER:-}" != "agent-research-runner" ]]; then
+  echo "ERROR: wrapper may only be invoked by agent-research-runner via sudo" >&2
+  exit 77
+fi
+if [[ "$#" -lt 1 ]]; then
+  echo "ERROR: missing earnings-qc-research subcommand" >&2
+  exit 64
+fi
+INVOCATION_ID="${TRADING_RESEARCH_BOUNDED_INVOCATION_ID:-}"
+EXPECTED_OUTPUT_DIR="${TRADING_RESEARCH_BOUNDED_OUTPUT_DIR:-}"
+case "$INVOCATION_ID" in
+  *[!A-Fa-f0-9]*|"" ) echo "ERROR: missing/unsafe bounded invocation id" >&2; exit 84 ;;
+esac
+OUT_REAL="$(python3 -c 'import os; print(os.path.realpath(os.getcwd()))')"
+EXPECTED_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$EXPECTED_OUTPUT_DIR")"
+case "$OUT_REAL" in
+  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
+  *) echo "ERROR: must run from approved research output directory" >&2; exit 78 ;;
+esac
+if [[ "$OUT_REAL" != "$EXPECTED_REAL" ]]; then
+  echo "ERROR: wrapper cwd does not match registered invocation output dir" >&2
+  exit 85
+fi
+STATE_ROOT="/agents/research/state/earnings-qc-research/bounded-llm-actions"
+REG="$STATE_ROOT/${INVOCATION_ID}.registered"
+if [[ -L "$REG" || ! -s "$REG" ]]; then
+  echo "ERROR: bounded invocation is not registered" >&2
+  exit 86
+fi
+REG_OUT="$(cut -f2- "$REG" | tail -1)"
+if [[ "$REG_OUT" != "$OUT_REAL" ]]; then
+  echo "ERROR: bounded invocation registry does not match output dir" >&2
+  exit 87
+fi
+for arg in "$@"; do
+  case "$arg" in
+    --not*) echo "ERROR: notify/no-outbox variants are reserved by the bounded wrapper" >&2; exit 80 ;;
+  esac
+done
+SUBCOMMAND="$1"
+READ_MARKER="$STATE_ROOT/${INVOCATION_ID}.read"
+ACTION_MARKER="$STATE_ROOT/${INVOCATION_ID}.action"
+record_marker_append() {
+  local path="$1"
+  shift
+  python3 - "$path" "$INVOCATION_ID" "$OUT_REAL" "$*" <<'PY_SAFE_MARKER'
+import os, stat, sys, time
+path, invocation_id, out_real, payload = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, 'O_NOFOLLOW', 0)
+fd = os.open(path, flags, 0o600)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0:
+        raise SystemExit('marker is not a root-owned regular file')
+    os.write(fd, f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')}\t{invocation_id}\t{out_real}\t{payload}\n".encode())
+finally:
+    os.close(fd)
+PY_SAFE_MARKER
+  chown root:root "$path"
+  chmod 600 "$path"
+}
+claim_action_marker() {
+  local path="$1"
+  shift
+  python3 - "$path" "$INVOCATION_ID" "$OUT_REAL" "$*" <<'PY_CLAIM_MARKER'
+import os, stat, sys, time
+path, invocation_id, out_real, payload = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+try:
+    fd = os.open(path, flags, 0o600)
+except FileExistsError:
+    raise SystemExit(79)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != 0:
+        raise SystemExit('marker is not a root-owned regular file')
+    os.write(fd, f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')}\t{invocation_id}\t{out_real}\t{payload}\n".encode())
+finally:
+    os.close(fd)
+PY_CLAIM_MARKER
+}
+enforce_bounded_scope() {
+  case "$SUBCOMMAND" in
+    run)
+      local has_symbols=0
+      local max_chunks=""
+      local arg
+      while [[ "$#" -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+          --symbols|--symbols=*) has_symbols=1 ;;
+          --max-chunks) shift; max_chunks="${1:-}" ;;
+          --max-chunks=*) max_chunks="${arg#--max-chunks=}" ;;
+        esac
+        shift || true
+      done
+      if [[ "$has_symbols" -eq 1 ]]; then
+        return 0
+      fi
+      if [[ "$max_chunks" =~ ^[0-9]+$ && "$max_chunks" -ge 1 && "$max_chunks" -le 2 ]]; then
+        return 0
+      fi
+      echo "ERROR: bounded LLM run requires --symbols or --max-chunks 1..2" >&2
+      exit 88
+      ;;
+    historical)
+      local years=""
+      local arg
+      while [[ "$#" -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+          --years) shift; years="${1:-}" ;;
+          --years=*) years="${arg#--years=}" ;;
+        esac
+        shift || true
+      done
+      if [[ ! "$years" =~ ^[0-9]+$ || "$years" -lt 1 || "$years" -gt 10 ]]; then
+        echo "ERROR: bounded LLM historical requires --years 1..10" >&2
+        exit 90
+      fi
+      ;;
+    retry-failed)
+      local has_offset=0
+      local arg
+      for arg in "$@"; do
+        case "$arg" in
+          --offset|--offset=*) has_offset=1 ;;
+        esac
+      done
+      if [[ "$has_offset" -ne 1 ]]; then
+        echo "ERROR: bounded LLM retry-failed requires explicit --offset" >&2
+        exit 89
+      fi
+      ;;
+  esac
+}
+
+case "$SUBCOMMAND" in
+  status|history|insights)
+    set +e
+    sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research "$@"
+    READ_RC=$?
+    set -e
+    if [[ "$READ_RC" -eq 0 ]]; then
+      record_marker_append "$READ_MARKER" "$*"
+    fi
+    exit "$READ_RC"
+    ;;
+  cleanup)
+    echo "ERROR: cleanup is not allowed from bounded LLM execution" >&2
+    exit 81
+    ;;
+  run|historical|retry-failed|decision|summarize)
+    ;;
+  *)
+    echo "ERROR: subcommand is not allowed from bounded LLM execution: $SUBCOMMAND" >&2
+    exit 82
+    ;;
+esac
+enforce_bounded_scope "${@:2}"
+if [[ -L "$READ_MARKER" || ! -s "$READ_MARKER" ]]; then
+  echo "ERROR: read-only state command must be run before a mutating/expensive action" >&2
+  exit 83
+fi
+set +e
+claim_action_marker "$ACTION_MARKER" "$*"
+CLAIM_RC=$?
+set -e
+if [[ "$CLAIM_RC" -eq 79 ]]; then
+  echo "ERROR: bounded iteration already used its single earnings-qc-research action" >&2
+  exit 79
+elif [[ "$CLAIM_RC" -ne 0 ]]; then
+  exit "$CLAIM_RC"
+fi
+case "$SUBCOMMAND" in
+  run)
+    for arg in "$@"; do [[ "$arg" == "--no-outbox" ]] && exec sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research "$@"; done
+    exec sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research "$@" --no-outbox
+    ;;
+  *)
+    exec sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research "$@"
+    ;;
+esac
+BOUNDED_EARNINGS_QC
+chown root:root /usr/local/sbin/trading-research-bounded-earnings-qc
+chmod 755 /usr/local/sbin/trading-research-bounded-earnings-qc
 
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
 # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
@@ -272,6 +516,21 @@ agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-rese
 SUDOERS_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
 visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
+cat > /etc/sudoers.d/trading-agent-research-bounded-earnings-qc <<'EOF_SUDOERS_BOUNDED_EARNINGS_QC'
+Defaults:agent-research-runner env_keep += "TRADING_RESEARCH_BOUNDED_INVOCATION_ID TRADING_RESEARCH_BOUNDED_OUTPUT_DIR"
+# Allow the isolated research runner to execute at most one public earnings-qc-research command through the bounded wrapper.
+agent-research-runner ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
+EOF_SUDOERS_BOUNDED_EARNINGS_QC
+chmod 440 /etc/sudoers.d/trading-agent-research-bounded-earnings-qc
+visudo -cf /etc/sudoers.d/trading-agent-research-bounded-earnings-qc
+
+
+cat > /etc/sudoers.d/trading-agent-research-register-bounded-invocation <<'EOF_SUDOERS_REGISTER_BOUNDED_INVOCATION'
+# Allow the research cron user to register one bounded LLM invocation before launching the isolated runner.
+agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-register-bounded-invocation *
+EOF_SUDOERS_REGISTER_BOUNDED_INVOCATION
+chmod 440 /etc/sudoers.d/trading-agent-research-register-bounded-invocation
+visudo -cf /etc/sudoers.d/trading-agent-research-register-bounded-invocation >/dev/null
 
 cat > /etc/sudoers.d/trading-agent-research-qc-docker <<'SUDOERS_QC_DOCKER'
 # Allow the research broker to run only the safe QC/LEAN Docker wrapper as root.
