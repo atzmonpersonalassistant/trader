@@ -554,7 +554,7 @@ jobs:
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-bounded-earnings-qc" /agents/research/bin/earnings-llm-postrun-review
-          grep -q -- "agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *" /etc/sudoers.d/trading-agent-research-runner
+          sudo grep -q -- "agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *" /etc/sudoers.d/trading-agent-research-runner
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
           grep -q -- "approval_policy=\"never\"" /usr/local/bin/trading-research-runner-codex
           ! grep -q -- "sandbox_workspace_write.network_access=true" /usr/local/bin/trading-research-runner-codex
