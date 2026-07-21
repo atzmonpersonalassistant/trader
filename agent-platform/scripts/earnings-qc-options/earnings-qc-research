@@ -17,7 +17,7 @@ def safe_identifier(value: str, default: str) -> str:
     return value
 
 PG_SCHEMA = safe_identifier(os.environ.get('TRADER_RESEARCH_SCHEMA', 'earnings_cache'), 'earnings_cache')
-DEFAULT_CAMPAIGN = os.environ.get('EARNINGS_QC_CAMPAIGN', 'earnings-runup-cheap-calls')
+DEFAULT_CAMPAIGN = os.environ.get('EARNINGS_QC_CAMPAIGN', 'daily-earnings-otm')
 DB_STRICT = False
 
 INT_FUNNEL_KEYS = [

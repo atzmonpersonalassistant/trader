@@ -76,8 +76,9 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Source of truth: DB row with finished_at. If today's daily run has not ended,
-# this script is a no-op.
+# Source of truth: DB row with finished_at. Prefer the canonical daily campaign.
+# Legacy/manual runs before this fix may have used the old default campaign, so
+# fall back by deterministic daily run_id + conservative daily parameters only.
 ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
 SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
 FROM earnings_cache.research_runs
@@ -87,6 +88,28 @@ WHERE campaign_id = 'daily-earnings-otm'
 ORDER BY finished_at DESC
 LIMIT 1;
 ")"
+
+if [[ -z "$ROW" ]]; then
+  ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
+  SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+  FROM earnings_cache.research_runs
+  WHERE run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
+    AND finished_at IS NOT NULL
+    AND COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'
+    AND COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'
+    AND COALESCE((parameters_json->>'years')::int, 1) = 1
+    AND COALESCE((parameters_json->>'parallel')::int, 1) = 1
+    AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
+    AND COALESCE((parameters_json->>'chunk_size')::int, 25) = 25
+    AND COALESCE(parameters_json->>'symbols','') = ''
+    AND COALESCE(parameters_json->>'calendar_source','nasdaq') = 'nasdaq'
+  ORDER BY finished_at DESC
+  LIMIT 1;
+  ")"
+  if [[ -n "$ROW" ]]; then
+    echo "USING_LEGACY_DAILY_RUN_FALLBACK date=$DATE"
+  fi
+fi
 
 if [[ -z "$ROW" ]]; then
   echo "NO_FINISHED_DAILY_RUN date=$DATE"
