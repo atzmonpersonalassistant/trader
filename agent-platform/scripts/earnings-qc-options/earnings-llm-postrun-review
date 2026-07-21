@@ -65,6 +65,7 @@ DATE_COMPACT="${DATE//-/}"
 STATE_DIR="/agents/research/state/earnings-qc-research/llm-postrun-review"
 HANDOFF_DIR="/agents/research/handoff"
 REPORT_ROOT="/agents/research/reports"
+SKILL_FILE="/agents/research/skills/trader-research-system/SKILL.md"
 LOCK="${STATE_DIR}/earnings-llm-postrun-review.lock"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
@@ -117,7 +118,13 @@ mkdir -p "$OUTPUT_DIR"
 chmod 750 "$OUTPUT_DIR"
 
 cat > "$TASK_FILE" <<TASK
-You are running the trader-research-system skill for Uriel's VPS earnings-options research system.
+You are running the full trader-research-system skill for Uriel's VPS earnings-options research system.
+
+Full skill content deployed on the VPS from GitHub at: $SKILL_FILE
+
+<TRADER_RESEARCH_SYSTEM_SKILL>
+$(cat "$SKILL_FILE")
+</TRADER_RESEARCH_SYSTEM_SKILL>
 
 Context:
 - Deterministic daily scan has finished.
@@ -129,7 +136,9 @@ Context:
 - bottleneck: $BOTTLENECK
 - error: $RUN_ERROR
 
-Apply the trader-research-system rules exactly:
+Apply the full trader-research-system skill above, with this postrun-mode override: this invocation is REVIEW/RECOMMENDATION ONLY. If the skill says an action should be executed, do not execute it here; record exactly one recommended next action instead. This postrun-mode override wins over any conflicting skill text.
+
+Short reminders:
 - You are a skeptical research agent, not an autonomous trader.
 - Output is evidence, not trades. Default stance is NO TRADE until multi-year historical evidence says otherwise.
 - This invocation is one bounded iteration only: read state -> classify -> pick ONE action if justified -> execute -> record -> exit.
