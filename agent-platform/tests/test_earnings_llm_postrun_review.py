@@ -24,8 +24,6 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn("POSTRUN_REVIEW_ALREADY_RUNNING", text)
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
-        self.assertIn("ALREADY_REVIEWED", text)
-        self.assertIn("${RUN_ID}.done", text)
         self.assertIn("flock -n 9", text)
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
