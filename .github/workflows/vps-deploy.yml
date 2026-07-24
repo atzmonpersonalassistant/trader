@@ -317,11 +317,14 @@ jobs:
           sudo chmod 640 /etc/trading-agents/secrets/research/env
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
-          if ! sudo test -e /etc/trading-agents/qc-lean-docker-image; then
-            sudo install -o root -g root -m 644 /dev/null /etc/trading-agents/qc-lean-docker-image
+          if ! sudo test -s /etc/trading-agents/qc-lean-docker-image; then
+            printf '%s\n' 'quantconnect/research:latest' | sudo tee /etc/trading-agents/qc-lean-docker-image >/dev/null
           fi
           sudo chown root:root /etc/trading-agents/qc-lean-docker-image
           sudo chmod 644 /etc/trading-agents/qc-lean-docker-image
+          if command -v docker >/dev/null 2>&1; then
+            sudo docker pull "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
+          fi
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
