@@ -285,11 +285,14 @@ chmod 440 /etc/sudoers.d/trading-agent-research-qc-docker
 visudo -cf /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null
 
 log "creating placeholder config files if missing"
-if [[ ! -e /etc/trading-agents/qc-lean-docker-image ]]; then
-  install -o root -g root -m 644 /dev/null /etc/trading-agents/qc-lean-docker-image
+if [[ ! -s /etc/trading-agents/qc-lean-docker-image ]]; then
+  printf '%s\n' 'quantconnect/research:latest' > /etc/trading-agents/qc-lean-docker-image
 fi
 chown root:root /etc/trading-agents/qc-lean-docker-image
 chmod 644 /etc/trading-agents/qc-lean-docker-image
+if command -v docker >/dev/null 2>&1; then
+  docker pull "$(head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
+fi
 
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
   cat > /etc/trading-agents/github-apps.json <<'JSON'
