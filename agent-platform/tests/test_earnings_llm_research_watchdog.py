@@ -1,0 +1,50 @@
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog"
+
+
+class EarningsLlmResearchWatchdogTests(unittest.TestCase):
+    def test_script_syntax_is_valid(self):
+        subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+
+    def test_rejects_bad_date_before_runtime_state(self):
+        result = subprocess.run(
+            [str(SCRIPT), "--date", "2026-aa-24", "--dry-run"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("YYYY-MM-DD", result.stderr)
+
+    def test_watchdog_is_llm_only_and_never_requests_actions(self):
+        text = SCRIPT.read_text()
+        self.assertIn("LLM-only watchdog", text)
+        self.assertIn("It never runs QC/LEAN", text)
+        self.assertIn("do not run QC/LEAN", text)
+        self.assertIn("do not run /agents/research/bin/earnings-qc-research", text)
+        self.assertIn("do not request or execute bounded actions", text)
+        self.assertIn("diagnosis.json", text)
+        self.assertIn("notify.txt", text)
+        self.assertIn("WATCHDOG_NO_CHANGE", text)
+        self.assertIn("WATCHDOG_COMPLETED", text)
+        self.assertIn("last-fingerprint.txt", text)
+        self.assertIn("trading-research-runner-codex", text)
+        self.assertNotIn("bounded_action_request.json", text)
+        self.assertNotIn("trading-research-bounded-earnings-qc", text)
+        self.assertNotIn("earnings-qc-research run", text)
+        self.assertNotIn("retry-failed", text)
+
+    def test_fingerprint_gates_repeated_llm_spend(self):
+        text = SCRIPT.read_text()
+        self.assertIn("FINGERPRINT=", text)
+        self.assertIn("LAST_FINGERPRINT_FILE", text)
+        self.assertIn('"$(cat "$LAST_FINGERPRINT_FILE")" == "$FINGERPRINT"', text)
+        self.assertLess(text.index("WATCHDOG_NO_CHANGE"), text.index("trading-research-runner-codex"))
+
+
+if __name__ == "__main__":
+    unittest.main()

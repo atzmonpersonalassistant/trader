@@ -125,6 +125,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
             agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc \
             agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review \
+            agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
@@ -246,6 +247,7 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-postrun-review" /agents/research/bin/earnings-llm-postrun-review
+          sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-research-watchdog" /agents/research/bin/earnings-llm-research-watchdog
           sudo install -d -o agent-research -g agent-research -m 755 /agents/research/skills/trader-research-system
           sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/SKILL.md" /agents/research/skills/trader-research-system/SKILL.md
           tmp_cron="$(mktemp)"
@@ -282,9 +284,12 @@ jobs:
             /# END trader managed daily earnings research/ {skip=0; next}
             /# BEGIN trader managed LLM postrun review/ {skip=1; next}
             /# END trader managed LLM postrun review/ {skip=0; next}
+            /# BEGIN trader managed LLM research watchdog/ {skip=1; next}
+            /# END trader managed LLM research watchdog/ {skip=0; next}
             /^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
             /^\*\/30 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/5 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
+            /^\*\/15 \* \* \* \* \/agents\/research\/bin\/earnings-llm-research-watchdog/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
@@ -296,6 +301,10 @@ jobs:
           CRON_TZ=Asia/Jerusalem
           */5 * * * * /agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1
           # END trader managed LLM postrun review
+          # BEGIN trader managed LLM research watchdog
+          CRON_TZ=Asia/Jerusalem
+          */15 * * * * /agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1
+          # END trader managed LLM research watchdog
           EOF_RESEARCH_CRON
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
           rm -f "$tmp_research_cron" "$tmp_research_cron_new"
@@ -537,6 +546,7 @@ jobs:
           bash -n /usr/local/bin/trading-research-runner-codex
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
+          bash -n /agents/research/bin/earnings-llm-research-watchdog
           sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'
           sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc cleanup --dry-run'
           sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc run --symbols AAPL,MSFT,GOOG,AMZN,META,NVDA --years 1 --parallel 1 --end-to-end'
@@ -564,6 +574,8 @@ jobs:
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-bounded-earnings-qc" /agents/research/bin/earnings-llm-postrun-review
+          grep -q -- "LLM-only watchdog" /agents/research/bin/earnings-llm-research-watchdog
+          grep -q -- "never runs QC/LEAN" /agents/research/bin/earnings-llm-research-watchdog
           sudo grep -q -- "agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *" /etc/sudoers.d/trading-agent-research-runner
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
           grep -q -- "approval_policy=\"never\"" /usr/local/bin/trading-research-runner-codex
