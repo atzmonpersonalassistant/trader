@@ -203,15 +203,24 @@ jobs:
           if ! getent group agent-lean >/dev/null 2>&1; then
             sudo groupadd --system agent-lean
           fi
-          if ! command -v setfacl >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
-          fi
           if command -v apt-get >/dev/null 2>&1; then
+            if ! command -v setfacl >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
+            fi
+            if ! command -v docker >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' docker.io 2>/dev/null | grep -q "install ok installed"; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io
+            fi
             if ! command -v psql >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' postgresql 2>/dev/null | grep -q "install ok installed"; then
               sudo apt-get update
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client
             fi
+          fi
+          if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl enable --now docker || true
+          elif command -v service >/dev/null 2>&1; then
+            sudo service docker start || true
           fi
           if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl enable --now postgresql
@@ -331,9 +340,9 @@ jobs:
           fi
           sudo chown root:root /etc/trading-agents/qc-lean-docker-image
           sudo chmod 644 /etc/trading-agents/qc-lean-docker-image
-          if command -v docker >/dev/null 2>&1; then
-            sudo docker pull "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
-          fi
+          command -v docker >/dev/null 2>&1
+          sudo docker info >/dev/null
+          sudo docker pull "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)"
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
@@ -560,6 +569,9 @@ jobs:
           grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-qc-broker
           grep -q "surface_checks" /usr/local/bin/trading-research-qc-broker
           grep -q "quantconnect_python_runtime_missing" /usr/local/bin/trading-research-qc-broker
+          command -v docker >/dev/null 2>&1
+          sudo docker info >/dev/null
+          sudo docker image inspect "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)" >/dev/null
           grep -q "docker_missing" /usr/local/bin/trading-research-qc-broker
           grep -q "docker_wrapper_unavailable" /usr/local/bin/trading-research-qc-broker
           grep -q -- '--network none' /usr/local/sbin/trading-research-qc-docker-run

@@ -60,7 +60,12 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      acl ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+      acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl enable --now docker
+    elif command -v service >/dev/null 2>&1; then
+      service docker start || true
+    fi
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
     fi
@@ -292,7 +297,14 @@ fi
 chown root:root /etc/trading-agents/qc-lean-docker-image
 chmod 644 /etc/trading-agents/qc-lean-docker-image
 if command -v docker >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now docker || true
+  elif command -v service >/dev/null 2>&1; then
+    service docker start || true
+  fi
   docker pull "$(head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
+else
+  log "docker is not installed; QC local Research/QuantBook execution will be blocked until Docker is installed"
 fi
 
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
