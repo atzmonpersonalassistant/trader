@@ -529,6 +529,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("mb.get('ok') is False", full)
         self.assertIn("mandatory multiyear option-PnL backtest failed", full)
+        self.assertIn("summary.get('historical_failed_chunks')", full)
+        self.assertIn("deduped", full)
 
     def test_stage2_uses_point_in_time_valuation_window_not_stale_multiday_slice(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()

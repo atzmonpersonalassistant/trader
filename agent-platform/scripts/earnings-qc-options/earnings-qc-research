@@ -822,9 +822,17 @@ def cmd_retry_failed(args) -> int:
     if not run_dir or not run_dir.exists():
         print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
     summary = aggregate(load_chunks(run_dir))
-    failed = summary.get('failed_chunks') or []
+    failed = list(summary.get('failed_chunks') or []) + list(summary.get('historical_failed_chunks') or [])
     if args.offset is not None:
         failed = [{'offset': args.offset}]
+    else:
+        deduped=[]; seen=set()
+        for item in failed:
+            off=item.get('offset')
+            if off is None or off in seen:
+                continue
+            deduped.append(item); seen.add(off)
+        failed = deduped
     for item in failed:
         off = int(item['offset'])
         run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)
