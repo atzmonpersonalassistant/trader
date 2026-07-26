@@ -879,6 +879,21 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertEqual(out["failed_chunk_count"], 1)
         self.assertFalse(out["historical_gate_no_pass"])
 
+    def test_chunked_ok_multiyear_without_matching_final_candidates_is_not_ok(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "OTHER", "sample_size": 12, "win_rate": 0.8, "median_return_pct": 0.1}]},
+        }])
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["final_candidate_count"], 0)
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+
     def test_refresh_summary_no_pass_does_not_mask_scanner_failures(self):
         mod = load_script("earnings-qc-research")
         tmp = pathlib.Path(tempfile.mkdtemp())
