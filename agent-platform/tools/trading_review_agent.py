@@ -251,8 +251,9 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         + "\nDiff:\n" + context["diff"]
     )
     output = workspace / ".review-agent" / "model-review.md"
+    review_model = str(config.get("review_model") or "gpt-5.5")
     codex_cmd = [
-        "codex", "exec", "--model", str(config.get("review_model") or "gpt-5.5"),
+        "codex", "exec", "--model", review_model,
         "--sandbox", "workspace-write", "--skip-git-repo-check", "-c", 'approval_policy="never"',
         "-C", str(workspace), "--output-last-message", str(output),
     ]
@@ -264,11 +265,14 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         run_cmd(["setfacl", "-Rm", f"u:{runner_user}:rwx", str(workspace)], timeout=30)
         for parent in [workspace.parent, workspace.parent.parent]:
             run_cmd(["setfacl", "-m", f"u:{runner_user}:--x", str(parent)], timeout=30)
-        cmd = ["sudo", "-n", "-u", runner_user, "env", f"HOME=/home/{runner_user}", *codex_cmd]
+        cmd = ["sudo", "-n", "-u", runner_user, "/usr/local/sbin/trading-review-model-codex", str(workspace), str(output), review_model]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
     # Do not persist the full review prompt/diff in JSON logs. The prompt can
     # contain PR content, including the very secrets this agent is meant to flag.
-    result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
+    if cmd and cmd[0] == "sudo" and "/usr/local/sbin/trading-review-model-codex" in cmd:
+        result["command"] = cmd
+    else:
+        result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
     if runner_user:
         result["model_runner_user"] = runner_user
     result["stdout"] = "<codex-stdout-redacted>"

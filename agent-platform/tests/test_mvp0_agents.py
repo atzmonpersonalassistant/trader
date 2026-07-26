@@ -2031,9 +2031,15 @@ class ReviewAgentModelRunnerTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
         self.assertIn("model_runner_user", src)
         self.assertIn("sudo", src)
-        self.assertIn("agent-review ALL=(agent-research-runner)", workflow)
+        wrapper = (ROOT / "agent-platform" / "scripts" / "trading-review-model-codex").read_text()
+        self.assertIn("agent-review ALL=(agent-research-runner) NOPASSWD: /usr/local/sbin/trading-review-model-codex *", workflow)
+        self.assertIn("trading-review-model-codex", src)
         self.assertIn("setfacl", src)
         self.assertIn("u:{runner_user}:rwx", src)
+        self.assertIn("workspace outside review root", wrapper)
+        self.assertIn("workspace must be pr-N", wrapper)
+        self.assertIn("output filename must be model-review.md", wrapper)
+        self.assertNotIn("/usr/bin/env HOME=/home/agent-research-runner codex *", workflow)
         self.assertNotIn("install -o agent-review -g agent-review -m 600 /home/agent-research-runner/.codex/auth.json", workflow)
 
 

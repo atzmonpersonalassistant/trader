@@ -485,7 +485,7 @@ jobs:
           sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
           sudo tee /etc/sudoers.d/trading-agent-review-model-runner >/dev/null <<'EOF_SUDOERS_REVIEW_MODEL'
-          agent-review ALL=(agent-research-runner) NOPASSWD: /usr/bin/env HOME=/home/agent-research-runner codex *
+          agent-review ALL=(agent-research-runner) NOPASSWD: /usr/local/sbin/trading-review-model-codex *
           EOF_SUDOERS_REVIEW_MODEL
           sudo chmod 440 /etc/sudoers.d/trading-agent-review-model-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-review-model-runner >/dev/null
