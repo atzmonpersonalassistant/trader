@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+import ast, base64, datetime as dt, hashlib, json, os, pathlib, re, subprocess, sys, time, urllib.parse, urllib.request
+
+QC_API_BASE = "https://www.quantconnect.com/api/v2/"
+LEAN_WORKSPACE = pathlib.Path(os.environ.get("LEAN_WORKSPACE", "/agents/research/lean-workspace"))
+PROJECT_NAME = os.environ.get("QC_CLOUD_EXTRACT_PROJECT", "trader-qc-cloud-option-history-probe")
+MAX_UNDERLYINGS = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_UNDERLYINGS", "3"))
+TIMEOUT_BACKTEST = int(os.environ.get("QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT", "900"))
+MAX_DTE_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_DTE", "180"))
+MAX_ROWS_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_ROWS_PER_UNDERLYING", "300"))
+
+def fail(status, msg, rc=1, **extra):
+    print(json.dumps({"ok": False, "status": status, "message": msg, **extra}, ensure_ascii=False), file=sys.stderr)
+    raise SystemExit(rc)
+
+def qc_credentials():
+    p = pathlib.Path.home() / ".lean" / "credentials"
+    if not p.exists(): fail("qc_credentials_missing", "~/.lean/credentials missing", 66)
+    d = json.loads(p.read_text()); return str(d["user-id"]), str(d["api-token"])
+
+def qc_api(method, endpoint, payload=None):
+    uid, token = qc_credentials(); ts = str(int(time.time()))
+    pw = hashlib.sha256(f"{token}:{ts}".encode()).hexdigest()
+    headers = {"Timestamp": ts, "User-Agent": "trader-qc-cloud-extract"}
+    url = urllib.parse.urljoin(QC_API_BASE, endpoint); data = None
+    if method.upper() == "GET" and payload: url += "?" + urllib.parse.urlencode(payload)
+    elif payload: data = json.dumps(payload).encode(); headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    req.add_header("Authorization", "Basic " + base64.b64encode(f"{uid}:{pw}".encode()).decode())
+    with urllib.request.urlopen(req, timeout=90) as r: out = json.loads(r.read().decode("utf-8", "replace"))
+    if not out.get("success"): raise RuntimeError(json.dumps({k: out.get(k) for k in ["errors", "messages", "Message"]}, ensure_ascii=False))
+    return out
+
+def ensure_project(project_dir):
+    project_dir.mkdir(parents=True, exist_ok=True); cfg_path = project_dir / "config.json"
+    cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    if int(cfg.get("cloud-id") or 0) > 0 and cfg.get("organization-id"): return int(cfg["cloud-id"]), str(cfg["organization-id"])
+    projects = qc_api("GET", "projects/read").get("projects", [])
+    project = next((p for p in projects if p.get("name") == PROJECT_NAME), None)
+    if project is None: project = qc_api("POST", "projects/create", {"name": PROJECT_NAME, "language": "Py"})["projects"][0]
+    cfg.update({"algorithm-language": "Python", "parameters": {}, "description": "Bounded Trader QC Cloud option quote/greeks extract probe", "cloud-id": project["projectId"], "organization-id": project.get("organizationId")})
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n"); return int(project["projectId"]), str(project.get("organizationId"))
+
+def candidate_text(run_dir):
+    p = run_dir / "candidate.json"
+    if not p.exists(): return ""
+    try: return json.dumps(json.loads(p.read_text()), ensure_ascii=False)
+    except Exception: return p.read_text(errors="replace")
+
+def infer_dte_band(run_dir, fallback_max):
+    txt = candidate_text(run_dir)
+    bands = []
+    for m in re.finditer(r"(?i)(\d{1,3})\s*(?:-|–|to)\s*(\d{1,3})\s*DTE", txt):
+        a,b = int(m.group(1)), int(m.group(2));
+        if a <= b: bands.append((a,b))
+    for m in re.finditer(r"(?i)(\d{1,3})\s*(?:-|–|to)\s*(\d{1,3})\s*(?:day|days)", txt):
+        a,b = int(m.group(1)), int(m.group(2));
+        if a <= b: bands.append((a,b))
+    if bands:
+        lo = min(a for a,b in bands); hi = max(b for a,b in bands)
+        return max(0, lo), min(MAX_DTE_CAP, max(hi, fallback_max))
+    return 0, min(MAX_DTE_CAP, fallback_max)
+
+def parse_probe(run_dir):
+    text = (run_dir / "qc_option_history_probe.py").read_text()
+    def literal(name, default):
+        m = re.search(rf"^{name}\s*=\s*(.+)$", text, re.M)
+        if not m: return default
+        try: return ast.literal_eval(m.group(1).strip())
+        except Exception: return default
+    underlyings = literal("UNDERLYINGS", [])
+    if not isinstance(underlyings, list) or not underlyings: fail("underlyings_missing", "UNDERLYINGS missing in probe", 66)
+    underlyings = [str(x).upper().strip() for x in underlyings if str(x).strip()][:MAX_UNDERLYINGS]
+    fallback_max = min(int(literal("EXPIRY_WINDOW_DAYS", 90)), MAX_DTE_CAP)
+    min_dte, max_dte = infer_dte_band(run_dir, fallback_max)
+    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 30)), 60), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP)}
+
+def write_project(project_dir, spec):
+    payload = json.dumps(spec, sort_keys=True)
+    code = f'''
+from AlgorithmImports import *
+import json, datetime, math
+
+SPEC = json.loads({payload!r})
+
+def safe_float(x):
+    try:
+        if x is None: return None
+        v = float(x)
+        if math.isnan(v) or math.isinf(v): return None
+        return v
+    except Exception:
+        return None
+
+def safe_int(x):
+    try:
+        if x is None: return None
+        return int(x)
+    except Exception:
+        return None
+
+class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
+    def Initialize(self):
+        today = datetime.datetime.utcnow().date()
+        end = today - datetime.timedelta(days=1)
+        while end.weekday() >= 5:
+            end -= datetime.timedelta(days=1)
+        start = end
+        self.SetStartDate(start.year, start.month, start.day)
+        self.SetEndDate(end.year, end.month, end.day)
+        self.SetCash(100000)
+        self.rows = []
+        self.seen = set()
+        self.history_summary = {{}}
+        self.option_symbols = []
+        for ticker in SPEC["underlyings"]:
+            eq = self.AddEquity(ticker, Resolution.Minute)
+            opt = self.AddOption(ticker, Resolution.Minute)
+            opt.SetFilter(lambda u: u.IncludeWeeklys().Strikes(-100, 100).Expiration(datetime.timedelta(days=int(SPEC.get("min_dte", 0))), datetime.timedelta(days=int(SPEC.get("max_dte", 180)))))
+            self.option_symbols.append((ticker, eq.Symbol, opt.Symbol))
+            hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 30)), Resolution.Daily)
+            try: nrows = len(hist) if hist is not None else 0
+            except Exception: nrows = 0
+            self.history_summary[ticker] = {{"rows": int(nrows), "lookback_days": int(SPEC.get("history_lookback_days", 30))}}
+        self.max_rows_total = int(SPEC.get("max_contract_rows_per_underlying", 200)) * max(1, len(SPEC["underlyings"]))
+        self.last_time = None
+
+    def OnData(self, data):
+        self.last_time = self.Time
+        for ticker, eqsym, optsym in self.option_symbols:
+            chain = data.OptionChains.get(optsym)
+            if chain is None: continue
+            for c in sorted(list(chain), key=lambda x: (x.Expiry, x.Strike)):
+                dte = (c.Expiry.date() - self.Time.date()).days
+                if dte < int(SPEC.get("min_dte", 0)) or dte > int(SPEC.get("max_dte", 180)): continue
+                key = str(c.Symbol)
+                if key in self.seen: continue
+                self.seen.add(key)
+                g = getattr(c, "Greeks", None)
+                self.rows.append({{
+                    "underlying": ticker,
+                    "symbol": str(c.Symbol),
+                    "expiry": c.Expiry.strftime("%Y-%m-%d"),
+                    "strike": safe_float(c.Strike),
+                    "right": str(c.Right),
+                    "dte": int(dte),
+                    "bid": safe_float(getattr(c, "BidPrice", None)),
+                    "ask": safe_float(getattr(c, "AskPrice", None)),
+                    "last": safe_float(getattr(c, "LastPrice", None)),
+                    "volume": safe_int(getattr(c, "Volume", None)),
+                    "open_interest": safe_int(getattr(c, "OpenInterest", None)),
+                    "implied_volatility": safe_float(getattr(c, "ImpliedVolatility", None)),
+                    "delta": safe_float(getattr(g, "Delta", None)) if g is not None else None,
+                    "gamma": safe_float(getattr(g, "Gamma", None)) if g is not None else None,
+                    "theta": safe_float(getattr(g, "Theta", None)) if g is not None else None,
+                    "vega": safe_float(getattr(g, "Vega", None)) if g is not None else None,
+                }})
+                if len(self.rows) >= self.max_rows_total:
+                    self.emit_and_quit("bounded_row_limit")
+                    return
+        if self.Time.hour >= 15 and self.Time.minute >= 45 and self.rows:
+            self.emit_and_quit("market_day_sample_complete")
+
+    def OnEndOfAlgorithm(self):
+        if not getattr(self, "_emitted", False):
+            self.emit_runtime_stats("end_of_algorithm")
+
+    def emit_and_quit(self, reason):
+        self.emit_runtime_stats(reason)
+        self.Quit(reason)
+
+    def emit_runtime_stats(self, reason):
+        if getattr(self, "_emitted", False): return
+        self._emitted = True
+        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "underlyings": SPEC["underlyings"], "history_summary": self.history_summary, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 30)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega"], "completion_reason": reason}}
+        s = json.dumps(artifact, sort_keys=True)
+        chunk = 6000
+        for i in range(0, len(s), chunk):
+            self.SetRuntimeStatistic("trader.qc_extract_json_%03d" % (i//chunk), s[i:i+chunk])
+        self.SetRuntimeStatistic("trader.qc_extract_underlyings", ",".join(SPEC["underlyings"]))
+        self.SetRuntimeStatistic("trader.qc_extract_contract_rows", str(len(self.rows)))
+'''
+    (project_dir / "main.py").write_text(code)
+
+def main():
+    if len(sys.argv) != 2: fail("usage_error", "usage: trading-research-qc-cloud-extract RUN_DIR", 64)
+    run_dir = pathlib.Path(sys.argv[1]).resolve()
+    if not str(run_dir).startswith("/agents/research/reports/research-pass-"): fail("invalid_run_dir", "run dir escaped approved reports path", 66)
+    spec = parse_probe(run_dir)
+    project_dir = LEAN_WORKSPACE / PROJECT_NAME
+    project_id, _ = ensure_project(project_dir)
+    write_project(project_dir, spec)
+    push = subprocess.run(["lean", "cloud", "push", "--project", str(project_dir), "--force"], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
+    (run_dir / "qc_cloud_push_stdout.txt").write_text(push.stdout); (run_dir / "qc_cloud_push_stderr.txt").write_text(push.stderr)
+    if push.returncode != 0: fail("qc_cloud_push_failed", "lean cloud push failed", 70, stdout=push.stdout[-1000:], stderr=push.stderr[-1000:])
+    name = "trader-qc-cloud-extract-v2-" + dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    bt = subprocess.run(["lean", "cloud", "backtest", PROJECT_NAME, "--push", "--name", name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=TIMEOUT_BACKTEST)
+    (run_dir / "qc_cloud_backtest_stdout.txt").write_text(bt.stdout); (run_dir / "qc_cloud_backtest_stderr.txt").write_text(bt.stderr)
+    m = re.search(r"Backtest id:\s*([0-9a-f]+)", bt.stdout + "\n" + bt.stderr)
+    if bt.returncode != 0 or not m: fail("qc_cloud_backtest_failed", "lean cloud backtest failed or no backtest id", 70, stdout=bt.stdout[-1500:], stderr=bt.stderr[-1500:])
+    backtest_id = m.group(1)
+    b = qc_api("GET", "backtests/read", {"projectId": project_id, "backtestId": backtest_id}).get("backtest", {})
+    (run_dir / "qc_cloud_backtest_read.json").write_text(json.dumps(b, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    stats = b.get("runtimeStatistics") or {}
+    parts = [stats[k] for k in sorted(stats) if k.startswith("trader.qc_extract_json_")]
+    if not parts: fail("qc_cloud_extract_missing", "cloud backtest completed without extract runtime statistics", 70, status=b.get("status"), error=b.get("error"), stacktrace=(b.get("stacktrace") or "")[-1000:])
+    artifact = json.loads("".join(parts))
+    if artifact.get("type") != "qc_option_history_extract": fail("qc_cloud_extract_invalid", "unexpected extract type", 70)
+    rows = artifact.get("option_contract_rows") or []
+    underlyings = artifact.get("underlyings") or []
+    limits = artifact.get("limits") or {}
+    if len(underlyings) > MAX_UNDERLYINGS: fail("qc_cloud_extract_too_broad", "too many underlyings", 70)
+    if int(limits.get("max_dte", limits.get("expiry_window_days", 0))) > MAX_DTE_CAP: fail("qc_cloud_extract_too_broad", "DTE window too large", 70)
+    if len(rows) > max(1, len(underlyings)) * MAX_ROWS_CAP: fail("qc_cloud_extract_too_broad", "too many rows", 70)
+    (run_dir / "qc_option_history_extract.json").write_text(json.dumps(artifact, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({"ok": True, "status": "extract_written", "surface": "qc_cloud_backtest_optionchains", "backtest_id": backtest_id, "contract_rows": len(rows), "limits": limits}, ensure_ascii=False))
+
+if __name__ == "__main__": main()
