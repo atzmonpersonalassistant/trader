@@ -91,14 +91,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_historical_uses_campaign_db_run_before_state_file_and_upserts_before_stage(self):
         mod = load_script("earnings-qc-research")
         run_dir = pathlib.Path(tempfile.mkdtemp())
-        (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "ok": True,
+            "status": "OK_FULL_QC_SCAN",
+            "calendar_row_count": 1,
+            "qc_symbols_scanned": 1,
+            "forward_candidates": [{"symbol": "AAA"}],
+            "final_candidates": [],
+        }))
         args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
         calls = []
         with mock.patch.object(mod, "require_research_db", return_value=True), \
              mock.patch.object(mod, "upsert_campaign", side_effect=lambda *a, **k: calls.append("campaign")), \
              mock.patch.object(mod, "upsert_run", side_effect=lambda *a, **k: calls.append("run")), \
              mock.patch.object(mod, "upsert_stage", side_effect=lambda *a, **k: calls.append("stage")), \
-             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST"}), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 10, "win_rate": 0.6, "median_return_pct": 0.1, "mean_return_pct": 0.1, "max_drawdown_pct": 10, "max_loss_pct": -20}]}), \
              mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
              mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
@@ -106,11 +113,31 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertLess(calls.index("run"), calls.index("stage"))
 
+    def test_historical_without_multiyear_artifact_does_not_succeed_from_stale_summary(self):
+        mod = load_script("earnings-qc-research")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
+        args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
+        captured = {}
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign"), \
+             mock.patch.object(mod, "upsert_run"), \
+             mock.patch.object(mod, "upsert_stage"), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value=None), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: captured.setdefault("summary", a[3])), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}):
+            rc = mod.cmd_historical(args)
+        self.assertEqual(rc, 2)
+        self.assertFalse(captured["summary"]["ok"])
+        self.assertEqual(captured["summary"]["status"], "BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST")
+        self.assertTrue(captured["summary"]["multiyear_failed"])
+
     def test_multiyear_expansion_can_turn_historical_blocker_into_ok(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
         self.assertIn("scanner_failed", multi)
         self.assertIn("'MULTIYEAR' not in str(x.get('status'))", multi)
         self.assertIn("base_scan_ok", multi)
+        self.assertIn("no_pass = bool(src) and bool(base_scan_ok)", multi)
         self.assertIn("full['ok']=bool(base_scan_ok) and bool(summary.get('ok'))", multi)
         self.assertNotIn("full['ok']=bool(full.get('ok')) and bool(summary.get('ok'))", multi)
 
@@ -364,7 +391,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             ]
         )
         self.assertFalse(summary["ok"])
-        self.assertTrue(summary["multiyear_failed"])
+        self.assertFalse(summary["multiyear_failed"])
+        self.assertTrue(summary["historical_gate_no_pass"])
+        self.assertEqual(summary["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
         self.assertEqual(summary["final_candidate_count"], 0)
 
     def test_full_scan_load_chunks_uses_latest_retry_for_same_offset(self):
@@ -500,6 +529,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("mb.get('ok') is False", full)
         self.assertIn("mandatory multiyear option-PnL backtest failed", full)
+        self.assertIn("summary.get('historical_failed_chunks')", full)
+        self.assertIn("deduped", full)
 
     def test_stage2_uses_point_in_time_valuation_window_not_stale_multiday_slice(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
@@ -778,6 +809,271 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("failure_reasons.append(\"delta_out_of_range\")", main)
         self.assertIn("failure_reasons.append(\"low_open_interest\")", main)
 
+
+class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
+
+    def test_refresh_summary_after_historical_marks_terminal_no_pass_not_blocked(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 2,
+            "failed_chunks": [{"status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE"}],
+            "failed_chunk_count": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE", "sample_size": 4}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertTrue(out["historical_gate_ran"])
+        self.assertTrue(out["historical_gate_no_pass"])
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+        self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_chunked_aggregate_marks_terminal_no_pass_not_infra_failure(self):
+        mod = load_script("earnings-qc-research")
+        chunk = {
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]},
+        }
+        out = mod.aggregate([chunk])
+        self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertTrue(out["historical_gate_ran"])
+        self.assertTrue(out["historical_gate_no_pass"])
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+
+    def test_refresh_summary_no_forward_candidates_is_not_multiyear_infra_failure(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "NO_FORWARD_CANDIDATES",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 2,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertEqual(out["status"], "NO_FORWARD_CANDIDATES")
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+        self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_chunked_no_pass_does_not_mask_scanner_failures(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": False,
+                "status": "BLOCKED_QC_BATCH_FAILED",
+                "blocked_reason": "QC batch failed",
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [],
+                "funnel": {},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]},
+            },
+        ])
+        self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["status"], "PARTIAL_FULL_QC_SCAN")
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_chunked_ok_multiyear_without_matching_final_candidates_is_not_ok(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "OTHER", "sample_size": 12, "win_rate": 0.8, "median_return_pct": 0.1}]},
+        }])
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["final_candidate_count"], 0)
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+
+    def test_chunked_no_pass_requires_all_candidate_chunks_validated(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "WMT", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "WMT"}]},
+            },
+        ])
+        self.assertFalse(out["historical_gate_no_pass"])
+        self.assertEqual(out["candidate_chunk_count"], 2)
+        self.assertEqual(out["validated_candidate_chunk_count"], 1)
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+
+    def test_refresh_summary_no_pass_does_not_mask_scanner_failures(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 1,
+            "failed_chunks": [{"status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"}],
+            "failed_chunk_count": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_refresh_summary_ok_multiyear_without_matching_final_candidates_is_blocked(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_symbols_scanned": 1,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "OTHER", "sample_size": 12, "win_rate": 0.8, "median_return_pct": 0.1}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+        self.assertTrue(out["historical_gate_blocked"])
+        self.assertEqual(out["final_candidate_count"], 0)
+
+    def test_qc_cloud_extract_generates_underlying_ohlcv_and_realized_vol_fields(self):
+        script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
+        self.assertIn("underlying_history_rows", script)
+        self.assertIn("realized_volatility", script)
+        self.assertIn("sample_time", script)
+        self.assertIn("underlying_price", script)
+        self.assertIn("candidate_event_context", script)
+        self.assertIn("event_aligned_backtest_request", script)
+        self.assertIn("not_produced_by_bounded_quote_extract", script)
+        self.assertIn("no_historical_earnings_event_calendar_in_this_extract", script)
+
+    def test_skill_prioritizes_daily_historical_before_side_ideas(self):
+        skill = (ROOT / "agent-platform" / "skills" / "trader-research-system" / "SKILL.md").read_text()
+        self.assertIn("absolute priority over side ideas", skill)
+        self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", skill)
+
+    def test_vps_deploy_grants_ubuntu_read_acl_for_research_observability(self):
+        workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
+        self.assertIn("DEPLOY_USER='$VPS_USER' bash -s", workflow)
+        self.assertIn("setfacl -m \"u:${DEPLOY_USER}:x\" /agents/research", workflow)
+        self.assertIn("setfacl -Rm \"u:${DEPLOY_USER}:rx,d:u:${DEPLOY_USER}:rx\" /agents/research/state /agents/research/logs /agents/research/reports", workflow)
+        self.assertIn("sudo -n -u \"$DEPLOY_USER\"", workflow)
+        self.assertIn("test -x /agents/research", workflow)
+        self.assertIn("test -r /agents/research/state", workflow)
+
+
+class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
+    def test_refresh_moves_historical_failures_out_of_scanner_failed_chunks(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "calendar_row_count": 10,
+            "calendar_universe_count": 10,
+            "qc_symbols_scanned": 9,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "A"}],
+            "failed_chunks": [
+                {"offset": 1, "status": "QC_BACKTEST_FAILED", "blocked_reason": "mandatory multiyear option-PnL backtest failed"},
+                {"offset": 2, "status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"},
+            ],
+        }))
+        out = mod.refresh_summary_after_historical(tmp, {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": []})
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertEqual(out["historical_failed_chunk_count"], 1)
+        self.assertEqual(out["failed_chunks"][0]["status"], "BLOCKED_QC_BATCH_FAILED")
+
+    def test_aggregate_ignores_stale_empty_batch_chunks_beyond_calendar_rows(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {"_chunk_offset": 0, "ok": True, "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 185, "candidate_details": [], "funnel": {}},
+            {"_chunk_offset": 650, "ok": False, "status": "BLOCKED_QC_BATCH_FAILED", "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 0, "qc_checks": {"qc_option_chain_batch_diagnostic": {"ok": False, "reason": "empty_batch"}}, "funnel": {}},
+        ])
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertTrue(out["ok"])
+
+    def test_aggregate_complete_scan_with_no_forward_candidates_is_terminal_ok(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [],
+            "funnel": {},
+        }])
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "OK_FULL_QC_SCAN")
+        self.assertEqual(out["forward_candidate_count"], 0)
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_aggregate_separates_multiyear_infra_failures_from_scanner_chunks(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "A", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": False, "status": "QC_BACKTEST_FAILED", "results": []},
+        }])
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertEqual(out["historical_failed_chunk_count"], 1)
+        self.assertTrue(out["multiyear_failed"])
 
 if __name__ == "__main__":
     unittest.main()

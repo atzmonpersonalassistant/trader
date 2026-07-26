@@ -103,7 +103,7 @@ regardless of which flags exist.
 | Command | Purpose |
 |---|---|
 | `run` | Scan: Nasdaq universe refresh + QC option-chain diagnostics + gates |
-| `historical` | Multi-year historical option-PnL validation / backtest |
+| `historical` | Multi-year historical option-PnL validation / backtest; updates the run summary from "not yet validated" to terminal no-pass/pass/blocker |
 | `insights` | Read accumulated research insights (`--last N --pretty`) |
 | `history` | Read run history (`--last N --pretty`) |
 | `decision add` | Log a research decision (parameter change, direction, verdict) |
@@ -230,8 +230,13 @@ bounded follow-up. Pick ONE, in priority order:
 - **An earlier iteration left an open thread** (experiment awaiting
  verdict, candidates awaiting validation, queued retry) → continue that
  thread if it is still live.
-- **Baseline produced forward candidates, not yet validated** →
- run historical expansion (Step 3).
+- **Baseline produced forward candidates and historical validation has not reached a terminal artifact** →
+ run historical expansion (Step 3). This has absolute priority over side ideas.
+ Treat `BLOCKED_HISTORICAL_OPTION_PNL_GATE` plus missing/stale `multiyear_runner.stdout.json`
+ as "not yet validated"; do not investigate unrelated symbols until this is resolved.
+- **Historical validation reached a terminal no-pass artifact** (`NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL`
+ or multiyear status `BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS`) →
+ record a no-trade conclusion for the baseline, then side/focused ideas may resume.
 - **Validated candidates exist** → apply the candidate standard; outcome is
  final candidate, manual-review candidate, or no-trade.
 - **A specific symbol is interesting** (surfaced by the baseline, insights,
