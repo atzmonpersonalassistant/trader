@@ -541,7 +541,10 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
-          bash -n /usr/local/sbin/trading-review-model-codex
+          python3 - <<'PY'
+          import py_compile
+          py_compile.compile('/usr/local/sbin/trading-review-model-codex', cfile='/tmp/trading-review-model-codex.pyc', doraise=True)
+          PY
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
           sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'
