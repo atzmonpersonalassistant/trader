@@ -851,6 +851,56 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertFalse(out["multiyear_failed"])
         self.assertEqual(out["failed_chunk_count"], 0)
 
+    def test_chunked_no_pass_does_not_mask_scanner_failures(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": False,
+                "status": "BLOCKED_QC_BATCH_FAILED",
+                "blocked_reason": "QC batch failed",
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [],
+                "funnel": {},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]},
+            },
+        ])
+        self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["status"], "PARTIAL_FULL_QC_SCAN")
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_refresh_summary_no_pass_does_not_mask_scanner_failures(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 1,
+            "failed_chunks": [{"status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"}],
+            "failed_chunk_count": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertFalse(out["historical_gate_no_pass"])
+
     def test_qc_cloud_extract_generates_underlying_ohlcv_and_realized_vol_fields(self):
         script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
         self.assertIn("underlying_history_rows", script)
