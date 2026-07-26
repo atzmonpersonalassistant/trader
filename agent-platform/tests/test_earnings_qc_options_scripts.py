@@ -91,14 +91,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_historical_uses_campaign_db_run_before_state_file_and_upserts_before_stage(self):
         mod = load_script("earnings-qc-research")
         run_dir = pathlib.Path(tempfile.mkdtemp())
-        (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "ok": True,
+            "status": "OK_FULL_QC_SCAN",
+            "calendar_row_count": 1,
+            "qc_symbols_scanned": 1,
+            "forward_candidates": [{"symbol": "AAA"}],
+            "final_candidates": [],
+        }))
         args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
         calls = []
         with mock.patch.object(mod, "require_research_db", return_value=True), \
              mock.patch.object(mod, "upsert_campaign", side_effect=lambda *a, **k: calls.append("campaign")), \
              mock.patch.object(mod, "upsert_run", side_effect=lambda *a, **k: calls.append("run")), \
              mock.patch.object(mod, "upsert_stage", side_effect=lambda *a, **k: calls.append("stage")), \
-             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST"}), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 10, "win_rate": 0.6, "median_return_pct": 0.1, "mean_return_pct": 0.1, "max_drawdown_pct": 10, "max_loss_pct": -20}]}), \
              mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
              mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
@@ -915,6 +922,28 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
         self.assertEqual(out["failed_chunk_count"], 1)
         self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_refresh_summary_ok_multiyear_without_matching_final_candidates_is_blocked(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_symbols_scanned": 1,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "OTHER", "sample_size": 12, "win_rate": 0.8, "median_return_pct": 0.1}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+        self.assertTrue(out["historical_gate_blocked"])
+        self.assertEqual(out["final_candidate_count"], 0)
 
     def test_qc_cloud_extract_generates_underlying_ohlcv_and_realized_vol_fields(self):
         script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
