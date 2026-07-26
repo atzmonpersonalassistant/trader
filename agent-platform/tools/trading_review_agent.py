@@ -35,10 +35,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autoreview_timeout_seconds": 1800,
     "autoreview_required": False,
     "autoreview_max_changed_files": 12,
-    # Use a dedicated non-review runtime account for Codex when configured.
-    # This avoids copying OAuth refresh tokens between Linux users; GitHub
-    # publishing still happens only in the review agent process/token.
-    "model_runner_user": os.environ.get("TRADING_REVIEW_MODEL_RUNNER_USER", ""),
 }
 
 CHECKLIST = [
@@ -251,30 +247,15 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         + "\nDiff:\n" + context["diff"]
     )
     output = workspace / ".review-agent" / "model-review.md"
-    review_model = str(config.get("review_model") or "gpt-5.5")
-    codex_cmd = [
-        "codex", "exec", "--model", review_model,
-        "--sandbox", "workspace-write", "--skip-git-repo-check", "-c", 'approval_policy="never"',
+    cmd = [
+        "codex", "exec", "--model", str(config.get("review_model") or "gpt-5.5"),
+        "--sandbox", "workspace-write", "-c", 'approval_policy="never"',
         "-C", str(workspace), "--output-last-message", str(output),
     ]
-    cmd = list(codex_cmd)
-    runner_user = str(config.get("model_runner_user") or "").strip()
-    if runner_user and runner_user != os.environ.get("USER"):
-        # The review workspace is owned by agent-review; grant the delegated
-        # model runner only this PR workspace so it can write model-review.md.
-        run_cmd(["setfacl", "-Rm", f"u:{runner_user}:rwx", str(workspace)], timeout=30)
-        for parent in [workspace.parent, workspace.parent.parent]:
-            run_cmd(["setfacl", "-m", f"u:{runner_user}:--x", str(parent)], timeout=30)
-        cmd = ["sudo", "-n", "-u", runner_user, "/usr/local/sbin/trading-review-model-codex", str(workspace), str(output), review_model]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
     # Do not persist the full review prompt/diff in JSON logs. The prompt can
     # contain PR content, including the very secrets this agent is meant to flag.
-    if cmd and cmd[0] == "sudo" and "/usr/local/sbin/trading-review-model-codex" in cmd:
-        result["command"] = cmd
-    else:
-        result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
-    if runner_user:
-        result["model_runner_user"] = runner_user
+    result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
     result["stdout"] = "<codex-stdout-redacted>"
     result["stderr"] = "<codex-stderr-redacted>"
     if result["returncode"] == 0 and output.exists():

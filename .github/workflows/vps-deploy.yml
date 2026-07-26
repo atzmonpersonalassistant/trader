@@ -120,7 +120,6 @@ jobs:
             agent-platform/scripts/trading-research-qc-run \
             agent-platform/scripts/trading-research-qc-api-extract \
             agent-platform/scripts/trading-research-qc-docker-run \
-            agent-platform/scripts/trading-review-model-codex \
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
@@ -191,7 +190,6 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
-          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-review-model-codex" /usr/local/sbin/trading-review-model-codex
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator-tick" /usr/local/bin/trading-orchestrator-tick
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
@@ -231,10 +229,6 @@ jobs:
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo chown -R agent-research:agent-research /agents/research
           sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
-          # Observability: allow the SSH/deploy user to inspect research state/log/report artifacts
-          # without weakening write ownership. New run directories inherit these read/execute ACLs.
-          sudo setfacl -Rm u:ubuntu:rx,d:u:ubuntu:rx /agents/research/state /agents/research/logs /agents/research/reports
-          sudo setfacl -Rm u:ubuntu:rx /agents/research
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'agent-research'" | grep -q 1 || sudo -n -u postgres psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "agent-research" LOGIN'
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = 'trader_research'" | grep -q 1 || sudo -n -u postgres createdb -O "agent-research" trader_research
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'CREATE SCHEMA IF NOT EXISTS earnings_cache AUTHORIZATION "agent-research"'
@@ -351,7 +345,7 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_research_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-research-qc-cloud-extract /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /usr/local/sbin/trading-review-model-codex /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-research-qc-cloud-extract /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research run --help >/tmp/trader-earnings-qc-research-help.txt
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research insights --campaign deploy-smoke --pretty >/tmp/trader-earnings-qc-research-insights.txt
           sudo -n -u agent-research psql -d trader_research -v ON_ERROR_STOP=1 -qAt -c "SELECT to_regclass('earnings_cache.research_runs') IS NOT NULL" | grep -qx t
@@ -384,7 +378,6 @@ jobs:
           sudo -n -u agent-validator bash -lc 'test -d /agents/validator/lean-workspace && test -w /agents/validator/lean-workspace && test -w /agents/shared/lean-projects'
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts'
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts && test -w /agents/research/handoff'
-          sudo -n -u ubuntu bash -lc 'test -r /agents/research/state && test -x /agents/research/reports && test -x /agents/research/logs'
           validate_shared_collab_dir /agents/shared/lean-projects
           validate_shared_collab_dir /agents/shared/research-artifacts
           if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
@@ -486,11 +479,6 @@ jobs:
           EOF_SUDOERS_RUNNER
           sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
-          sudo tee /etc/sudoers.d/trading-agent-review-model-runner >/dev/null <<'EOF_SUDOERS_REVIEW_MODEL'
-          agent-review ALL=(agent-research-runner) NOPASSWD: /usr/local/sbin/trading-review-model-codex *
-          EOF_SUDOERS_REVIEW_MODEL
-          sudo chmod 440 /etc/sudoers.d/trading-agent-review-model-runner
-          sudo visudo -cf /etc/sudoers.d/trading-agent-review-model-runner >/dev/null
           sudo tee /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null <<'EOF_SUDOERS_QC_DOCKER'
           # Allow the research broker to run only the safe QC/LEAN Docker wrapper as root.
           agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-qc-docker-run *
@@ -541,10 +529,6 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
-          python3 - <<'PY'
-          import py_compile
-          py_compile.compile('/usr/local/sbin/trading-review-model-codex', cfile='/tmp/trading-review-model-codex.pyc', doraise=True)
-          PY
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
           sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'
