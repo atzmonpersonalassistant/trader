@@ -552,7 +552,7 @@ def aggregate(chunks: list[dict]) -> dict:
             agg['07_multi_year_backtest_status'] = 'NO_PASSING_SYMBOLS_AFTER_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
         else:
             agg['07_multi_year_backtest_status'] = 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
-    ok = base_scan_complete and bool(final_candidates) and not historical_gate_blocked and not multiyear_failed and not historical_gate_no_pass
+    ok = base_scan_complete and not historical_gate_blocked and not multiyear_failed and not historical_gate_no_pass
     status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN')))
     return {
         'ok': ok,
