@@ -118,15 +118,19 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         run_dir = pathlib.Path(tempfile.mkdtemp())
         (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
         args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
+        captured = {}
         with mock.patch.object(mod, "require_research_db", return_value=True), \
              mock.patch.object(mod, "upsert_campaign"), \
              mock.patch.object(mod, "upsert_run"), \
              mock.patch.object(mod, "upsert_stage"), \
              mock.patch.object(mod, "run_multiyear_if_requested", return_value=None), \
-             mock.patch.object(mod, "persist_summary_to_db"), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: captured.setdefault("summary", a[3])), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}):
             rc = mod.cmd_historical(args)
         self.assertEqual(rc, 2)
+        self.assertFalse(captured["summary"]["ok"])
+        self.assertEqual(captured["summary"]["status"], "BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST")
+        self.assertTrue(captured["summary"]["multiyear_failed"])
 
     def test_multiyear_expansion_can_turn_historical_blocker_into_ok(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()

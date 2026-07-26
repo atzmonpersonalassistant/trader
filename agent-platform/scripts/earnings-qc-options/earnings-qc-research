@@ -895,6 +895,16 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     fs = run_dir / 'full_summary.json'
     summary = json.loads(fs.read_text()) if fs.exists() else {'ok': False, 'status': 'NO_FULL_SUMMARY'}
     if not mb:
+        src = summary.get('forward_candidates') or summary.get('candidates') or []
+        summary['multiyear_backtest'] = None
+        summary['historical_gate_ran'] = False
+        summary['historical_gate_no_pass'] = False
+        summary['historical_gate_blocked'] = bool(src)
+        summary['multiyear_failed'] = True
+        summary['ok'] = False
+        summary['status'] = 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
+        if fs.exists():
+            fs.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
         return summary
     summary['multiyear_backtest'] = mb
     summary['historical_gate_ran'] = True
