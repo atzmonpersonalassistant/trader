@@ -536,6 +536,9 @@ def aggregate(chunks: list[dict]) -> dict:
     historical_gate_ran = bool(multiyear_statuses)
     historical_gate_no_pass = bool(forward_candidates) and historical_gate_ran and not final_candidates and all(multiyear_no_passing_symbols(x.get('status')) for x in multiyear_statuses)
     historical_failed_chunks = [x for x in multiyear_statuses if x.get('ok') is False and multiyear_infrastructure_failed(x.get('status'))]
+    if historical_failed_chunks:
+        for x in historical_failed_chunks:
+            x.setdefault('blocked_reason', 'mandatory multiyear option-PnL backtest failed')
     multiyear_failed = bool(historical_failed_chunks)
     historical_gate_blocked = bool(forward_candidates) and not final_candidates and (not historical_gate_ran or multiyear_failed)
     if multiyear_statuses:
@@ -910,6 +913,9 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
             historical_failed.append(x)
         else:
             scanner_failed.append(x)
+    for x in historical_failed:
+        if x.get('ok') is False:
+            x.setdefault('blocked_reason', 'mandatory multiyear option-PnL backtest failed')
     summary['failed_chunks'] = scanner_failed
     summary['failed_chunk_count'] = len(scanner_failed)
     summary['historical_failed_chunks'] = historical_failed

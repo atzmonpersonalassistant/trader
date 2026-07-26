@@ -120,6 +120,7 @@ jobs:
             agent-platform/scripts/trading-research-qc-run \
             agent-platform/scripts/trading-research-qc-api-extract \
             agent-platform/scripts/trading-research-qc-docker-run \
+            agent-platform/scripts/trading-review-model-codex \
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
@@ -190,6 +191,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-review-model-codex" /usr/local/sbin/trading-review-model-codex
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator-tick" /usr/local/bin/trading-orchestrator-tick
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
@@ -349,7 +351,7 @@ jobs:
           set -euo pipefail
           exec python3 /usr/local/lib/trading_research_agent.py "$@"
           EOF_BIN
-          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-research-qc-cloud-extract /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
+          sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-research-qc-cloud-extract /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /usr/local/sbin/trading-research-qc-docker-run /usr/local/sbin/trading-review-model-codex /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research run --help >/tmp/trader-earnings-qc-research-help.txt
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research insights --campaign deploy-smoke --pretty >/tmp/trader-earnings-qc-research-insights.txt
           sudo -n -u agent-research psql -d trader_research -v ON_ERROR_STOP=1 -qAt -c "SELECT to_regclass('earnings_cache.research_runs') IS NOT NULL" | grep -qx t
@@ -539,6 +541,7 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
+          bash -n /usr/local/sbin/trading-review-model-codex
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
           sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'

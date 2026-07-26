@@ -105,6 +105,8 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
         scanner_failed = []
         for x in (full.get('failed_chunks') or []):
             text = (str(x.get('status')) + ' ' + str(x.get('blocked_reason'))).upper()
+            # Keep scanner failures separate from historical/multiyear option-PnL failures.
+            # Retry logic relies on the inverse check: 'MULTIYEAR' not in str(x.get('status')).
             if any(marker in text for marker in ['MULTIYEAR', 'HISTORICAL', 'OPTION-PNL', 'OPTION_PNL']):
                 historical_failed.append(x)
             else:

@@ -480,6 +480,8 @@ elif docker_status in ("attempted_configured_quantconnect_lean_image", "lean_doc
 elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing", "docker_wrapper_unavailable"):
     status = docker_status
     reason = "Docker with an explicitly configured approved QC/LEAN image must run through the narrow root-owned wrapper, but Docker, the image, or the wrapper is missing, unavailable, or not configured for the broker role."
+# Diagnostic precedence note: docker_status == "attempted_configured_quantconnect_lean_image" is evaluated
+# before falling back to python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing").
 elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
     status = "quantconnect_python_runtime_missing"
     reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."

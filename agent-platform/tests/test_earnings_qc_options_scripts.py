@@ -835,6 +835,9 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertIn("realized_volatility", script)
         self.assertIn("sample_time", script)
         self.assertIn("underlying_price", script)
+        self.assertIn("candidate_event_context", script)
+        self.assertIn("event_aligned_backtest_request", script)
+        self.assertIn("not_produced_by_bounded_quote_extract", script)
         self.assertIn("no_historical_earnings_event_calendar_in_this_extract", script)
 
     def test_skill_prioritizes_daily_historical_before_side_ideas(self):
