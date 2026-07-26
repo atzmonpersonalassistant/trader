@@ -229,6 +229,10 @@ jobs:
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
           sudo chown -R agent-research:agent-research /agents/research
           sudo chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
+          # Observability: allow the SSH/deploy user to inspect research state/log/report artifacts
+          # without weakening write ownership. New run directories inherit these read/execute ACLs.
+          sudo setfacl -Rm u:ubuntu:rx,d:u:ubuntu:rx /agents/research/state /agents/research/logs /agents/research/reports
+          sudo setfacl -Rm u:ubuntu:rx /agents/research
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'agent-research'" | grep -q 1 || sudo -n -u postgres psql -v ON_ERROR_STOP=1 -c 'CREATE ROLE "agent-research" LOGIN'
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = 'trader_research'" | grep -q 1 || sudo -n -u postgres createdb -O "agent-research" trader_research
           sudo -n -u postgres psql -v ON_ERROR_STOP=1 -d trader_research -c 'CREATE SCHEMA IF NOT EXISTS earnings_cache AUTHORIZATION "agent-research"'
@@ -378,6 +382,7 @@ jobs:
           sudo -n -u agent-validator bash -lc 'test -d /agents/validator/lean-workspace && test -w /agents/validator/lean-workspace && test -w /agents/shared/lean-projects'
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts'
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts && test -w /agents/research/handoff'
+          sudo -n -u ubuntu bash -lc 'test -r /agents/research/state && test -x /agents/research/reports && test -x /agents/research/logs'
           validate_shared_collab_dir /agents/shared/lean-projects
           validate_shared_collab_dir /agents/shared/research-artifacts
           if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then

@@ -364,7 +364,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             ]
         )
         self.assertFalse(summary["ok"])
-        self.assertTrue(summary["multiyear_failed"])
+        self.assertFalse(summary["multiyear_failed"])
+        self.assertTrue(summary["historical_gate_no_pass"])
+        self.assertEqual(summary["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
         self.assertEqual(summary["final_candidate_count"], 0)
 
     def test_full_scan_load_chunks_uses_latest_retry_for_same_offset(self):
@@ -781,3 +783,66 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
+
+    def test_refresh_summary_after_historical_marks_terminal_no_pass_not_blocked(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 2,
+            "failed_chunks": [{"status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE"}],
+            "failed_chunk_count": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "TE"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE", "sample_size": 4}]}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertTrue(out["historical_gate_ran"])
+        self.assertTrue(out["historical_gate_no_pass"])
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+        self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_chunked_aggregate_marks_terminal_no_pass_not_infra_failure(self):
+        mod = load_script("earnings-qc-research")
+        chunk = {
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]},
+        }
+        out = mod.aggregate([chunk])
+        self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertTrue(out["historical_gate_ran"])
+        self.assertTrue(out["historical_gate_no_pass"])
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+
+    def test_qc_cloud_extract_generates_underlying_ohlcv_and_realized_vol_fields(self):
+        script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
+        self.assertIn("underlying_history_rows", script)
+        self.assertIn("realized_volatility", script)
+        self.assertIn("sample_time", script)
+        self.assertIn("underlying_price", script)
+        self.assertIn("no_historical_earnings_event_calendar_in_this_extract", script)
+
+    def test_skill_prioritizes_daily_historical_before_side_ideas(self):
+        skill = (ROOT / "agent-platform" / "skills" / "trader-research-system" / "SKILL.md").read_text()
+        self.assertIn("absolute priority over side ideas", skill)
+        self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", skill)
+
+    def test_vps_deploy_grants_ubuntu_read_acl_for_research_observability(self):
+        workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
+        self.assertIn("setfacl -Rm u:ubuntu:rx,d:u:ubuntu:rx /agents/research/state /agents/research/logs /agents/research/reports", workflow)
+        self.assertIn("test -r /agents/research/state", workflow)
