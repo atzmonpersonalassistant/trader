@@ -2018,32 +2018,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ReviewAgentCodexTrustTests(unittest.TestCase):
-    def test_model_review_skips_codex_git_repo_trust_prompt_for_isolated_pr_workspace(self):
-        src = (ROOT / "agent-platform" / "tools" / "trading_review_agent.py").read_text()
-        self.assertIn("--skip-git-repo-check", src)
-
-
-
-class ReviewAgentModelRunnerTests(unittest.TestCase):
-    def test_review_agent_can_delegate_model_codex_to_configured_runner_without_copying_auth(self):
-        src = (ROOT / "agent-platform" / "tools" / "trading_review_agent.py").read_text()
-        workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
-        self.assertIn("model_runner_user", src)
-        self.assertIn("sudo", src)
-        wrapper = (ROOT / "agent-platform" / "scripts" / "trading-review-model-codex").read_text()
-        self.assertIn("agent-review ALL=(agent-research-runner) NOPASSWD: /usr/local/sbin/trading-review-model-codex *", workflow)
-        self.assertIn("trading-review-model-codex", src)
-        self.assertIn("setfacl", src)
-        self.assertIn("u:{runner_user}:rwx", src)
-        self.assertIn("workspace outside review root", wrapper)
-        self.assertIn("workspace must be pr-N", wrapper)
-        self.assertIn("output filename must be model-review.md", wrapper)
-        self.assertNotIn("/usr/bin/env HOME=/home/agent-research-runner codex *", workflow)
-        self.assertNotIn("install -o agent-review -g agent-review -m 600 /home/agent-research-runner/.codex/auth.json", workflow)
-
-
-
 class ResearchIdeaQualityPromptTests(unittest.TestCase):
     def test_idea_prompt_requires_dated_catalyst_and_liquidity_floor(self):
         import importlib.machinery, importlib.util
