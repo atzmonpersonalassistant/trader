@@ -2016,3 +2016,10 @@ class MVP0AgentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewAgentCodexTrustTests(unittest.TestCase):
+    def test_model_review_skips_codex_git_repo_trust_prompt_for_isolated_pr_workspace(self):
+        src = (ROOT / "agent-platform" / "tools" / "trading_review_agent.py").read_text()
+        self.assertIn("--skip-git-repo-check", src)
+

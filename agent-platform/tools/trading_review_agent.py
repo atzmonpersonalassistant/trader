@@ -249,7 +249,7 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     output = workspace / ".review-agent" / "model-review.md"
     cmd = [
         "codex", "exec", "--model", str(config.get("review_model") or "gpt-5.5"),
-        "--sandbox", "workspace-write", "-c", 'approval_policy="never"',
+        "--sandbox", "workspace-write", "--skip-git-repo-check", "-c", 'approval_policy="never"',
         "-C", str(workspace), "--output-last-message", str(output),
     ]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
