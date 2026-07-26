@@ -259,6 +259,11 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
     cmd = list(codex_cmd)
     runner_user = str(config.get("model_runner_user") or "").strip()
     if runner_user and runner_user != os.environ.get("USER"):
+        # The review workspace is owned by agent-review; grant the delegated
+        # model runner only this PR workspace so it can write model-review.md.
+        run_cmd(["setfacl", "-Rm", f"u:{runner_user}:rwx", str(workspace)], timeout=30)
+        for parent in [workspace.parent, workspace.parent.parent]:
+            run_cmd(["setfacl", "-m", f"u:{runner_user}:--x", str(parent)], timeout=30)
         cmd = ["sudo", "-n", "-u", runner_user, "env", f"HOME=/home/{runner_user}", *codex_cmd]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
     # Do not persist the full review prompt/diff in JSON logs. The prompt can

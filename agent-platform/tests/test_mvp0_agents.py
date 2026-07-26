@@ -2032,6 +2032,8 @@ class ReviewAgentModelRunnerTests(unittest.TestCase):
         self.assertIn("model_runner_user", src)
         self.assertIn("sudo", src)
         self.assertIn("agent-review ALL=(agent-research-runner)", workflow)
+        self.assertIn("setfacl", src)
+        self.assertIn("u:{runner_user}:rwx", src)
         self.assertNotIn("install -o agent-review -g agent-review -m 600 /home/agent-research-runner/.codex/auth.json", workflow)
 
 
