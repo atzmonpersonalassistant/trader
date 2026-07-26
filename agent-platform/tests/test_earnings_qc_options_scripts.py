@@ -829,6 +829,28 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["multiyear_failed"])
 
+    def test_refresh_summary_no_forward_candidates_is_not_multiyear_infra_failure(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "NO_FORWARD_CANDIDATES",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 2,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertEqual(out["status"], "NO_FORWARD_CANDIDATES")
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+        self.assertEqual(out["failed_chunk_count"], 0)
+
     def test_qc_cloud_extract_generates_underlying_ohlcv_and_realized_vol_fields(self):
         script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
         self.assertIn("underlying_history_rows", script)

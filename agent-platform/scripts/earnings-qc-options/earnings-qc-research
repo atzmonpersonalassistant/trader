@@ -901,7 +901,10 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['candidate_count'] = len(summary['final_candidates'])
     summary['final_candidate_count'] = len(summary['final_candidates'])
     no_pass = bool(src) and not summary['final_candidates'] and multiyear_no_passing_symbols(mb.get('status'))
-    infra_failed = bool(mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')))
+    # A historical refresh with no forward candidates is a terminal no-op, not an
+    # infrastructure failure to retry/debug. Classify infra failures only when
+    # there was actually something to validate.
+    infra_failed = bool(src) and bool(mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')))
     summary['historical_gate_no_pass'] = no_pass
     summary['historical_gate_blocked'] = bool(src) and not summary['final_candidates'] and infra_failed
     summary['multiyear_failed'] = infra_failed
