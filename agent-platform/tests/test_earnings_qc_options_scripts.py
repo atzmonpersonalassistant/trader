@@ -934,7 +934,9 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
 
     def test_vps_deploy_grants_ubuntu_read_acl_for_research_observability(self):
         workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
-        self.assertIn("setfacl -Rm u:ubuntu:rx,d:u:ubuntu:rx /agents/research/state /agents/research/logs /agents/research/reports", workflow)
+        self.assertIn("DEPLOY_USER='$VPS_USER' bash -s", workflow)
+        self.assertIn("setfacl -Rm \"u:${DEPLOY_USER}:rx,d:u:${DEPLOY_USER}:rx\" /agents/research/state /agents/research/logs /agents/research/reports", workflow)
+        self.assertIn("sudo -n -u \"$DEPLOY_USER\"", workflow)
         self.assertIn("test -r /agents/research/state", workflow)
 
 
