@@ -113,6 +113,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertLess(calls.index("run"), calls.index("stage"))
 
+    def test_historical_without_multiyear_artifact_does_not_succeed_from_stale_summary(self):
+        mod = load_script("earnings-qc-research")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "full_summary.json").write_text(json.dumps({"ok": True, "status": "OK_FULL_QC_SCAN"}))
+        args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--years", "10"])
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign"), \
+             mock.patch.object(mod, "upsert_run"), \
+             mock.patch.object(mod, "upsert_stage"), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value=None), \
+             mock.patch.object(mod, "persist_summary_to_db"), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}):
+            rc = mod.cmd_historical(args)
+        self.assertEqual(rc, 2)
+
     def test_multiyear_expansion_can_turn_historical_blocker_into_ok(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
         self.assertIn("scanner_failed", multi)
@@ -789,9 +804,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("failure_reasons.append(\"low_open_interest\")", main)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
 
     def test_refresh_summary_after_historical_marks_terminal_no_pass_not_blocked(self):
@@ -1032,3 +1044,5 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(out["historical_failed_chunk_count"], 1)
         self.assertTrue(out["multiyear_failed"])
 
+if __name__ == "__main__":
+    unittest.main()

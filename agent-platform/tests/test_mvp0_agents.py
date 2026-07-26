@@ -2014,9 +2014,6 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("raw diff was not sent to the model", review_text)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ResearchIdeaQualityPromptTests(unittest.TestCase):
     def test_idea_prompt_requires_dated_catalyst_and_liquidity_floor(self):
@@ -2031,3 +2028,5 @@ class ResearchIdeaQualityPromptTests(unittest.TestCase):
         self.assertIn("falsifiable reject condition", prompt)
         self.assertIn("IV/RV", prompt)
 
+if __name__ == "__main__":
+    unittest.main()

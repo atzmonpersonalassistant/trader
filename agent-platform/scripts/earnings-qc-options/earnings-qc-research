@@ -969,8 +969,8 @@ def cmd_historical(args) -> int:
     if not db_after or db_after.get('run_id') != run_id:
         print(json.dumps({'ok': False, 'status': 'DB_SUMMARY_PERSIST_FAILED', 'campaign_id': campaign_id, 'run_id': run_id}, ensure_ascii=False, indent=2)); return 1
     upsert_stage(campaign_id, run_id, f'historical_option_pnl_years_{args.years}', 'completed' if mb and mb.get('status') else 'failed', output_json=mb or {}, artifact_path=str(run_dir/'multiyear_backtest'), params=params, passed=summary.get('final_candidate_count'), blocker=summary.get('status') if not summary.get('ok') else None)
-    print(json.dumps({'ok': bool(summary.get('ok')), 'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'years': args.years, 'multiyear': mb, 'summary': summary}, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if summary.get('ok') else 2
+    print(json.dumps({'ok': bool(mb and summary.get('ok')), 'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'years': args.years, 'multiyear': mb, 'summary': summary}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if mb and summary.get('ok') else 2
 
 
 def cmd_cleanup(args) -> int:
