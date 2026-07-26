@@ -8,6 +8,7 @@ MAX_UNDERLYINGS = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_UNDERLYINGS", "3"))
 TIMEOUT_BACKTEST = int(os.environ.get("QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT", "900"))
 MAX_DTE_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_DTE", "180"))
 MAX_ROWS_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_ROWS_PER_UNDERLYING", "300"))
+MAX_HISTORY_LOOKBACK_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_HISTORY_LOOKBACK_DAYS", "252"))
 
 def fail(status, msg, rc=1, **extra):
     print(json.dumps({"ok": False, "status": status, "message": msg, **extra}, ensure_ascii=False), file=sys.stderr)
@@ -41,6 +42,16 @@ def ensure_project(project_dir):
     cfg.update({"algorithm-language": "Python", "parameters": {}, "description": "Bounded Trader QC Cloud option quote/greeks extract probe", "cloud-id": project["projectId"], "organization-id": project.get("organizationId")})
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n"); return int(project["projectId"]), str(project.get("organizationId"))
 
+def candidate_payload(run_dir):
+    p = run_dir / "candidate.json"
+    if not p.exists(): return {}
+    try:
+        data = json.loads(p.read_text())
+        if isinstance(data, dict) and isinstance(data.get("candidate"), dict): return data["candidate"]
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
 def candidate_text(run_dir):
     p = run_dir / "candidate.json"
     if not p.exists(): return ""
@@ -63,6 +74,7 @@ def infer_dte_band(run_dir, fallback_max):
 
 def parse_probe(run_dir):
     text = (run_dir / "qc_option_history_probe.py").read_text()
+    candidate = candidate_payload(run_dir)
     def literal(name, default):
         m = re.search(rf"^{name}\s*=\s*(.+)$", text, re.M)
         if not m: return default
@@ -73,7 +85,7 @@ def parse_probe(run_dir):
     underlyings = [str(x).upper().strip() for x in underlyings if str(x).strip()][:MAX_UNDERLYINGS]
     fallback_max = min(int(literal("EXPIRY_WINDOW_DAYS", 90)), MAX_DTE_CAP)
     min_dte, max_dte = infer_dte_band(run_dir, fallback_max)
-    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 30)), 60), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP)}
+    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 90)), MAX_HISTORY_LOOKBACK_CAP), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP), "candidate_event_context": {"candidate_id": candidate.get("id"), "strategy_family": candidate.get("family"), "catalyst_window": candidate.get("catalyst_window"), "quantconnect_test_spec": candidate.get("quantconnect_test_spec"), "required_data": candidate.get("required_data")}, "event_aligned_backtest_request": {"required": True, "status": "not_produced_by_bounded_quote_extract", "reason": "Quote/Greeks extract is a bounded one-day chain/OHLCV artifact. Historical earnings timestamps and event-aligned option slices require a separate QC event-slice backtest artifact.", "required_fields": ["historical_earnings_date", "earnings_print_time", "pre_event_option_slices", "post_event_option_slices", "underlying_ohlcv", "realized_volatility"]}}
 
 def write_project(project_dir, spec):
     payload = json.dumps(spec, sort_keys=True)
@@ -112,16 +124,40 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         self.rows = []
         self.seen = set()
         self.history_summary = {{}}
+        self.underlying_history_rows = {{}}
+        self.realized_volatility = {{}}
         self.option_symbols = []
         for ticker in SPEC["underlyings"]:
             eq = self.AddEquity(ticker, Resolution.Minute)
             opt = self.AddOption(ticker, Resolution.Minute)
             opt.SetFilter(lambda u: u.IncludeWeeklys().Strikes(-100, 100).Expiration(datetime.timedelta(days=int(SPEC.get("min_dte", 0))), datetime.timedelta(days=int(SPEC.get("max_dte", 180)))))
             self.option_symbols.append((ticker, eq.Symbol, opt.Symbol))
-            hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 30)), Resolution.Daily)
-            try: nrows = len(hist) if hist is not None else 0
-            except Exception: nrows = 0
-            self.history_summary[ticker] = {{"rows": int(nrows), "lookback_days": int(SPEC.get("history_lookback_days", 30))}}
+            hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 90)), Resolution.Daily)
+            history_rows = []
+            closes = []
+            try:
+                records = hist.loc[eq.Symbol] if hasattr(hist, "loc") else hist
+                for idx, row in records.iterrows():
+                    close = safe_float(row.get("close"))
+                    if close is not None:
+                        closes.append(close)
+                    history_rows.append({{"time": str(idx), "open": safe_float(row.get("open")), "high": safe_float(row.get("high")), "low": safe_float(row.get("low")), "close": close, "volume": safe_int(row.get("volume"))}})
+            except Exception as e:
+                history_rows = []
+                self.history_summary[ticker] = {{"rows": 0, "lookback_days": int(SPEC.get("history_lookback_days", 90)), "error": str(e)[:200]}}
+            if ticker not in self.history_summary:
+                self.history_summary[ticker] = {{"rows": len(history_rows), "lookback_days": int(SPEC.get("history_lookback_days", 90))}}
+            self.underlying_history_rows[ticker] = history_rows[-int(SPEC.get("history_lookback_days", 90)):]
+            returns = []
+            for i in range(1, len(closes)):
+                if closes[i-1] and closes[i] and closes[i-1] > 0 and closes[i] > 0:
+                    returns.append(math.log(closes[i] / closes[i-1]))
+            for window in [20, 30, 60]:
+                sample = returns[-window:]
+                if len(sample) >= max(5, window // 2):
+                    mean = sum(sample) / len(sample)
+                    variance = sum((x - mean) ** 2 for x in sample) / max(1, len(sample) - 1)
+                    self.realized_volatility.setdefault(ticker, {{}})[str(window) + "d"] = (variance ** 0.5) * (252 ** 0.5)
         self.max_rows_total = int(SPEC.get("max_contract_rows_per_underlying", 200)) * max(1, len(SPEC["underlyings"]))
         self.last_time = None
 
@@ -154,6 +190,8 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
                     "gamma": safe_float(getattr(g, "Gamma", None)) if g is not None else None,
                     "theta": safe_float(getattr(g, "Theta", None)) if g is not None else None,
                     "vega": safe_float(getattr(g, "Vega", None)) if g is not None else None,
+                    "sample_time": str(self.Time),
+                    "underlying_price": safe_float(self.Securities[eqsym].Price) if eqsym in self.Securities else None,
                 }})
                 if len(self.rows) >= self.max_rows_total:
                     self.emit_and_quit("bounded_row_limit")
@@ -172,7 +210,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
     def emit_runtime_stats(self, reason):
         if getattr(self, "_emitted", False): return
         self._emitted = True
-        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "underlyings": SPEC["underlyings"], "history_summary": self.history_summary, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 30)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega"], "completion_reason": reason}}
+        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "underlyings": SPEC["underlyings"], "candidate_event_context": SPEC.get("candidate_event_context", {{}}), "event_aligned_backtest_request": SPEC.get("event_aligned_backtest_request", {{"required": True, "status": "not_produced_by_bounded_quote_extract"}}), "history_summary": self.history_summary, "underlying_history_rows": self.underlying_history_rows, "realized_volatility": self.realized_volatility, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 90)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["candidate_event_context", "event_aligned_backtest_request", "underlying_ohlcv", "realized_volatility", "bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega", "sample_time", "underlying_price"], "known_limitations": ["no_historical_earnings_event_calendar_in_this_extract", "no_historical_option_chain_event_slices_in_this_bounded_extract"], "completion_reason": reason}}
         s = json.dumps(artifact, sort_keys=True)
         chunk = 6000
         for i in range(0, len(s), chunk):

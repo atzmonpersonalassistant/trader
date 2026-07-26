@@ -88,7 +88,7 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
     (out_dir/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
     fs=run_dir/'full_summary.json'
     if fs.exists():
-        full=json.loads(fs.read_text()); full['multiyear_backtest']=summary; full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')
+        full=json.loads(fs.read_text()); full['multiyear_backtest']=summary; full['historical_gate_ran']=True; full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')
         # final candidates only where option pnl backtest has sufficient OK status; stricter pass criteria can be tuned later
         ok_syms={r['symbol'] for r in summary.get('results',[]) if summary.get('ok') and result_passes(r)}
         src=full.get('forward_candidates') or full.get('candidates',[])
@@ -96,15 +96,31 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
         full['candidates']=full['final_candidates']
         full['candidate_count']=len(full['final_candidates'])
         full['final_candidate_count']=len(full['final_candidates'])
-        full['historical_gate_blocked']=bool(src) and not bool(full['final_candidates'])
-        full['multiyear_failed']=not bool(summary.get('ok'))
-        scanner_failed = [x for x in (full.get('failed_chunks') or []) if 'MULTIYEAR' not in str(x.get('status')) and 'HISTORICAL' not in str(x.get('status'))]
+        historical_failed = list(full.get('historical_failed_chunks') or [])
+        scanner_failed = []
+        for x in (full.get('failed_chunks') or []):
+            text = (str(x.get('status')) + ' ' + str(x.get('blocked_reason'))).upper()
+            # Keep scanner failures separate from historical/multiyear option-PnL failures.
+            # Retry logic relies on the inverse check: 'MULTIYEAR' not in str(x.get('status')).
+            if any(marker in text for marker in ['MULTIYEAR', 'HISTORICAL', 'OPTION-PNL', 'OPTION_PNL']):
+                historical_failed.append(x)
+            else:
+                scanner_failed.append(x)
         base_scan_ok = not scanner_failed and int(full.get('qc_symbols_scanned') or 0) >= int(full.get('calendar_row_count') or full.get('calendar_universe_count') or 0)
+        no_pass = bool(src) and bool(base_scan_ok) and not bool(full['final_candidates']) and summary.get('status') == 'BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS'
+        infra_failed = bool(src) and not bool(summary.get('ok')) and not no_pass
+        full['historical_gate_no_pass']=no_pass
+        full['historical_gate_blocked']=bool(src) and bool(base_scan_ok) and not bool(full['final_candidates']) and (infra_failed or not no_pass)
+        full['multiyear_failed']=infra_failed
         full['failed_chunks'] = scanner_failed
         full['failed_chunk_count'] = len(scanner_failed)
-        full['ok']=bool(base_scan_ok) and bool(summary.get('ok')) and not full['historical_gate_blocked']
+        full['historical_failed_chunks'] = historical_failed
+        full['historical_failed_chunk_count'] = len(historical_failed)
+        full['ok']=bool(base_scan_ok) and bool(summary.get('ok')) and bool(full['final_candidates'])
         if full['ok']:
             full['status']='OK_FULL_QC_SCAN'
+        elif no_pass:
+            full['status']='NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'
         elif full['historical_gate_blocked']:
             full['status']='BLOCKED_HISTORICAL_OPTION_PNL_GATE'
         elif full['multiyear_failed']:

@@ -2014,5 +2014,19 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("raw diff was not sent to the model", review_text)
 
 
+
+class ResearchIdeaQualityPromptTests(unittest.TestCase):
+    def test_idea_prompt_requires_dated_catalyst_and_liquidity_floor(self):
+        import importlib.machinery, importlib.util
+        path = ROOT / "agent-platform" / "tools" / "trading_research_agent.py"
+        loader = importlib.machinery.SourceFileLoader("trading_research_agent_quality", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec); sys.modules[loader.name] = mod; loader.exec_module(mod)
+        prompt = mod.build_ai_idea_prompt({"existing": []})
+        self.assertIn("dated catalyst", prompt)
+        self.assertIn("liquidity premise", prompt)
+        self.assertIn("falsifiable reject condition", prompt)
+        self.assertIn("IV/RV", prompt)
+
 if __name__ == "__main__":
     unittest.main()
