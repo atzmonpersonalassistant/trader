@@ -518,6 +518,9 @@ def aggregate(chunks: list[dict]) -> dict:
         agg[k] = sum(v for v in vals if isinstance(v, int))
     forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]
     for d in chunks:
+        offset = d.get('_chunk_offset')
+        if calendar_rows and offset is not None and int(offset) >= int(calendar_rows) and (d.get('status') == 'BLOCKED_QC_BATCH_FAILED') and ((d.get('qc_checks') or {}).get('qc_option_chain_batch_diagnostic') or {}).get('reason') == 'empty_batch':
+            continue
         scanned += int(d.get('qc_processed_row_count') or d.get('qc_batch_count') or 0)
         if not d.get('ok'):
             failed.append({'offset': d.get('_chunk_offset'), 'status': d.get('status'), 'blocked_reason': d.get('blocked_reason')})

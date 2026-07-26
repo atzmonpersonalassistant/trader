@@ -1036,6 +1036,15 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(out["historical_failed_chunk_count"], 1)
         self.assertEqual(out["failed_chunks"][0]["status"], "BLOCKED_QC_BATCH_FAILED")
 
+    def test_aggregate_ignores_stale_empty_batch_chunks_beyond_calendar_rows(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {"_chunk_offset": 0, "ok": True, "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 185, "candidate_details": [], "funnel": {}},
+            {"_chunk_offset": 650, "ok": False, "status": "BLOCKED_QC_BATCH_FAILED", "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 0, "qc_checks": {"qc_option_chain_batch_diagnostic": {"ok": False, "reason": "empty_batch"}}, "funnel": {}},
+        ])
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertTrue(out["ok"])
+
     def test_aggregate_complete_scan_with_no_forward_candidates_is_terminal_ok(self):
         mod = load_script("earnings-qc-research")
         out = mod.aggregate([{
