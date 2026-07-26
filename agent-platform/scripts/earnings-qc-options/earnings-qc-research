@@ -533,9 +533,12 @@ def aggregate(chunks: list[dict]) -> dict:
                 forward_candidates.append(c); seen.add(key)
             if c.get('symbol') in ok_syms and key not in final_seen:
                 final_candidates.append(c); final_seen.add(key)
+    candidate_chunk_count = sum(1 for d in chunks if d.get('candidate_details'))
+    validated_candidate_chunk_count = sum(1 for d in chunks if d.get('candidate_details') and d.get('chunk_multiyear_backtest'))
+    all_candidate_chunks_validated = candidate_chunk_count > 0 and validated_candidate_chunk_count == candidate_chunk_count
     historical_gate_ran = bool(multiyear_statuses)
     base_scan_complete = bool(chunks) and not failed and scanned >= calendar_rows
-    historical_gate_no_pass = bool(forward_candidates) and base_scan_complete and historical_gate_ran and not final_candidates and all(multiyear_no_passing_symbols(x.get('status')) for x in multiyear_statuses)
+    historical_gate_no_pass = bool(forward_candidates) and base_scan_complete and all_candidate_chunks_validated and historical_gate_ran and not final_candidates and all(multiyear_no_passing_symbols(x.get('status')) for x in multiyear_statuses)
     historical_failed_chunks = [x for x in multiyear_statuses if x.get('ok') is False and multiyear_infrastructure_failed(x.get('status'))]
     if historical_failed_chunks:
         for x in historical_failed_chunks:
@@ -570,6 +573,8 @@ def aggregate(chunks: list[dict]) -> dict:
         'final_candidate_count': len(final_candidates),
         'final_candidates': final_candidates,
         'chunk_multiyear_statuses': multiyear_statuses,
+        'candidate_chunk_count': candidate_chunk_count,
+        'validated_candidate_chunk_count': validated_candidate_chunk_count,
         'historical_gate_ran': historical_gate_ran,
         'historical_gate_blocked': historical_gate_blocked,
         'historical_gate_no_pass': historical_gate_no_pass,

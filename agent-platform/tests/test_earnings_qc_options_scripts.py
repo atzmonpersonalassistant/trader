@@ -118,6 +118,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("scanner_failed", multi)
         self.assertIn("'MULTIYEAR' not in str(x.get('status'))", multi)
         self.assertIn("base_scan_ok", multi)
+        self.assertIn("no_pass = bool(src) and bool(base_scan_ok)", multi)
         self.assertIn("full['ok']=bool(base_scan_ok) and bool(summary.get('ok'))", multi)
         self.assertNotIn("full['ok']=bool(full.get('ok')) and bool(summary.get('ok'))", multi)
 
@@ -899,6 +900,32 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         }])
         self.assertFalse(out["ok"])
         self.assertEqual(out["final_candidate_count"], 0)
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+
+    def test_chunked_no_pass_requires_all_candidate_chunks_validated(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "WMT", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "WMT"}]},
+            },
+        ])
+        self.assertFalse(out["historical_gate_no_pass"])
+        self.assertEqual(out["candidate_chunk_count"], 2)
+        self.assertEqual(out["validated_candidate_chunk_count"], 1)
         self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
 
     def test_refresh_summary_no_pass_does_not_mask_scanner_failures(self):
