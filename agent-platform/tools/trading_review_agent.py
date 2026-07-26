@@ -35,6 +35,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autoreview_timeout_seconds": 1800,
     "autoreview_required": False,
     "autoreview_max_changed_files": 12,
+    # Use a dedicated non-review runtime account for Codex when configured.
+    # This avoids copying OAuth refresh tokens between Linux users; GitHub
+    # publishing still happens only in the review agent process/token.
+    "model_runner_user": os.environ.get("TRADING_REVIEW_MODEL_RUNNER_USER", ""),
 }
 
 CHECKLIST = [
@@ -247,15 +251,21 @@ def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str,
         + "\nDiff:\n" + context["diff"]
     )
     output = workspace / ".review-agent" / "model-review.md"
-    cmd = [
+    codex_cmd = [
         "codex", "exec", "--model", str(config.get("review_model") or "gpt-5.5"),
         "--sandbox", "workspace-write", "--skip-git-repo-check", "-c", 'approval_policy="never"',
         "-C", str(workspace), "--output-last-message", str(output),
     ]
+    cmd = list(codex_cmd)
+    runner_user = str(config.get("model_runner_user") or "").strip()
+    if runner_user and runner_user != os.environ.get("USER"):
+        cmd = ["sudo", "-n", "-u", runner_user, "env", f"HOME=/home/{runner_user}", *codex_cmd]
     result = run_cmd(cmd, cwd=workspace, timeout=timeout, input_text=prompt)
     # Do not persist the full review prompt/diff in JSON logs. The prompt can
     # contain PR content, including the very secrets this agent is meant to flag.
     result["command"] = cmd[:-1] + ["<review-prompt-redacted>"]
+    if runner_user:
+        result["model_runner_user"] = runner_user
     result["stdout"] = "<codex-stdout-redacted>"
     result["stderr"] = "<codex-stderr-redacted>"
     if result["returncode"] == 0 and output.exists():

@@ -2023,3 +2023,29 @@ class ReviewAgentCodexTrustTests(unittest.TestCase):
         src = (ROOT / "agent-platform" / "tools" / "trading_review_agent.py").read_text()
         self.assertIn("--skip-git-repo-check", src)
 
+
+
+class ReviewAgentModelRunnerTests(unittest.TestCase):
+    def test_review_agent_can_delegate_model_codex_to_configured_runner_without_copying_auth(self):
+        src = (ROOT / "agent-platform" / "tools" / "trading_review_agent.py").read_text()
+        workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
+        self.assertIn("model_runner_user", src)
+        self.assertIn("sudo", src)
+        self.assertIn("agent-review ALL=(agent-research-runner)", workflow)
+        self.assertNotIn("install -o agent-review -g agent-review -m 600 /home/agent-research-runner/.codex/auth.json", workflow)
+
+
+
+class ResearchIdeaQualityPromptTests(unittest.TestCase):
+    def test_idea_prompt_requires_dated_catalyst_and_liquidity_floor(self):
+        import importlib.machinery, importlib.util
+        path = ROOT / "agent-platform" / "tools" / "trading_research_agent.py"
+        loader = importlib.machinery.SourceFileLoader("trading_research_agent_quality", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec); sys.modules[loader.name] = mod; loader.exec_module(mod)
+        prompt = mod.build_ai_idea_prompt({"existing": []})
+        self.assertIn("dated catalyst", prompt)
+        self.assertIn("liquidity premise", prompt)
+        self.assertIn("falsifiable reject condition", prompt)
+        self.assertIn("IV/RV", prompt)
+

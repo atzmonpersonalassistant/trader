@@ -484,6 +484,11 @@ jobs:
           EOF_SUDOERS_RUNNER
           sudo chmod 440 /etc/sudoers.d/trading-agent-research-runner
           sudo visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
+          sudo tee /etc/sudoers.d/trading-agent-review-model-runner >/dev/null <<'EOF_SUDOERS_REVIEW_MODEL'
+          agent-review ALL=(agent-research-runner) NOPASSWD: /usr/bin/env HOME=/home/agent-research-runner codex *
+          EOF_SUDOERS_REVIEW_MODEL
+          sudo chmod 440 /etc/sudoers.d/trading-agent-review-model-runner
+          sudo visudo -cf /etc/sudoers.d/trading-agent-review-model-runner >/dev/null
           sudo tee /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null <<'EOF_SUDOERS_QC_DOCKER'
           # Allow the research broker to run only the safe QC/LEAN Docker wrapper as root.
           agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-qc-docker-run *

@@ -846,3 +846,39 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
         self.assertIn("setfacl -Rm u:ubuntu:rx,d:u:ubuntu:rx /agents/research/state /agents/research/logs /agents/research/reports", workflow)
         self.assertIn("test -r /agents/research/state", workflow)
+
+
+class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
+    def test_refresh_moves_historical_failures_out_of_scanner_failed_chunks(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "calendar_row_count": 10,
+            "calendar_universe_count": 10,
+            "qc_symbols_scanned": 9,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "A"}],
+            "failed_chunks": [
+                {"offset": 1, "status": "QC_BACKTEST_FAILED", "blocked_reason": "mandatory multiyear option-PnL backtest failed"},
+                {"offset": 2, "status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"},
+            ],
+        }))
+        out = mod.refresh_summary_after_historical(tmp, {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": []})
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertEqual(out["historical_failed_chunk_count"], 1)
+        self.assertEqual(out["failed_chunks"][0]["status"], "BLOCKED_QC_BATCH_FAILED")
+
+    def test_aggregate_separates_multiyear_infra_failures_from_scanner_chunks(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "A", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": False, "status": "QC_BACKTEST_FAILED", "results": []},
+        }])
+        self.assertEqual(out["failed_chunk_count"], 0)
+        self.assertEqual(out["historical_failed_chunk_count"], 1)
+        self.assertTrue(out["multiyear_failed"])
+

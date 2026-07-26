@@ -524,8 +524,6 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
-            if mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')):
-                failed.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'blocked_reason': 'mandatory multiyear option-PnL backtest failed'})
             ok_syms={r.get('symbol') for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
         else:
             ok_syms=set()
@@ -537,7 +535,8 @@ def aggregate(chunks: list[dict]) -> dict:
                 final_candidates.append(c); final_seen.add(key)
     historical_gate_ran = bool(multiyear_statuses)
     historical_gate_no_pass = bool(forward_candidates) and historical_gate_ran and not final_candidates and all(multiyear_no_passing_symbols(x.get('status')) for x in multiyear_statuses)
-    multiyear_failed = any(x.get('ok') is False and multiyear_infrastructure_failed(x.get('status')) for x in multiyear_statuses)
+    historical_failed_chunks = [x for x in multiyear_statuses if x.get('ok') is False and multiyear_infrastructure_failed(x.get('status'))]
+    multiyear_failed = bool(historical_failed_chunks)
     historical_gate_blocked = bool(forward_candidates) and not final_candidates and (not historical_gate_ran or multiyear_failed)
     if multiyear_statuses:
         if all(x.get('ok') for x in multiyear_statuses):
@@ -557,6 +556,8 @@ def aggregate(chunks: list[dict]) -> dict:
         'chunk_count': len(chunks),
         'failed_chunk_count': len(failed),
         'failed_chunks': failed,
+        'historical_failed_chunk_count': len(historical_failed_chunks),
+        'historical_failed_chunks': historical_failed_chunks,
         'aggregate_funnel': agg,
         'forward_candidate_count': len(forward_candidates),
         'forward_candidates': forward_candidates,
@@ -901,9 +902,18 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['historical_gate_no_pass'] = no_pass
     summary['historical_gate_blocked'] = bool(src) and not summary['final_candidates'] and infra_failed
     summary['multiyear_failed'] = infra_failed
-    scanner_failed = [x for x in (summary.get('failed_chunks') or []) if 'MULTIYEAR' not in str(x.get('status')) and 'HISTORICAL' not in str(x.get('status'))]
+    historical_failed = list(summary.get('historical_failed_chunks') or [])
+    scanner_failed = []
+    for x in (summary.get('failed_chunks') or []):
+        text = (str(x.get('status')) + ' ' + str(x.get('blocked_reason'))).upper()
+        if any(marker in text for marker in ['MULTIYEAR', 'HISTORICAL', 'OPTION-PNL', 'OPTION_PNL']):
+            historical_failed.append(x)
+        else:
+            scanner_failed.append(x)
     summary['failed_chunks'] = scanner_failed
     summary['failed_chunk_count'] = len(scanner_failed)
+    summary['historical_failed_chunks'] = historical_failed
+    summary['historical_failed_chunk_count'] = len(historical_failed)
     base_scan_ok = not scanner_failed and int(summary.get('qc_symbols_scanned') or 0) >= int(summary.get('calendar_row_count') or summary.get('calendar_universe_count') or 0)
     summary['ok'] = bool(base_scan_ok) and bool(mb.get('ok')) and bool(summary['final_candidates'])
     if summary['ok']:
