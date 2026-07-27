@@ -145,7 +145,7 @@ def parse_probe(run_dir):
     min_dte, max_dte = infer_dte_band(run_dir, fallback_max)
     candidate = candidate_payload(run_dir)
     event_windows, target_expiries = infer_event_and_expiry_windows(run_dir)
-    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 30)), MAX_HISTORY_LOOKBACK_CAP), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP), "candidate_event_context": {"candidate_id": candidate.get("id"), "strategy_family": candidate.get("family"), "catalyst_window": candidate.get("catalyst_window"), "quantconnect_test_spec": candidate.get("quantconnect_test_spec"), "required_data": candidate.get("required_data"), "target_event_windows": event_windows, "target_expiries": target_expiries}, "event_aligned_backtest_request": {"required": True, "status": "event_or_expiry_plan_produced", "reason": "The cloud extract samples either the historical event window when it is already available, or the latest regular-session quote snapshot while prioritizing target expiries for future events.", "required_fields": ["target_event_windows", "target_expiries", "sample_window", "underlying_ohlcv", "realized_volatility", "option_quote_greeks_rows"]}}
+    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 30)), MAX_HISTORY_LOOKBACK_CAP), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP), "candidate_event_context": {"candidate_id": candidate.get("id"), "strategy_family": candidate.get("family"), "catalyst_window": candidate.get("catalyst_window"), "quantconnect_test_spec": candidate.get("quantconnect_test_spec"), "required_data": candidate.get("required_data"), "target_event_windows": event_windows, "target_expiries": target_expiries}, "event_aligned_backtest_request": {"required": True, "status": "event_or_expiry_plan_produced", "slice_policy": "event_plan_produced_quote_slices_bounded", "reason": "The cloud extract samples bounded quote slices; historical_option_chain_event_slices_only_if_event_is_inside_bounded_backtest_window, otherwise it uses the latest regular-session quote snapshot while prioritizing target expiries for future events.", "required_fields": ["target_event_windows", "target_expiries", "event_underlying_windows", "sample_window", "underlying_ohlcv", "realized_volatility", "option_quote_greeks_rows"]}}
 
 def write_project(project_dir, spec):
     payload = json.dumps(spec, sort_keys=True)
@@ -206,6 +206,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         self.seen = set()
         self.history_summary = {{}}
         self.underlying_history_rows = {{}}
+        self.event_underlying_windows = {{}}
         self.realized_volatility = {{}}
         self.option_symbols = []
         for ticker in SPEC["underlyings"]:
@@ -227,6 +228,13 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
                 history_rows = []
             self.history_summary[ticker] = {{"rows": len(history_rows), "lookback_days": int(SPEC.get("history_lookback_days", 30))}}
             self.underlying_history_rows[ticker] = history_rows[-int(SPEC.get("history_lookback_days", 30)):]
+            self.event_underlying_windows[ticker] = []
+            for event in SPEC.get("candidate_event_context", {{}}).get("target_event_windows", []) or []:
+                event_date = event.get("date")
+                if not event_date:
+                    continue
+                event_rows = [row for row in history_rows if event.get("pre_event_date", event_date) <= str(row.get("time", ""))[:10] <= event.get("post_event_date", event_date)]
+                self.event_underlying_windows[ticker].append({{"event_date": event_date, "event_type": event.get("event_type"), "rows": event_rows}})
             returns = []
             for i in range(1, len(closes)):
                 if closes[i-1] and closes[i] and closes[i-1] > 0 and closes[i] > 0:
@@ -292,7 +300,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
     def emit_runtime_stats(self, reason):
         if getattr(self, "_emitted", False): return
         self._emitted = True
-        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "sample_window": {{"mode": self.sample_window_mode, "start": self.sample_start.isoformat(), "end": self.sample_end.isoformat()}}, "underlyings": SPEC["underlyings"], "candidate_event_context": SPEC.get("candidate_event_context", {{}}), "event_aligned_backtest_request": SPEC.get("event_aligned_backtest_request", {{}}), "history_summary": self.history_summary, "underlying_history_rows": self.underlying_history_rows, "realized_volatility": self.realized_volatility, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 30)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["candidate_event_context", "target_event_windows", "target_expiries", "sample_window", "underlying_ohlcv", "realized_volatility", "bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega", "sample_time", "underlying_price"], "known_limitations": ["future_event_option_slices_unavailable_until_event_window_has_historical_data", "historical_earnings_calendar_provider_not_configured"], "completion_reason": reason}}
+        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "sample_window": {{"mode": self.sample_window_mode, "start": self.sample_start.isoformat(), "end": self.sample_end.isoformat()}}, "underlyings": SPEC["underlyings"], "candidate_event_context": SPEC.get("candidate_event_context", {{}}), "event_aligned_backtest_request": SPEC.get("event_aligned_backtest_request", {{}}), "history_summary": self.history_summary, "underlying_history_rows": self.underlying_history_rows, "event_underlying_windows": self.event_underlying_windows, "realized_volatility": self.realized_volatility, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 30)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["candidate_event_context", "target_event_windows", "target_expiries", "event_underlying_windows", "sample_window", "underlying_ohlcv", "realized_volatility", "bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega", "sample_time", "underlying_price"], "known_limitations": ["historical_option_chain_event_slices_only_if_event_is_inside_bounded_backtest_window", "historical_earnings_calendar_provider_not_configured"], "completion_reason": reason}}
         s = json.dumps(artifact, sort_keys=True)
         chunk = 6000
         for i in range(0, len(s), chunk):
