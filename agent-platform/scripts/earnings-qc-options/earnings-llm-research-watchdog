@@ -289,6 +289,14 @@ VALID_JSON=0
 if [[ -f "$OUTPUT_DIR/diagnosis.json" ]] && python3 -m json.tool "$OUTPUT_DIR/diagnosis.json" >/dev/null 2>&1; then
   VALID_JSON=1
 fi
+HAS_DIAGNOSIS_MD=0
+if [[ -s "$OUTPUT_DIR/diagnosis.md" ]]; then
+  HAS_DIAGNOSIS_MD=1
+fi
+ARTIFACTS_VALID=0
+if [[ "$VALID_JSON" -eq 1 && "$HAS_DIAGNOSIS_MD" -eq 1 ]]; then
+  ARTIFACTS_VALID=1
+fi
 if [[ ! -f "$OUTPUT_DIR/notify.txt" ]]; then
   printf 'NO_NOTIFY\n' > "$OUTPUT_DIR/notify.txt"
 fi
@@ -308,12 +316,14 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
   "model": "$MODEL",
   "returncode": $RC,
   "valid_diagnosis_json": $VALID_JSON,
+  "has_diagnosis_md": $HAS_DIAGNOSIS_MD,
+  "artifacts_valid": $ARTIFACTS_VALID,
   "runner": "trading-research-watchdog-codex",
   "output_dir": "$OUTPUT_DIR"
 }
 META
 
-if [[ "$RC" -eq 0 ]]; then
+if [[ "$RC" -eq 0 && "$ARTIFACTS_VALID" -eq 1 ]]; then
   printf '%s\n' "$FINGERPRINT" > "$LAST_FINGERPRINT_FILE"
   printf '%s\n' "$OUTPUT_DIR" > "$RUN_STATE_DIR/latest-output-dir.txt"
   mkdir -p "$STATE_DIR/latest"
@@ -325,6 +335,9 @@ if [[ "$RC" -eq 0 ]]; then
   fi
   echo "WATCHDOG_COMPLETED run_id=$RUN_ID output=$OUTPUT_DIR notify=$(head -1 "$OUTPUT_DIR/notify.txt" 2>/dev/null || true)"
 else
-  echo "WATCHDOG_FAILED run_id=$RUN_ID rc=$RC output=$OUTPUT_DIR" >&2
+  if [[ "$RC" -eq 0 ]]; then
+    RC=70
+  fi
+  echo "WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID valid_diagnosis_json=$VALID_JSON has_diagnosis_md=$HAS_DIAGNOSIS_MD output=$OUTPUT_DIR" >&2
   exit "$RC"
 fi

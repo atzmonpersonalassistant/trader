@@ -64,6 +64,15 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn('sudo -n -u agent-research-watchdog', text)
         self.assertIn('trading-research-watchdog-codex', text)
 
+    def test_success_requires_durable_diagnosis_artifacts_before_fingerprint(self):
+        text = SCRIPT.read_text()
+        self.assertIn('HAS_DIAGNOSIS_MD=0', text)
+        self.assertIn('ARTIFACTS_VALID=0', text)
+        self.assertIn('"artifacts_valid": $ARTIFACTS_VALID', text)
+        self.assertIn('if [[ "$RC" -eq 0 && "$ARTIFACTS_VALID" -eq 1 ]]; then', text)
+        self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
+        self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
+
 
 if __name__ == "__main__":
     unittest.main()
