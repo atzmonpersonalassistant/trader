@@ -32,7 +32,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("WATCHDOG_NO_CHANGE", text)
         self.assertIn("WATCHDOG_COMPLETED", text)
         self.assertIn("last-fingerprint.txt", text)
-        self.assertIn("trading-research-runner-codex", text)
+        self.assertIn("trading-research-watchdog-codex", text)
         self.assertNotIn("bounded_action_request.json", text)
         self.assertNotIn("trading-research-bounded-earnings-qc", text)
         self.assertNotIn("earnings-qc-research run", text)
@@ -43,7 +43,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("FINGERPRINT=", text)
         self.assertIn("LAST_FINGERPRINT_FILE", text)
         self.assertIn('"$(cat "$LAST_FINGERPRINT_FILE")" == "$FINGERPRINT"', text)
-        self.assertLess(text.index("WATCHDOG_NO_CHANGE"), text.index("trading-research-runner-codex"))
+        self.assertLess(text.index("WATCHDOG_NO_CHANGE"), text.index("trading-research-watchdog-codex"))
 
     def test_fingerprint_ignores_churning_log_files(self):
         text = SCRIPT.read_text()

@@ -279,7 +279,7 @@ make_runner_inputs_usable "$TASK_FILE" "$OUTPUT_DIR"
 
 STARTED_AT="$(date -Is)"
 set +e
-sudo -n -u agent-research-runner /usr/local/bin/trading-research-runner-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" \
+sudo -n -u agent-research-watchdog /usr/local/bin/trading-research-watchdog-codex "$TASK_FILE" "$OUTPUT_DIR" "$MODEL" \
   > "$OUTPUT_DIR/runner.stdout.log" 2> "$OUTPUT_DIR/runner.stderr.log"
 RC=$?
 set -e
@@ -308,7 +308,7 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
   "model": "$MODEL",
   "returncode": $RC,
   "valid_diagnosis_json": $VALID_JSON,
-  "runner": "trading-research-runner-codex",
+  "runner": "trading-research-watchdog-codex",
   "output_dir": "$OUTPUT_DIR"
 }
 META
