@@ -133,9 +133,9 @@ POSTRUN_DIR="$(find "$REPORT_ROOT" -maxdepth 1 -type d -name "research-pass-post
 DAILY_LOG="$LOG_DIR/daily-${DATE_COMPACT}.log"
 POSTRUN_LOG="$LOG_DIR/llm-postrun-review.log"
 
-FINGERPRINT="$(python3 - "$RUN_DIR" "$POSTRUN_DIR" "$DAILY_LOG" "$POSTRUN_LOG" <<'PY'
-import hashlib, json, os, pathlib, sys
-run_dir, postrun_dir, daily_log, postrun_log = [pathlib.Path(x) if x else None for x in sys.argv[1:]]
+FINGERPRINT="$(python3 - "$RUN_DIR" "$POSTRUN_DIR" <<'PY'
+import hashlib, json, pathlib, sys
+run_dir, postrun_dir = [pathlib.Path(x) if x else None for x in sys.argv[1:]]
 items=[]
 def add(path):
     if path and path.exists() and not path.is_symlink():
@@ -146,8 +146,6 @@ for name in ('full_summary.json', 'run_metadata.json'):
 if postrun_dir:
     for name in ('run_metadata.json', 'review.md', 'review.json', 'notify.txt', 'bounded_action_result.json'):
         add(postrun_dir / name)
-for path in (daily_log, postrun_log):
-    add(path)
 print(hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest())
 PY
 )"

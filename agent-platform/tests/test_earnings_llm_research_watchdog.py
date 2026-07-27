@@ -45,6 +45,16 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn('"$(cat "$LAST_FINGERPRINT_FILE")" == "$FINGERPRINT"', text)
         self.assertLess(text.index("WATCHDOG_NO_CHANGE"), text.index("trading-research-runner-codex"))
 
+    def test_fingerprint_ignores_churning_log_files(self):
+        text = SCRIPT.read_text()
+        fingerprint_block = text[text.index('FINGERPRINT="$(python3'):text.index('LAST_FINGERPRINT_FILE=')]
+        self.assertIn('full_summary.json', fingerprint_block)
+        self.assertIn('run_metadata.json', fingerprint_block)
+        self.assertNotIn('DAILY_LOG', fingerprint_block)
+        self.assertNotIn('POSTRUN_LOG', fingerprint_block)
+        self.assertNotIn('daily_log', fingerprint_block)
+        self.assertNotIn('postrun_log', fingerprint_block)
+
 
 if __name__ == "__main__":
     unittest.main()
