@@ -163,7 +163,8 @@ PY
     if [ "$LOOP_ONCE" = "1" ]; then
       exit 0
     fi
-    sleep 1800
+    EMPTY_QUEUE_SLEEP_SECONDS="${TRADING_RESEARCH_EMPTY_QUEUE_SLEEP_SECONDS:-300}"
+    sleep "$EMPTY_QUEUE_SLEEP_SECONDS"
   fi
 
   if [ "$LOOP_ONCE" = "1" ]; then
