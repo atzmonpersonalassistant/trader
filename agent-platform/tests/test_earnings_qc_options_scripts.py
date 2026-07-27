@@ -997,9 +997,11 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertIn("sample_time", script)
         self.assertIn("underlying_price", script)
         self.assertIn("candidate_event_context", script)
+        self.assertIn("target_event_windows", script)
+        self.assertIn("event_underlying_windows", script)
         self.assertIn("event_aligned_backtest_request", script)
-        self.assertIn("not_produced_by_bounded_quote_extract", script)
-        self.assertIn("no_historical_earnings_event_calendar_in_this_extract", script)
+        self.assertIn("event_plan_produced_quote_slices_bounded", script)
+        self.assertIn("historical_option_chain_event_slices_only_if_event_is_inside_bounded_backtest_window", script)
 
     def test_skill_prioritizes_daily_historical_before_side_ideas(self):
         skill = (ROOT / "agent-platform" / "skills" / "trader-research-system" / "SKILL.md").read_text()
