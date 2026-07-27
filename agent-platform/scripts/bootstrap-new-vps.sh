@@ -280,7 +280,7 @@ RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
-cat > /usr/local/bin/trading-research-watchdog-codex >/dev/null <<'WATCHDOG_CODEX'
+cat > /usr/local/bin/trading-research-watchdog-codex <<'WATCHDOG_CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
