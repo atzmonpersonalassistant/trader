@@ -133,7 +133,7 @@ manifest = {
         "history_lookback_days": 30,
         "option_chain_expiry_window_days": 180,
         "max_contract_rows_per_underlying": 200,
-        "cloud_backtest_submitted": cloud_backtest_submitted,
+        "cloud_backtest_submitted": False,
         "live_trading_or_orders": False,
     },
     "artifacts": [
