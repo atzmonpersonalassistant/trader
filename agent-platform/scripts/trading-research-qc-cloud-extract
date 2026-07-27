@@ -8,7 +8,7 @@ MAX_UNDERLYINGS = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_UNDERLYINGS", "3"))
 TIMEOUT_BACKTEST = int(os.environ.get("QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT", "900"))
 MAX_DTE_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_DTE", "180"))
 MAX_ROWS_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_ROWS_PER_UNDERLYING", "300"))
-MAX_HISTORY_LOOKBACK_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_HISTORY_LOOKBACK_DAYS", "252"))
+MAX_HISTORY_LOOKBACK_CAP = int(os.environ.get("QC_CLOUD_EXTRACT_MAX_HISTORY_LOOKBACK_DAYS", "90"))
 
 def fail(status, msg, rc=1, **extra):
     print(json.dumps({"ok": False, "status": status, "message": msg, **extra}, ensure_ascii=False), file=sys.stderr)
@@ -42,16 +42,6 @@ def ensure_project(project_dir):
     cfg.update({"algorithm-language": "Python", "parameters": {}, "description": "Bounded Trader QC Cloud option quote/greeks extract probe", "cloud-id": project["projectId"], "organization-id": project.get("organizationId")})
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n"); return int(project["projectId"]), str(project.get("organizationId"))
 
-def candidate_payload(run_dir):
-    p = run_dir / "candidate.json"
-    if not p.exists(): return {}
-    try:
-        data = json.loads(p.read_text())
-        if isinstance(data, dict) and isinstance(data.get("candidate"), dict): return data["candidate"]
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
 def candidate_text(run_dir):
     p = run_dir / "candidate.json"
     if not p.exists(): return ""
@@ -72,58 +62,77 @@ def infer_dte_band(run_dir, fallback_max):
         return max(0, lo), min(MAX_DTE_CAP, max(hi, fallback_max))
     return 0, min(MAX_DTE_CAP, fallback_max)
 
-def infer_event_windows(run_dir):
-    txt = candidate_text(run_dir)
-    windows = []
+def candidate_payload(run_dir):
+    p = run_dir / "candidate.json"
+    if not p.exists(): return {}
+    try:
+        payload = json.loads(p.read_text())
+        if isinstance(payload, dict) and isinstance(payload.get("candidate"), dict): return payload["candidate"]
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+def _date_mentions_with_context(text):
+    mentions = []
     month_map = {
         "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
         "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
         "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10, "october": 10,
         "nov": 11, "november": 11, "dec": 12, "december": 12,
     }
-    seen = set()
-    for m in re.finditer(r"(?i)\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", txt):
+    def add(day, source, start, end):
+        lo=max(0,start-90); hi=min(len(text),end+90)
+        mentions.append({"date": day.isoformat(), "source": source, "context": text[lo:hi].lower()})
+    for m in re.finditer(r"(?i)\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", text):
         y, mo, d = map(int, m.groups())
-        try:
-            day = dt.date(y, mo, d)
-        except ValueError:
-            continue
-        key = day.isoformat()
-        if key not in seen:
-            seen.add(key); windows.append({"date": key, "source": "candidate_text_iso_date"})
-    for m in re.finditer(r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b", txt):
+        try: add(dt.date(y, mo, d), "candidate_text_iso_date", m.start(), m.end())
+        except ValueError: pass
+    for m in re.finditer(r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b", text):
         mo = month_map.get(m.group(1).lower().rstrip('.'))
-        d = int(m.group(2)); y = int(m.group(3))
-        if not mo:
-            continue
-        try:
-            day = dt.date(y, mo, d)
-        except ValueError:
-            continue
-        key = day.isoformat()
-        if key not in seen:
-            seen.add(key); windows.append({"date": key, "source": "candidate_text_month_name"})
-    event_type = "unknown"
+        if not mo: continue
+        try: add(dt.date(int(m.group(3)), mo, int(m.group(2))), "candidate_text_month_name", m.start(), m.end())
+        except ValueError: pass
+    return mentions
+
+def infer_event_and_expiry_windows(run_dir):
+    txt = candidate_text(run_dir)
+    mentions = _date_mentions_with_context(txt)
     low = txt.lower()
-    if "fomc" in low:
-        event_type = "fomc"
-    elif "earnings" in low or "q2" in low or "q3" in low or "q4" in low or "q1" in low:
-        event_type = "earnings"
-    enriched = []
-    for item in windows[:5]:
+    event_type = "unknown"
+    if "fomc" in low: event_type = "fomc"
+    elif any(x in low for x in ["earnings", "q1", "q2", "q3", "q4"]): event_type = "earnings"
+    expiry_words = ("expir", "weekly", "weeklies", "call chain", "put chain", "target expir", "expiry_target", "expiration")
+    event_words = ("event", "earnings", "fomc", "print", "entry", "catalyst", "decision", "statement", "conference")
+    expiry_dates, event_dates = {}, {}
+    for item in mentions:
         day = dt.date.fromisoformat(item["date"])
+        ctx = item["context"]
+        looks_event = any(w in ctx for w in event_words)
+        looks_expiry = day.weekday() == 4 or (any(w in ctx for w in expiry_words) and not looks_event)
+        if looks_expiry:
+            expiry_dates.setdefault(item["date"], {"date": item["date"], "source": item["source"], "context_role": "target_expiry"})
+        if looks_event and not (looks_expiry and "expir" in ctx and not any(w in ctx for w in event_words)):
+            event_dates.setdefault(item["date"], item)
+    # If all dates looked like expiries, keep the earliest non-Friday/event-context date as the event anchor when available.
+    for key, item in list(event_dates.items()):
+        day = dt.date.fromisoformat(key)
+        if key in expiry_dates and day.weekday() == 4 and "event" not in item["context"] and "earnings" not in item["context"] and "fomc" not in item["context"]:
+            event_dates.pop(key, None)
+    enriched = []
+    for key in sorted(event_dates)[:5]:
+        item = event_dates[key]; day = dt.date.fromisoformat(key)
         enriched.append({
-            **item,
+            "date": key,
+            "source": item["source"],
             "event_type": event_type,
             "pre_event_date": (day - dt.timedelta(days=1)).isoformat(),
             "post_event_date": (day + dt.timedelta(days=1)).isoformat(),
             "option_slice_plan": ["pre_event_close", "event_session", "post_event_open_or_close"],
         })
-    return enriched
+    return enriched, [expiry_dates[k] for k in sorted(expiry_dates)[:12]]
 
 def parse_probe(run_dir):
     text = (run_dir / "qc_option_history_probe.py").read_text()
-    candidate = candidate_payload(run_dir)
     def literal(name, default):
         m = re.search(rf"^{name}\s*=\s*(.+)$", text, re.M)
         if not m: return default
@@ -134,7 +143,9 @@ def parse_probe(run_dir):
     underlyings = [str(x).upper().strip() for x in underlyings if str(x).strip()][:MAX_UNDERLYINGS]
     fallback_max = min(int(literal("EXPIRY_WINDOW_DAYS", 90)), MAX_DTE_CAP)
     min_dte, max_dte = infer_dte_band(run_dir, fallback_max)
-    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 90)), MAX_HISTORY_LOOKBACK_CAP), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP), "candidate_event_context": {"candidate_id": candidate.get("id"), "strategy_family": candidate.get("family"), "catalyst_window": candidate.get("catalyst_window"), "quantconnect_test_spec": candidate.get("quantconnect_test_spec"), "required_data": candidate.get("required_data"), "target_event_windows": infer_event_windows(run_dir)}, "event_aligned_backtest_request": {"required": True, "status": "event_plan_produced_quote_slices_bounded", "reason": "Extract includes parsed target event windows, underlying OHLCV, realized volatility, and current bounded option quote/Greeks rows. Historical event option slices are only present when the event date is inside the bounded backtest window; otherwise a follow-up event-slice artifact is required.", "required_fields": ["target_event_windows", "pre_event_underlying_ohlcv", "post_event_underlying_ohlcv", "pre_event_option_slices", "post_event_option_slices", "underlying_ohlcv", "realized_volatility"]}}
+    candidate = candidate_payload(run_dir)
+    event_windows, target_expiries = infer_event_and_expiry_windows(run_dir)
+    return {"underlyings": underlyings, "history_lookback_days": min(int(literal("HISTORY_LOOKBACK_DAYS", 30)), MAX_HISTORY_LOOKBACK_CAP), "min_dte": min_dte, "max_dte": max_dte, "expiry_window_days": max_dte, "max_contract_rows_per_underlying": min(int(literal("MAX_CONTRACT_ROWS_PER_UNDERLYING", 200)), MAX_ROWS_CAP), "candidate_event_context": {"candidate_id": candidate.get("id"), "strategy_family": candidate.get("family"), "catalyst_window": candidate.get("catalyst_window"), "quantconnect_test_spec": candidate.get("quantconnect_test_spec"), "required_data": candidate.get("required_data"), "target_event_windows": event_windows, "target_expiries": target_expiries}, "event_aligned_backtest_request": {"required": True, "status": "event_or_expiry_plan_produced", "reason": "The cloud extract samples either the historical event window when it is already available, or the latest regular-session quote snapshot while prioritizing target expiries for future events.", "required_fields": ["target_event_windows", "target_expiries", "sample_window", "underlying_ohlcv", "realized_volatility", "option_quote_greeks_rows"]}}
 
 def write_project(project_dir, spec):
     payload = json.dumps(spec, sort_keys=True)
@@ -163,10 +174,31 @@ def safe_int(x):
 class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
     def Initialize(self):
         today = datetime.datetime.utcnow().date()
-        end = today - datetime.timedelta(days=1)
-        while end.weekday() >= 5:
-            end -= datetime.timedelta(days=1)
-        start = end
+        last_data_day = today - datetime.timedelta(days=1)
+        while last_data_day.weekday() >= 5:
+            last_data_day -= datetime.timedelta(days=1)
+        event_dates = []
+        for event in SPEC.get("candidate_event_context", {{}}).get("target_event_windows", []) or []:
+            try:
+                event_dates.append(datetime.date.fromisoformat(event.get("date")))
+                if event.get("pre_event_date"):
+                    event_dates.append(datetime.date.fromisoformat(event.get("pre_event_date")))
+                if event.get("post_event_date"):
+                    event_dates.append(datetime.date.fromisoformat(event.get("post_event_date")))
+            except Exception:
+                pass
+        historical_event_dates = [d for d in event_dates if d <= last_data_day]
+        if historical_event_dates:
+            start = min(historical_event_dates)
+            end = max(historical_event_dates)
+            self.sample_window_mode = "historical_event_aligned"
+        else:
+            start = last_data_day
+            end = last_data_day
+            self.sample_window_mode = "latest_regular_session_target_expiry_snapshot"
+        self.sample_start = start
+        self.sample_end = end
+        self.target_expiries = set([x.get("date") for x in (SPEC.get("candidate_event_context", {{}}).get("target_expiries", []) or []) if x.get("date")])
         self.SetStartDate(start.year, start.month, start.day)
         self.SetEndDate(end.year, end.month, end.day)
         self.SetCash(100000)
@@ -175,14 +207,13 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         self.history_summary = {{}}
         self.underlying_history_rows = {{}}
         self.realized_volatility = {{}}
-        self.event_underlying_windows = {{}}
         self.option_symbols = []
         for ticker in SPEC["underlyings"]:
             eq = self.AddEquity(ticker, Resolution.Minute)
             opt = self.AddOption(ticker, Resolution.Minute)
             opt.SetFilter(lambda u: u.IncludeWeeklys().Strikes(-100, 100).Expiration(datetime.timedelta(days=int(SPEC.get("min_dte", 0))), datetime.timedelta(days=int(SPEC.get("max_dte", 180)))))
             self.option_symbols.append((ticker, eq.Symbol, opt.Symbol))
-            hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 90)), Resolution.Daily)
+            hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 30)), Resolution.Daily)
             history_rows = []
             closes = []
             try:
@@ -192,24 +223,10 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
                     if close is not None:
                         closes.append(close)
                     history_rows.append({{"time": str(idx), "open": safe_float(row.get("open")), "high": safe_float(row.get("high")), "low": safe_float(row.get("low")), "close": close, "volume": safe_int(row.get("volume"))}})
-            except Exception as e:
+            except Exception:
                 history_rows = []
-                self.history_summary[ticker] = {{"rows": 0, "lookback_days": int(SPEC.get("history_lookback_days", 90)), "error": str(e)[:200]}}
-            if ticker not in self.history_summary:
-                self.history_summary[ticker] = {{"rows": len(history_rows), "lookback_days": int(SPEC.get("history_lookback_days", 90))}}
-            self.underlying_history_rows[ticker] = history_rows[-int(SPEC.get("history_lookback_days", 90)):]
-            wanted_dates = set()
-            for event in SPEC.get("candidate_event_context", {{}}).get("target_event_windows", []) or []:
-                for key in ["pre_event_date", "date", "post_event_date"]:
-                    value = event.get(key)
-                    if value:
-                        wanted_dates.add(value)
-            event_rows = []
-            for row in history_rows:
-                row_date = str(row.get("time", ""))[:10]
-                if row_date in wanted_dates:
-                    event_rows.append(row)
-            self.event_underlying_windows[ticker] = event_rows
+            self.history_summary[ticker] = {{"rows": len(history_rows), "lookback_days": int(SPEC.get("history_lookback_days", 30))}}
+            self.underlying_history_rows[ticker] = history_rows[-int(SPEC.get("history_lookback_days", 30)):]
             returns = []
             for i in range(1, len(closes)):
                 if closes[i-1] and closes[i] and closes[i-1] > 0 and closes[i] > 0:
@@ -229,8 +246,10 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
             chain = data.OptionChains.get(optsym)
             if chain is None: continue
             for c in sorted(list(chain), key=lambda x: (x.Expiry, x.Strike)):
+                expiry_key = c.Expiry.strftime("%Y-%m-%d")
                 dte = (c.Expiry.date() - self.Time.date()).days
                 if dte < int(SPEC.get("min_dte", 0)) or dte > int(SPEC.get("max_dte", 180)): continue
+                if self.target_expiries and expiry_key not in self.target_expiries: continue
                 key = str(c.Symbol)
                 if key in self.seen: continue
                 self.seen.add(key)
@@ -254,6 +273,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
                     "vega": safe_float(getattr(g, "Vega", None)) if g is not None else None,
                     "sample_time": str(self.Time),
                     "underlying_price": safe_float(self.Securities[eqsym].Price) if eqsym in self.Securities else None,
+                    "target_expiry_match": expiry_key in self.target_expiries,
                 }})
                 if len(self.rows) >= self.max_rows_total:
                     self.emit_and_quit("bounded_row_limit")
@@ -272,7 +292,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
     def emit_runtime_stats(self, reason):
         if getattr(self, "_emitted", False): return
         self._emitted = True
-        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "underlyings": SPEC["underlyings"], "candidate_event_context": SPEC.get("candidate_event_context", {{}}), "event_aligned_backtest_request": SPEC.get("event_aligned_backtest_request", {{"required": True, "status": "not_produced_by_bounded_quote_extract"}}), "history_summary": self.history_summary, "underlying_history_rows": self.underlying_history_rows, "realized_volatility": self.realized_volatility, "event_underlying_windows": self.event_underlying_windows, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 90)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["candidate_event_context", "target_event_windows", "event_underlying_windows", "event_aligned_backtest_request", "underlying_ohlcv", "realized_volatility", "bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega", "sample_time", "underlying_price"], "known_limitations": ["historical_option_chain_event_slices_only_if_event_is_inside_bounded_backtest_window", "historical_earnings_calendar_provider_not_configured"], "completion_reason": reason}}
+        artifact = {{"type": "qc_option_history_extract", "source": "qc_cloud_backtest_optionchains", "generated_at_utc": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "sample_time": str(self.last_time or self.Time), "sample_window": {{"mode": self.sample_window_mode, "start": self.sample_start.isoformat(), "end": self.sample_end.isoformat()}}, "underlyings": SPEC["underlyings"], "candidate_event_context": SPEC.get("candidate_event_context", {{}}), "event_aligned_backtest_request": SPEC.get("event_aligned_backtest_request", {{}}), "history_summary": self.history_summary, "underlying_history_rows": self.underlying_history_rows, "realized_volatility": self.realized_volatility, "option_contract_rows": self.rows, "limits": {{"history_lookback_days": int(SPEC.get("history_lookback_days", 30)), "min_dte": int(SPEC.get("min_dte", 0)), "max_dte": int(SPEC.get("max_dte", 180)), "expiry_window_days": int(SPEC.get("max_dte", 180)), "max_contract_rows_per_underlying": int(SPEC.get("max_contract_rows_per_underlying", 200))}}, "fields_requested": ["candidate_event_context", "target_event_windows", "target_expiries", "sample_window", "underlying_ohlcv", "realized_volatility", "bid", "ask", "last", "volume", "open_interest", "implied_volatility", "delta", "gamma", "theta", "vega", "sample_time", "underlying_price"], "known_limitations": ["future_event_option_slices_unavailable_until_event_window_has_historical_data", "historical_earnings_calendar_provider_not_configured"], "completion_reason": reason}}
         s = json.dumps(artifact, sort_keys=True)
         chunk = 6000
         for i in range(0, len(s), chunk):

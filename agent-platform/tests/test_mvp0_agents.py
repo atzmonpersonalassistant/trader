@@ -885,6 +885,48 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
 
+    def test_qc_cloud_extract_prioritizes_event_windows_and_target_expiries(self):
+        mod = load("trading_research_qc_cloud_extract_test", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            (run_dir / "qc_option_history_probe.py").write_text(
+                "UNDERLYINGS = ['APP']\n"
+                "HISTORY_LOOKBACK_DAYS = 30\n"
+                "EXPIRY_WINDOW_DAYS = 90\n"
+                "MAX_CONTRACT_ROWS_PER_UNDERLYING = 200\n"
+            )
+            (run_dir / "candidate.json").write_text(json.dumps({"candidate": {
+                "id": "app-q2-2026-earnings-call-backspread",
+                "family": "call_backspread",
+                "entry_rules": ["Enter on Aug. 5, 2026 after liquidity checks"],
+                "quantconnect_test_spec": {"spec": "snapshot the chain into the 2026-08-07 and 2026-08-14 expiries"},
+                "required_data": ["APP option chain snapshots for 0-14 DTE"],
+            }}))
+            spec = mod.parse_probe(run_dir)
+        ctx = spec["candidate_event_context"]
+        self.assertIn({"date": "2026-08-07", "source": "candidate_text_iso_date", "context_role": "target_expiry"}, ctx["target_expiries"])
+        self.assertIn({"date": "2026-08-14", "source": "candidate_text_iso_date", "context_role": "target_expiry"}, ctx["target_expiries"])
+        self.assertEqual([x["date"] for x in ctx["target_event_windows"]], ["2026-08-05"])
+        self.assertEqual(spec["event_aligned_backtest_request"]["status"], "event_or_expiry_plan_produced")
+
+    def test_qc_cloud_extract_generated_algorithm_uses_event_window_and_target_expiry_filter(self):
+        text = (ROOT / "agent-platform/scripts/trading-research-qc-cloud-extract").read_text()
+        self.assertIn('historical_event_dates = [d for d in event_dates if d <= last_data_day]', text)
+        self.assertIn('self.sample_window_mode = "historical_event_aligned"', text)
+        self.assertIn('self.sample_window_mode = "latest_regular_session_target_expiry_snapshot"', text)
+        self.assertIn('self.SetStartDate(start.year, start.month, start.day)', text)
+        self.assertIn('self.SetEndDate(end.year, end.month, end.day)', text)
+        self.assertIn('self.target_expiries = set', text)
+        self.assertIn('if self.target_expiries and expiry_key not in self.target_expiries: continue', text)
+        self.assertIn('"sample_window"', text)
+
+    def test_research_loop_dry_run_writes_final_report(self):
+        text = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
+        self.assertIn('TRADING_RESEARCH_LOOP_DRY_RUN=1', text)
+        self.assertIn('> "$RUN_DIR/final_report.md"', text)
+        self.assertIn('The loop claimed a candidate and prepared handoff artifacts', text)
+        self.assertIn('retest_after_technical_fix', text)
+
 
 
     def test_research_qc_run_is_manifest_guarded(self):
