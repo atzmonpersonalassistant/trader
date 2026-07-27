@@ -133,7 +133,7 @@ manifest = {
         "history_lookback_days": 30,
         "option_chain_expiry_window_days": 180,
         "max_contract_rows_per_underlying": 200,
-        "cloud_backtest_submitted": False,
+        "cloud_backtest_submitted": cloud_backtest_submitted,
         "live_trading_or_orders": False,
     },
     "artifacts": [
@@ -501,7 +501,7 @@ PY
   fi
 
   if [[ "$execution_status" != "extract_written" ]]; then
-    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
+    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$cloud_status" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
 import json, re, sys, time
 (
     path,
@@ -511,6 +511,7 @@ import json, re, sys, time
     python_runtime_status,
     docker_status,
     docker_image,
+    cloud_status,
     surface,
     rc,
     stdout_path,
@@ -533,7 +534,11 @@ def read_limited(p, limit=2000):
 
 lean_help = read_limited(help_path)
 known_research_terms = [term for term in ("research", "notebook", "quantbook") if term in lean_help.lower()]
-if auth_status == "auth_failure":
+cloud_backtest_submitted = cloud_status in ("attempted_qc_cloud_backtest", "qc_cloud_execution_failed")
+if cloud_status == "qc_cloud_execution_failed":
+    status = "qc_cloud_execution_failed"
+    reason = "The broker submitted a bounded QC Cloud backtest/extract request, but it did not produce qc_option_history_extract.json. Inspect stdout/stderr excerpts and QC cloud artifacts for the exact failure."
+elif auth_status == "auth_failure":
     status = "auth_failure"
     reason = "Lean CLI authentication check failed for the broker role; no raw credentials were exposed to the runner."
 elif auth_status == "lean_cli_missing":
@@ -573,7 +578,7 @@ payload = {
         "local_python_quantconnect_runtime": python_runtime_status,
         "docker": docker_status,
         "docker_image": docker_image or None,
-        "cloud_or_api_research": "cost_credit_guardrail_required",
+        "cloud_or_api_research": cloud_status,
     },
     "extract_artifact": "qc_option_history_extract.json",
     "extract_written": False,
@@ -590,7 +595,7 @@ payload = {
         "history_lookback_days": 30,
         "option_chain_expiry_window_days": 180,
         "max_contract_rows_per_underlying": 200,
-        "cloud_backtest_submitted": False,
+        "cloud_backtest_submitted": cloud_backtest_submitted,
         "live_trading_or_orders": False,
     },
     "security_boundary": {
