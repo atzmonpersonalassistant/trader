@@ -549,6 +549,13 @@ class MVP0AgentTests(unittest.TestCase):
         normalized_variant = research.normalize_candidate_payload(family_variant, priority_floor=20)
         self.assertIsNotNone(normalized_variant)
         self.assertEqual(normalized_variant.family, "call_calendar_spread")
+        schema_loose_variant = dict(parsed[0])
+        schema_loose_variant["minimum_viability"] = {"entry_requirements": "quote-quality pass", "reject_condition": "spread too wide"}
+        schema_loose_variant["quantconnect_test_spec"] = "Pull option chains and compare IV/RV before the event."
+        normalized_schema_loose = research.normalize_candidate_payload(schema_loose_variant, priority_floor=20)
+        self.assertIsNotNone(normalized_schema_loose)
+        self.assertEqual(normalized_schema_loose.minimum_viability, ["entry_requirements: quote-quality pass", "reject_condition: spread too wide"])
+        self.assertEqual(normalized_schema_loose.quantconnect_test_spec, {"spec": "Pull option chains and compare IV/RV before the event."})
         invalid = dict(parsed[0])
         invalid["entry_rules"] = ["", "   "]
         self.assertIsNone(research.normalize_candidate_payload(invalid, priority_floor=20))
