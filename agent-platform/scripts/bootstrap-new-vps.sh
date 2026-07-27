@@ -178,7 +178,7 @@ configure_shared_collab_dir /agents/shared/research-artifacts
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 755 /etc/trading-agents
 install_dir root root 711 /etc/trading-agents/secrets
-for role in orchestrator coding review validator research research-runner; do
+for role in orchestrator coding review validator research research-runner research-watchdog; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
 install_dir root agent-research 750 /etc/trading-agents/secrets/research
@@ -337,6 +337,7 @@ chmod 755 /usr/local/bin/trading-research-watchdog-codex
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
 # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *
 # Allow the isolated runner to execute only bounded public earnings-QC research actions.
 agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
 SUDOERS_RUNNER

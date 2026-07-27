@@ -55,6 +55,14 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertNotIn('daily_log', fingerprint_block)
         self.assertNotIn('postrun_log', fingerprint_block)
 
+    def test_watchdog_runner_inputs_use_watchdog_user_acl(self):
+        text = SCRIPT.read_text()
+        helper = text[text.index('make_runner_inputs_usable()'):text.index('while [[ $# -gt 0 ]]')]
+        self.assertIn('agent-research-watchdog', helper)
+        self.assertNotIn('agent-research-runner', helper)
+        self.assertIn('sudo -n -u agent-research-watchdog', text)
+        self.assertIn('trading-research-watchdog-codex', text)
+
 
 if __name__ == "__main__":
     unittest.main()

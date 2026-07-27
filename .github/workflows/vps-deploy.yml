@@ -558,6 +558,7 @@ jobs:
           sudo tee /etc/sudoers.d/trading-agent-research-runner >/dev/null <<'EOF_SUDOERS_RUNNER'
           # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
           agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+          agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *
           # Allow the isolated runner to execute only bounded public earnings-QC research actions.
           agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
           EOF_SUDOERS_RUNNER

@@ -31,14 +31,14 @@ make_runner_inputs_usable() {
   local task_file="$1"
   local output_dir="$2"
   if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m "u:agent-research-runner:--x" /agents /agents/research "$REPORT_ROOT" 2>/dev/null || true
-    setfacl -m "u:agent-research:rwx,u:agent-research-runner:rwx,m::rwx,d:u:agent-research:rwx,d:u:agent-research-runner:rwx,d:m::rwx" "$output_dir"
-    setfacl -m "u:agent-research-runner:r--" "$task_file"
+    setfacl -m "u:agent-research-watchdog:--x" /agents /agents/research "$REPORT_ROOT" 2>/dev/null || true
+    setfacl -m "u:agent-research:rwx,u:agent-research-watchdog:rwx,m::rwx,d:u:agent-research:rwx,d:u:agent-research-watchdog:rwx,d:m::rwx" "$output_dir"
+    setfacl -m "u:agent-research-watchdog:r--" "$task_file"
     chmod u+rw,o-rwx "$task_file"
   else
-    chgrp agent-research-runner "$output_dir"
+    chgrp agent-research-watchdog "$output_dir"
     chmod 2770 "$output_dir"
-    chgrp agent-research-runner "$task_file"
+    chgrp agent-research-watchdog "$task_file"
     chmod 0640 "$task_file"
   fi
 }
