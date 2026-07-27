@@ -125,6 +125,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
             agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc \
             agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review \
+            agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
             agent-platform/tools/trading_agent_token.py \
@@ -194,7 +195,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
-          for role in coding review validator research research-runner; do
+          for role in coding review validator research research-runner research-watchdog; do
             if ! id "agent-$role" >/dev/null 2>&1; then
               sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"
             fi
@@ -202,15 +203,24 @@ jobs:
           if ! getent group agent-lean >/dev/null 2>&1; then
             sudo groupadd --system agent-lean
           fi
-          if ! command -v setfacl >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
-          fi
           if command -v apt-get >/dev/null 2>&1; then
+            if ! command -v setfacl >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends acl
+            fi
+            if ! command -v docker >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' docker.io 2>/dev/null | grep -q "install ok installed"; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io
+            fi
             if ! command -v psql >/dev/null 2>&1 || ! dpkg-query -W -f='${Status}' postgresql 2>/dev/null | grep -q "install ok installed"; then
               sudo apt-get update
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client
             fi
+          fi
+          if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl enable --now docker || true
+          elif command -v service >/dev/null 2>&1; then
+            sudo service docker start || true
           fi
           if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl enable --now postgresql
@@ -223,6 +233,7 @@ jobs:
           sudo usermod -aG agent-lean agent-research
           sudo usermod -aG agent-lean agent-research-runner
           sudo usermod -aG agent-research-runner agent-research
+          sudo usermod -aG agent-research-watchdog agent-research
                               sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace
           sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace
           sudo install -d -o agent-validator -g agent-validator -m 750 /agents/validator /agents/validator/lean-workspace
@@ -246,6 +257,7 @@ jobs:
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-postrun-review" /agents/research/bin/earnings-llm-postrun-review
+          sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-llm-research-watchdog" /agents/research/bin/earnings-llm-research-watchdog
           sudo install -d -o agent-research -g agent-research -m 755 /agents/research/skills/trader-research-system
           sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/SKILL.md" /agents/research/skills/trader-research-system/SKILL.md
           tmp_cron="$(mktemp)"
@@ -282,9 +294,12 @@ jobs:
             /# END trader managed daily earnings research/ {skip=0; next}
             /# BEGIN trader managed LLM postrun review/ {skip=1; next}
             /# END trader managed LLM postrun review/ {skip=0; next}
+            /# BEGIN trader managed LLM research watchdog/ {skip=1; next}
+            /# END trader managed LLM research watchdog/ {skip=0; next}
             /^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
             /^\*\/30 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/5 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
+            /^\*\/15 \* \* \* \* \/agents\/research\/bin\/earnings-llm-research-watchdog/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
@@ -296,6 +311,10 @@ jobs:
           CRON_TZ=Asia/Jerusalem
           */5 * * * * /agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1
           # END trader managed LLM postrun review
+          # BEGIN trader managed LLM research watchdog
+          CRON_TZ=Asia/Jerusalem
+          */15 * * * * /agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1
+          # END trader managed LLM research watchdog
           EOF_RESEARCH_CRON
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
           rm -f "$tmp_research_cron" "$tmp_research_cron_new"
@@ -317,11 +336,14 @@ jobs:
           sudo chmod 640 /etc/trading-agents/secrets/research/env
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
-          if ! sudo test -e /etc/trading-agents/qc-lean-docker-image; then
-            sudo install -o root -g root -m 644 /dev/null /etc/trading-agents/qc-lean-docker-image
+          if ! sudo test -s /etc/trading-agents/qc-lean-docker-image; then
+            printf '%s\n' 'quantconnect/research:latest' | sudo tee /etc/trading-agents/qc-lean-docker-image >/dev/null
           fi
           sudo chown root:root /etc/trading-agents/qc-lean-docker-image
           sudo chmod 644 /etc/trading-agents/qc-lean-docker-image
+          command -v docker >/dev/null 2>&1
+          sudo docker info >/dev/null
+          sudo docker pull "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)"
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
           sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
           #!/usr/bin/env bash
@@ -375,6 +397,7 @@ jobs:
           sudo -n -u agent-coding bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-review bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-research-runner bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
+          sudo -n -u agent-research-watchdog bash -lc 'test ! -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-research bash -lc 'test -r /etc/trading-agents/secrets/quantconnect/env'
           sudo -n -u agent-coding bash -lc 'test -d /agents/coding/lean-workspace && test -w /agents/coding/lean-workspace && test -w /agents/shared/lean-projects'
           sudo -n -u agent-review bash -lc 'test -d /agents/review/lean-workspace && test -w /agents/review/lean-workspace && test -w /agents/shared/research-artifacts'
@@ -414,11 +437,17 @@ jobs:
           sudo -n -u agent-research trading-research-qc-smoke --json >/tmp/trader-research-qc-smoke.jsonl
           grep -q '"result":"QC_AUTH_OK"' /tmp/trader-research-qc-smoke.jsonl
           sudo install -d -o agent-research-runner -g agent-research-runner -m 700 /home/agent-research-runner/.codex
+          sudo install -d -o agent-research-watchdog -g agent-research-watchdog -m 700 /home/agent-research-watchdog/.codex
           if sudo test -s /home/agent-research/.codex/auth.json && ! sudo test -s /home/agent-research-runner/.codex/auth.json; then
             sudo install -o agent-research-runner -g agent-research-runner -m 600 /home/agent-research/.codex/auth.json /home/agent-research-runner/.codex/auth.json
           fi
           sudo test -s /home/agent-research-runner/.codex/auth.json
+          if sudo test -s /home/agent-research/.codex/auth.json && ! sudo test -s /home/agent-research-watchdog/.codex/auth.json; then
+            sudo install -o agent-research-watchdog -g agent-research-watchdog -m 600 /home/agent-research/.codex/auth.json /home/agent-research-watchdog/.codex/auth.json
+          fi
+          sudo test -s /home/agent-research-watchdog/.codex/auth.json
           sudo -n -u agent-research-runner bash -lc 'test -s /home/agent-research-runner/.codex/auth.json && codex --version >/dev/null'
+          sudo -n -u agent-research-watchdog bash -lc 'test -s /home/agent-research-watchdog/.codex/auth.json && codex --version >/dev/null'
           sudo tee /usr/local/bin/trading-research-runner-codex >/dev/null <<'RUNNER_CODEX'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -467,6 +496,58 @@ jobs:
           RUNNER_CODEX
           sudo chown root:root /usr/local/bin/trading-research-runner-codex
           sudo chmod 755 /usr/local/bin/trading-research-runner-codex
+          sudo tee /usr/local/bin/trading-research-watchdog-codex >/dev/null <<'WATCHDOG_CODEX'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
+            echo "usage: trading-research-watchdog-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
+            exit 64
+          fi
+          TASK_FILE="$1"
+          OUTPUT_DIR="$2"
+          MODEL="${3:-gpt-5.4-mini}"
+          case "$MODEL" in
+            *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
+          esac
+          case "$TASK_FILE" in
+            /agents/research/handoff/research-watchdog-*-task.txt) ;;
+            *) echo "ERROR: task file must be an approved watchdog handoff" >&2; exit 65 ;;
+          esac
+          case "$OUTPUT_DIR" in
+            /agents/research/reports/research-watchdog-*) ;;
+            *) echo "ERROR: output dir must be an approved watchdog reports directory" >&2; exit 67 ;;
+          esac
+          if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
+            echo "ERROR: task/output permissions are not usable" >&2
+            exit 66
+          fi
+          TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
+          OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
+          case "$TASK_REAL" in
+            /agents/research/handoff/research-watchdog-*-task.txt) ;;
+            *) echo "ERROR: resolved task path escaped watchdog handoff" >&2; exit 68 ;;
+          esac
+          case "$OUT_REAL" in
+            /agents/research/reports/research-watchdog-*) ;;
+            *) echo "ERROR: resolved output path escaped watchdog reports" >&2; exit 69 ;;
+          esac
+          cd "$OUT_REAL"
+          export HOME=/home/agent-research-watchdog
+          export PATH=/usr/local/bin:/usr/bin:/bin
+          export PYTHONDONTWRITEBYTECODE=1
+          umask 0007
+          if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
+            echo "ERROR: watchdog user can read QuantConnect secrets" >&2
+            exit 71
+          fi
+          if sudo -n -l 2>/dev/null | grep -q 'trading-research-bounded-earnings-qc'; then
+            echo "ERROR: watchdog user has bounded QC sudo access" >&2
+            exit 72
+          fi
+          exec /usr/bin/timeout 20m /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
+          WATCHDOG_CODEX
+          sudo chown root:root /usr/local/bin/trading-research-watchdog-codex
+          sudo chmod 755 /usr/local/bin/trading-research-watchdog-codex
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-review-agent *
@@ -477,6 +558,7 @@ jobs:
           sudo tee /etc/sudoers.d/trading-agent-research-runner >/dev/null <<'EOF_SUDOERS_RUNNER'
           # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
           agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+          agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *
           # Allow the isolated runner to execute only bounded public earnings-QC research actions.
           agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
           EOF_SUDOERS_RUNNER
@@ -532,8 +614,10 @@ jobs:
           bash -n /usr/local/sbin/trading-dispatch-review-agent
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
+          bash -n /usr/local/bin/trading-research-watchdog-codex
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
+          bash -n /agents/research/bin/earnings-llm-research-watchdog
           sudo -n -u agent-research-runner bash -lc 'sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc --help >/tmp/trader-bounded-earnings-help.txt'
           sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc cleanup --dry-run'
           sudo -n -u agent-research-runner bash -lc '! sudo -n -u agent-research /usr/local/sbin/trading-research-bounded-earnings-qc run --symbols AAPL,MSFT,GOOG,AMZN,META,NVDA --years 1 --parallel 1 --end-to-end'
@@ -547,6 +631,9 @@ jobs:
           grep -q "qc_research_execution_diagnostic.json" /usr/local/bin/trading-research-qc-broker
           grep -q "surface_checks" /usr/local/bin/trading-research-qc-broker
           grep -q "quantconnect_python_runtime_missing" /usr/local/bin/trading-research-qc-broker
+          command -v docker >/dev/null 2>&1
+          sudo docker info >/dev/null
+          sudo docker image inspect "$(sudo head -n 1 /etc/trading-agents/qc-lean-docker-image)" >/dev/null
           grep -q "docker_missing" /usr/local/bin/trading-research-qc-broker
           grep -q "docker_wrapper_unavailable" /usr/local/bin/trading-research-qc-broker
           grep -q -- '--network none' /usr/local/sbin/trading-research-qc-docker-run
@@ -561,6 +648,8 @@ jobs:
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-bounded-earnings-qc" /agents/research/bin/earnings-llm-postrun-review
+          grep -q -- "LLM-only watchdog" /agents/research/bin/earnings-llm-research-watchdog
+          grep -q -- "never runs QC/LEAN" /agents/research/bin/earnings-llm-research-watchdog
           sudo grep -q -- "agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *" /etc/sudoers.d/trading-agent-research-runner
           grep -q -- "--sandbox workspace-write" /usr/local/bin/trading-research-runner-codex
           grep -q -- "approval_policy=\"never\"" /usr/local/bin/trading-research-runner-codex

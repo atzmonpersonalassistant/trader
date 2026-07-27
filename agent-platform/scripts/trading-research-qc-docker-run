@@ -85,10 +85,12 @@ set +e
   --memory 2g \
   --cpus 2 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
+  -e TRADER_QC_OUTPUT_DIR=/work \
+  -e MPLCONFIGDIR=/tmp/matplotlib \
   -v "$RUN_REAL:/work:rw" \
-  -w /work \
+  -w /Lean/Launcher/bin/Debug \
   "$APPROVED_IMAGE" \
-  python qc_option_history_probe.py
+  python /work/qc_option_history_probe.py
 rc=$?
 set -e
 

@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -31,7 +32,7 @@ class MVP0AgentTests(unittest.TestCase):
         script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
         subprocess.run(["bash", "-n", str(script)], check=True)
         text = script.read_text()
-        self.assertIn('acl ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo', text)
+        self.assertIn('acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo', text)
         self.assertIn('npm install -g @openai/codex', text)
         self.assertIn('python3 -m pip install --break-system-packages --upgrade lean', text)
         self.assertIn('usermod -aG agent-coding agent-orchestrator', text)
@@ -70,7 +71,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('/usr/local/sbin/trading-dispatch-coding-agent-stub *', text)
         self.assertIn('agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *', text)
         self.assertNotIn('NOPASSWD: /usr/local/bin/trading-coding-agent *', text)
-        self.assertIn('for role in orchestrator coding review validator research research-runner; do', text)
+        self.assertIn('for role in orchestrator coding review validator research research-runner research-watchdog; do', text)
         self.assertIn('"orchestrator": {', text)
         self.assertIn('"coding": {', text)
         self.assertIn('"review": {', text)
@@ -750,6 +751,38 @@ class MVP0AgentTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertNotEqual(payload["candidate"]["id"], first_id)
 
+    def test_research_agent_reconcile_stale_clears_terminal_and_old_in_progress(self):
+        research = load("trading_research_agent_reconcile", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "strategy-queue.json"
+            reports = root / "reports"
+            reports.mkdir()
+            queue.write_text(json.dumps([
+                {"id": "a", "priority": 1, "status": "in_progress", "active_run_id": "run-a"},
+                {"id": "b", "priority": 2, "status": "in_progress", "active_run_id": "run-b"},
+                {"id": "c", "priority": 3, "status": "queued"},
+            ]))
+            (reports / "run-a").mkdir()
+            (reports / "run-a" / "final_report.md").write_text("# done\n\nretest_after_technical_fix\n")
+            (reports / "run-b").mkdir()
+            old = time.time() - 9999
+            os.utime(reports / "run-b", (old, old))
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_reconcile_stale(argparse.Namespace(queue=str(queue), reports_dir=str(reports), stale_seconds=1))
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["changed_count"], 2)
+            items = {item["id"]: item for item in research.load_queue(queue)}
+            self.assertEqual(items["a"]["status"], "blocked")
+            self.assertEqual(items["a"]["last_run_id"], "run-a")
+            self.assertNotIn("active_run_id", items["a"])
+            self.assertEqual(items["b"]["status"], "blocked")
+            self.assertEqual(items["c"]["status"], "queued")
+
     def test_research_loop_uses_runner_without_raw_qc_secret_access(self):
         script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
         subprocess.run(["bash", "-n", str(script)], check=True)
@@ -781,14 +814,23 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run', bootstrap_text)
         self.assertIn('agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-qc-docker-run *', bootstrap_text)
         self.assertIn('/etc/trading-agents/qc-lean-docker-image', bootstrap_text)
+        self.assertIn('quantconnect/research:latest', bootstrap_text)
         self.assertNotIn('usermod -aG docker agent-research', bootstrap_text)
         self.assertIn("os.path.realpath", bootstrap_text)
         self.assertIn("idea-generation-*-task.txt", bootstrap_text)
+        self.assertIn("research-watchdog-*-task.txt", bootstrap_text)
+        self.assertIn("trading-research-watchdog-codex", bootstrap_text)
+        self.assertIn("agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *", bootstrap_text)
         self.assertIn("/agents/research/reports/idea-generation-*", bootstrap_text)
+        self.assertIn("/agents/research/reports/research-watchdog-*", bootstrap_text)
         self.assertIn("trading-research-qc-broker", deploy_text)
         self.assertIn("! grep -q -- \"sandbox_workspace_write.network_access=true\" /usr/local/bin/trading-research-runner-codex", deploy_text)
         self.assertIn("idea-generation-*-task.txt", deploy_text)
+        self.assertIn("research-watchdog-*-task.txt", deploy_text)
+        self.assertIn("trading-research-watchdog-codex", deploy_text)
+        self.assertIn("agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *", deploy_text)
         self.assertIn("/agents/research/reports/idea-generation-*", deploy_text)
+        self.assertIn("/agents/research/reports/research-watchdog-*", deploy_text)
         self.assertIn("claim --run-id", text)
         self.assertIn("generate-ideas --min-queued 3", text)
         self.assertIn('TRADING_RESEARCH_ENV_FILE', text)
@@ -813,9 +855,15 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("docker_image_missing", broker_text)
         self.assertIn("docker_wrapper_unavailable", broker_text)
         self.assertIn("lean_docker_execution_failed", broker_text)
-        self.assertLess(broker_text.index('docker_status == "attempted_configured_quantconnect_lean_image"'), broker_text.index('python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing")'))
+        self.assertIn('TRADING_RESEARCH_FORCE_QC_CLOUD_EXTRACT', broker_text)
+        self.assertIn('cloud extract missing sample_window', broker_text)
+        self.assertLess(broker_text.index('cloud_status="attempted_qc_cloud_backtest"'), broker_text.index('timeout 120s python3 qc_option_history_probe.py'))
         self.assertIn("TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE", broker_text)
+        self.assertIn("TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE_CONFIG", broker_text)
+        self.assertIn("/etc/trading-agents/qc-lean-docker-image", broker_text)
         self.assertIn("TRADING_RESEARCH_QC_LEAN_DOCKER_WRAPPER", broker_text)
+        self.assertIn("Direct non-notebook execution of quantconnect/research", broker_text)
+        self.assertIn('globals().update(runpy.run_path(_start_py))', broker_text)
         self.assertIn('sudo -n "$QC_LEAN_DOCKER_WRAPPER" "$RUN_REAL" "$docker_image"', broker_text)
         self.assertNotIn("docker image inspect", broker_text)
         self.assertNotIn("docker run --rm", broker_text)
@@ -872,13 +920,58 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("quantconnect_python_runtime_missing", text)
         self.assertIn("non_interactive_research_execution_unsupported", text)
         self.assertIn("cost_credit_guardrail_required", text)
+        self.assertIn("qc_cloud_execution_failed", text)
+        self.assertIn("cloud_backtest_submitted = cloud_status in", text)
         self.assertIn('"surface_checks"', text)
-        self.assertIn('"cloud_or_api_research": "cost_credit_guardrail_required"', text)
+        self.assertIn('"cloud_or_api_research": cloud_status', text)
+        self.assertIn('"cloud_backtest_submitted": cloud_backtest_submitted', text)
         self.assertIn('"required_next_artifact": "qc_option_history_extract.json"', text)
         self.assertIn('"capability_gap"', text)
         self.assertIn("Do not treat qc_option_history_probe.py as extracted market data", text)
         self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
+
+    def test_qc_cloud_extract_prioritizes_event_windows_and_target_expiries(self):
+        mod = load("trading_research_qc_cloud_extract_test", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            (run_dir / "qc_option_history_probe.py").write_text(
+                "UNDERLYINGS = ['APP']\n"
+                "HISTORY_LOOKBACK_DAYS = 30\n"
+                "EXPIRY_WINDOW_DAYS = 90\n"
+                "MAX_CONTRACT_ROWS_PER_UNDERLYING = 200\n"
+            )
+            (run_dir / "candidate.json").write_text(json.dumps({"candidate": {
+                "id": "app-q2-2026-earnings-call-backspread",
+                "family": "call_backspread",
+                "entry_rules": ["Enter on Aug. 5, 2026 after liquidity checks"],
+                "quantconnect_test_spec": {"spec": "snapshot the chain into the 2026-08-07 and 2026-08-14 expiries"},
+                "required_data": ["APP option chain snapshots for 0-14 DTE"],
+            }}))
+            spec = mod.parse_probe(run_dir)
+        ctx = spec["candidate_event_context"]
+        self.assertIn({"date": "2026-08-07", "source": "candidate_text_iso_date", "context_role": "target_expiry"}, ctx["target_expiries"])
+        self.assertIn({"date": "2026-08-14", "source": "candidate_text_iso_date", "context_role": "target_expiry"}, ctx["target_expiries"])
+        self.assertEqual([x["date"] for x in ctx["target_event_windows"]], ["2026-08-05"])
+        self.assertEqual(spec["event_aligned_backtest_request"]["status"], "event_or_expiry_plan_produced")
+
+    def test_qc_cloud_extract_generated_algorithm_uses_event_window_and_target_expiry_filter(self):
+        text = (ROOT / "agent-platform/scripts/trading-research-qc-cloud-extract").read_text()
+        self.assertIn('historical_event_dates = [d for d in event_dates if d <= last_data_day]', text)
+        self.assertIn('self.sample_window_mode = "historical_event_aligned"', text)
+        self.assertIn('self.sample_window_mode = "latest_regular_session_target_expiry_snapshot"', text)
+        self.assertIn('self.SetStartDate(start.year, start.month, start.day)', text)
+        self.assertIn('self.SetEndDate(end.year, end.month, end.day)', text)
+        self.assertIn('self.target_expiries = set', text)
+        self.assertIn('if self.target_expiries and expiry_key not in self.target_expiries: continue', text)
+        self.assertIn('"sample_window"', text)
+
+    def test_research_loop_dry_run_writes_final_report(self):
+        text = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
+        self.assertIn('TRADING_RESEARCH_LOOP_DRY_RUN=1', text)
+        self.assertIn('> "$RUN_DIR/final_report.md"', text)
+        self.assertIn('The loop claimed a candidate and prepared handoff artifacts', text)
+        self.assertIn('retest_after_technical_fix', text)
 
 
 
@@ -1058,8 +1151,10 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('--tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m', text)
         self.assertIn('-v "$RUN_REAL:/work:rw"', text)
         self.assertNotIn('-v "$RUN_REAL:/work" ', text)
-        self.assertIn('-w /work', text)
-        self.assertIn('python qc_option_history_probe.py', text)
+        self.assertIn('-e TRADER_QC_OUTPUT_DIR=/work', text)
+        self.assertIn('-e MPLCONFIGDIR=/tmp/matplotlib', text)
+        self.assertIn('-w /Lean/Launcher/bin/Debug', text)
+        self.assertIn('python /work/qc_option_history_probe.py', text)
         self.assertIn("docker_missing", text)
         self.assertIn("docker_not_running", text)
         self.assertIn("docker_image_not_configured", text)
@@ -1826,12 +1921,14 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('sudo usermod -aG agent-lean agent-research', workflow)
         self.assertIn('sudo usermod -aG agent-lean agent-research-runner', workflow)
         self.assertIn('sudo usermod -aG agent-research-runner agent-research', workflow)
+        self.assertIn('sudo usermod -aG agent-research-watchdog agent-research', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-orchestrator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-validator', workflow)
         self.assertIn('sudo usermod -aG agent-quantconnect agent-research', workflow)
         self.assertNotIn('sudo usermod -aG agent-quantconnect agent-research-runner', workflow)
+        self.assertNotIn('sudo usermod -aG agent-quantconnect agent-research-watchdog', workflow)
         self.assertNotIn('sudo usermod -aG docker agent-research', workflow)
-        self.assertIn('for role in coding review validator research research-runner; do', workflow)
+        self.assertIn('for role in coding review validator research research-runner research-watchdog; do', workflow)
         self.assertIn('sudo useradd --system --create-home --shell /usr/sbin/nologin "agent-$role"', workflow)
         self.assertIn('sudo install -d -o agent-coding -g agent-coding -m 750 /agents/coding /agents/coding/lean-workspace', workflow)
         self.assertIn('sudo install -d -o agent-review -g agent-review -m 750 /agents/review /agents/review/lean-workspace', workflow)
@@ -1861,6 +1958,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-smoke" /usr/local/bin/trading-research-qc-smoke', workflow)
         self.assertIn('sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run', workflow)
         self.assertIn('/etc/trading-agents/qc-lean-docker-image', workflow)
+        self.assertIn('quantconnect/research:latest', workflow)
         self.assertIn('sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect', workflow)
         self.assertIn('sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env', workflow)
         self.assertIn('/etc/trading-agents/secrets/quantconnect/env; test -n "$QUANTCONNECT_USER_ID"; test -n "$QUANTCONNECT_API_TOKEN"', workflow)
