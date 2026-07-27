@@ -545,6 +545,10 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         value = payload.get(field)
         if isinstance(value, str):
             payload[field] = [value]
+        elif isinstance(value, dict) and value:
+            payload[field] = [f"{k}: {v}" for k, v in value.items() if str(k).strip() and str(v).strip()]
+            if not payload[field]:
+                return None
         elif not isinstance(value, list) or not value:
             return None
         else:
@@ -555,7 +559,10 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         if not str(payload.get(field, "")).strip():
             return None
         payload[field] = str(payload[field])
-    if not isinstance(payload.get("quantconnect_test_spec"), dict) or not payload["quantconnect_test_spec"]:
+    spec = payload.get("quantconnect_test_spec")
+    if isinstance(spec, str) and spec.strip():
+        payload["quantconnect_test_spec"] = {"spec": spec.strip()}
+    elif not isinstance(spec, dict) or not spec:
         return None
     if contains_unsafe_ai_text(payload):
         return None
@@ -959,6 +966,7 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
 
     generator = getattr(args, "generator", "codex")
     source = f"{generator}_idea_generator"
+    fallback_detail = None
     if generator == "deterministic":
         source = "deterministic_idea_generator"
         generated = generated_research_ideas(initial_queue, limit=args.limit)
@@ -977,8 +985,9 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
             if not generated:
                 raise RuntimeError(f"{generator}_generation_returned_no_usable_candidates")
         except Exception as exc:
+            fallback_detail = str(exc)
             if not getattr(args, "fallback", True):
-                print(json.dumps({"ok": False, "queue": str(queue_path), "error": f"{generator}_generation_failed", "detail": str(exc)}, ensure_ascii=False, sort_keys=True))
+                print(json.dumps({"ok": False, "queue": str(queue_path), "error": f"{generator}_generation_failed", "detail": fallback_detail}, ensure_ascii=False, sort_keys=True))
                 return 1
             source = "deterministic_idea_generator_fallback"
             generated = generated_research_ideas(initial_queue, limit=args.limit)
@@ -989,7 +998,12 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
             return {"ok": True, "queue": str(queue_path), "count": len(queue), "queued": current_queued, "added": 0, "reason": "min_queued_satisfied_after_generation"}, None
         new_queue, added = merge_candidates(queue, generated, source=source)
         new_queued_count = sum(1 for item in new_queue if item.get("status") == "queued")
-        return {"ok": True, "queue": str(queue_path), "count": len(new_queue), "queued": new_queued_count, "added": added, "source": source}, new_queue
+        result = {"ok": True, "queue": str(queue_path), "count": len(new_queue), "queued": new_queued_count, "added": added, "source": source, "generated": len(generated)}
+        if fallback_detail:
+            result["fallback_detail"] = fallback_detail
+        if generated and added == 0:
+            result["reason"] = "generated_candidates_not_added_duplicate_or_existing"
+        return result, new_queue
 
     payload = with_queue_lock(queue_path, merge)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
