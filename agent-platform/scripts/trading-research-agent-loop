@@ -50,6 +50,7 @@ if [ "$DISABLE_SEED" != "1" ] && [ ! -s "$QUEUE" ]; then
 fi
 
 while true; do
+  trading-research-agent --queue "$QUEUE" reconcile-stale --reports-dir "$REPORTS_DIR" --stale-seconds "${TRADING_RESEARCH_STALE_IN_PROGRESS_SECONDS:-21600}" >> "$LOG_DIR/loop.log" 2>&1 || true
   if [ "$DISABLE_SEED" != "1" ]; then
     trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 --reports-dir "$REPORTS_DIR" >> "$LOG_DIR/loop.log" 2>&1 || true
   fi
@@ -105,12 +106,19 @@ EOF
     install -o agent-research -g "$RUNNER_USER" -m 640 "$RUN_DIR/task.txt" "$HANDOFF_TASK"
     if [ "$DRY_RUN" = "1" ]; then
       echo "$(date -u +%FT%TZ) dry-run $RUN_ID" | tee -a "$LOG_DIR/loop.log"
+      {
+        echo "# Research loop dry run"
+        echo
+        echo "The loop claimed a candidate and prepared handoff artifacts, but TRADING_RESEARCH_LOOP_DRY_RUN=1 prevented broker and Codex execution."
+        echo
+        echo "retest_after_technical_fix"
+      } > "$RUN_DIR/final_report.md"
       RC=0
     else
       # Run a narrow authenticated QuantConnect broker before handing work to
       # the LLM. The broker may use QC credentials/network and writes only
       # non-secret artifacts for the offline Codex research pass.
-      trading-research-qc-broker preflight "$RUN_DIR" "$RUN_DIR/candidate.json" > "$RUN_DIR/qc_broker.log" 2> "$RUN_DIR/qc_broker.err"
+      TRADING_RESEARCH_FORCE_QC_CLOUD_EXTRACT="${TRADING_RESEARCH_FORCE_QC_CLOUD_EXTRACT:-1}" trading-research-qc-broker preflight "$RUN_DIR" "$RUN_DIR/candidate.json" > "$RUN_DIR/qc_broker.log" 2> "$RUN_DIR/qc_broker.err"
       BROKER_RC=$?
       if [ "$BROKER_RC" = "0" ]; then
         trading-research-qc-broker research-artifact "$RUN_DIR" "$RUN_DIR/candidate.json" >> "$RUN_DIR/qc_broker.log" 2>> "$RUN_DIR/qc_broker.err"

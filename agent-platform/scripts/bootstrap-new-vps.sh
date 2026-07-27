@@ -60,7 +60,12 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      acl ca-certificates curl gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+      acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl enable --now docker
+    elif command -v service >/dev/null 2>&1; then
+      service docker start || true
+    fi
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
     fi
@@ -108,6 +113,7 @@ ensure_user agent-review
 ensure_user agent-validator
 ensure_user agent-research
 ensure_user agent-research-runner
+ensure_user agent-research-watchdog
 # Orchestrator needs group access only for cleanup/traversal of coding/review workspaces.
 # Do not put all roles in one shared writable group.
 usermod -aG agent-coding agent-orchestrator
@@ -115,6 +121,7 @@ usermod -aG agent-review agent-orchestrator
 # agent-research stages handoff files for the isolated runner; it needs
 # membership in the runner group to chgrp files without gaining runner secrets.
 usermod -aG agent-research-runner agent-research
+usermod -aG agent-research-watchdog agent-research
 # Lean workspaces are a platform capability across research, coding, review,
 # and validator roles. This group grants access only to shared project/artifact
 # directories; raw QuantConnect credentials remain scoped separately below.
@@ -171,7 +178,7 @@ configure_shared_collab_dir /agents/shared/research-artifacts
 log "creating server-local secret/config directories without secret contents"
 install_dir root root 755 /etc/trading-agents
 install_dir root root 711 /etc/trading-agents/secrets
-for role in orchestrator coding review validator research research-runner; do
+for role in orchestrator coding review validator research research-runner research-watchdog; do
   install_dir root "agent-${role}" 750 "/etc/trading-agents/secrets/${role}"
 done
 install_dir root agent-research 750 /etc/trading-agents/secrets/research
@@ -205,8 +212,12 @@ install -o root -g root -m 755 "${EARNINGS_DIR}/trading-research-bounded-earning
 
 log "preparing isolated research runner Codex auth directory"
 install_dir agent-research-runner agent-research-runner 700 /home/agent-research-runner/.codex
+install_dir agent-research-watchdog agent-research-watchdog 700 /home/agent-research-watchdog/.codex
 if [[ -s /home/agent-research/.codex/auth.json && ! -s /home/agent-research-runner/.codex/auth.json ]]; then
   install -o agent-research-runner -g agent-research-runner -m 600 /home/agent-research/.codex/auth.json /home/agent-research-runner/.codex/auth.json
+fi
+if [[ -s /home/agent-research/.codex/auth.json && ! -s /home/agent-research-watchdog/.codex/auth.json ]]; then
+  install -o agent-research-watchdog -g agent-research-watchdog -m 600 /home/agent-research/.codex/auth.json /home/agent-research-watchdog/.codex/auth.json
 fi
 
 log "installing sudoers rules"
@@ -269,9 +280,64 @@ RUNNER_CODEX
 chown root:root /usr/local/bin/trading-research-runner-codex
 chmod 755 /usr/local/bin/trading-research-runner-codex
 
+cat > /usr/local/bin/trading-research-watchdog-codex <<'WATCHDOG_CODEX'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
+  echo "usage: trading-research-watchdog-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
+  exit 64
+fi
+TASK_FILE="$1"
+OUTPUT_DIR="$2"
+MODEL="${3:-gpt-5.4-mini}"
+case "$MODEL" in
+  *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
+esac
+case "$TASK_FILE" in
+  /agents/research/handoff/research-watchdog-*-task.txt) ;;
+  *) echo "ERROR: task file must be an approved watchdog handoff" >&2; exit 65 ;;
+esac
+case "$OUTPUT_DIR" in
+  /agents/research/reports/research-watchdog-*) ;;
+  *) echo "ERROR: output dir must be an approved watchdog reports directory" >&2; exit 67 ;;
+esac
+if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
+  echo "ERROR: task/output permissions are not usable" >&2
+  exit 66
+fi
+TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
+OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
+case "$TASK_REAL" in
+  /agents/research/handoff/research-watchdog-*-task.txt) ;;
+  *) echo "ERROR: resolved task path escaped watchdog handoff" >&2; exit 68 ;;
+esac
+case "$OUT_REAL" in
+  /agents/research/reports/research-watchdog-*) ;;
+  *) echo "ERROR: resolved output path escaped watchdog reports" >&2; exit 69 ;;
+esac
+cd "$OUT_REAL"
+export HOME=/home/agent-research-watchdog
+export PATH=/usr/local/bin:/usr/bin:/bin
+export PYTHONDONTWRITEBYTECODE=1
+umask 0007
+if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
+  echo "ERROR: watchdog user can read QuantConnect secrets" >&2
+  exit 71
+fi
+if sudo -n -l 2>/dev/null | grep -q 'trading-research-bounded-earnings-qc'; then
+  echo "ERROR: watchdog user has bounded QC sudo access" >&2
+  exit 72
+fi
+exec /usr/bin/timeout 20m /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
+WATCHDOG_CODEX
+chown root:root /usr/local/bin/trading-research-watchdog-codex
+chmod 755 /usr/local/bin/trading-research-watchdog-codex
+
+
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
 # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *
+agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *
 # Allow the isolated runner to execute only bounded public earnings-QC research actions.
 agent-research-runner ALL=(agent-research) NOPASSWD: /usr/local/sbin/trading-research-bounded-earnings-qc *
 SUDOERS_RUNNER
@@ -286,11 +352,21 @@ chmod 440 /etc/sudoers.d/trading-agent-research-qc-docker
 visudo -cf /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null
 
 log "creating placeholder config files if missing"
-if [[ ! -e /etc/trading-agents/qc-lean-docker-image ]]; then
-  install -o root -g root -m 644 /dev/null /etc/trading-agents/qc-lean-docker-image
+if [[ ! -s /etc/trading-agents/qc-lean-docker-image ]]; then
+  printf '%s\n' 'quantconnect/research:latest' > /etc/trading-agents/qc-lean-docker-image
 fi
 chown root:root /etc/trading-agents/qc-lean-docker-image
 chmod 644 /etc/trading-agents/qc-lean-docker-image
+if command -v docker >/dev/null 2>&1; then
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now docker || true
+  elif command -v service >/dev/null 2>&1; then
+    service docker start || true
+  fi
+  docker pull "$(head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
+else
+  log "docker is not installed; QC local Research/QuantBook execution will be blocked until Docker is installed"
+fi
 
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
   cat > /etc/trading-agents/github-apps.json <<'JSON'

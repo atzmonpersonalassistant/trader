@@ -333,6 +333,27 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("expected_option_move", main)
         self.assertIn("allowed_spread", main)
 
+    def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [
+                {
+                    "symbol": "NULLT",
+                    "earnings_date": "2026-08-04",
+                    "spot": 10.0,
+                    "contracts": [{"strike": 12, "ask": 0.25, "required_move_pct": None, "days_after_earnings": 3}],
+                }
+            ],
+            8,
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.candidates = json.loads(", main)
+        self.assertIn('required_move_pct": null', main)
+        self.assertIn("self.candidates = json.loads('[{", main)
+        compile(main, str(project_dir / "main.py"), "exec")
+
     def test_multiyear_result_pass_gate_rejects_bad_completed_results(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         self.assertFalse(

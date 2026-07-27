@@ -1010,6 +1010,55 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok") else 1
 
 
+
+def _run_dir_has_terminal_report(reports_dir: Path, run_id: str | None) -> tuple[bool, str | None]:
+    if not run_id:
+        return False, None
+    final = reports_dir / run_id / "final_report.md"
+    if not final.exists() or final.stat().st_size == 0:
+        return False, None
+    text = final.read_text(errors="replace")
+    for status, verdict in (("blocked", "retest_after_technical_fix"), ("refine", "refine"), ("done", "discard"), ("done", "candidate_for_validator_review")):
+        if re.search(rf"^{re.escape(verdict)}$", text, re.M):
+            return True, status
+    return False, None
+
+
+def cmd_reconcile_stale(args: argparse.Namespace) -> int:
+    queue_path = Path(args.queue)
+    reports_dir = Path(args.reports_dir)
+    now = time.time()
+
+    def reconcile(queue: list[dict[str, Any]]):
+        changed = []
+        for item in queue:
+            if item.get("status") != "in_progress":
+                continue
+            run_id = item.get("active_run_id") or item.get("last_run_id")
+            has_terminal, inferred_status = _run_dir_has_terminal_report(reports_dir, run_id)
+            if has_terminal and inferred_status:
+                item["status"] = inferred_status
+                item["last_run_id"] = run_id
+                item.pop("active_run_id", None)
+                changed.append({"id": item.get("id"), "run_id": run_id, "status": inferred_status, "reason": "terminal_report_found"})
+                continue
+            if run_id:
+                run_dir = reports_dir / run_id
+                if run_dir.exists():
+                    age = now - run_dir.stat().st_mtime
+                    if age < args.stale_seconds:
+                        continue
+            item["status"] = "blocked"
+            if run_id:
+                item["last_run_id"] = run_id
+            item.pop("active_run_id", None)
+            changed.append({"id": item.get("id"), "run_id": run_id, "status": "blocked", "reason": "stale_in_progress"})
+        return {"ok": True, "queue": str(queue_path), "changed": changed, "changed_count": len(changed)}, queue if changed else None
+
+    payload = with_queue_lock(queue_path, reconcile)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0
+
 def cmd_list(args: argparse.Namespace) -> int:
     queue = load_queue(Path(args.queue))
     if args.status:
@@ -1093,6 +1142,10 @@ def build_parser() -> argparse.ArgumentParser:
     ideas.add_argument("--fallback", dest="fallback", action="store_true", default=True)
     ideas.add_argument("--no-fallback", dest="fallback", action="store_false")
     ideas.set_defaults(func=cmd_generate_ideas)
+    reconcile_cmd = sub.add_parser("reconcile-stale", help="Clear stale in-progress candidates when their runs have ended or aged out")
+    reconcile_cmd.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
+    reconcile_cmd.add_argument("--stale-seconds", type=int, default=21600)
+    reconcile_cmd.set_defaults(func=cmd_reconcile_stale)
     list_cmd = sub.add_parser("list", help="List research candidates")
     list_cmd.add_argument("--status")
     list_cmd.set_defaults(func=cmd_list)
