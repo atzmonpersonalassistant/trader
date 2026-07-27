@@ -31,7 +31,7 @@ make_runner_inputs_usable() {
   local task_file="$1"
   local output_dir="$2"
   if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m "u:agent-research-watchdog:--x" /agents /agents/research "$REPORT_ROOT" 2>/dev/null || true
+    setfacl -m "u:agent-research-watchdog:--x" /agents /agents/research "$REPORT_ROOT" "$HANDOFF_DIR" 2>/dev/null || true
     setfacl -m "u:agent-research:rwx,u:agent-research-watchdog:rwx,m::rwx,d:u:agent-research:rwx,d:u:agent-research-watchdog:rwx,d:m::rwx" "$output_dir"
     setfacl -m "u:agent-research-watchdog:r--" "$task_file"
     chmod u+rw,o-rwx "$task_file"

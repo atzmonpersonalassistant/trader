@@ -59,6 +59,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         text = SCRIPT.read_text()
         helper = text[text.index('make_runner_inputs_usable()'):text.index('while [[ $# -gt 0 ]]')]
         self.assertIn('agent-research-watchdog', helper)
+        self.assertIn('\"$HANDOFF_DIR\"', helper)
         self.assertNotIn('agent-research-runner', helper)
         self.assertIn('sudo -n -u agent-research-watchdog', text)
         self.assertIn('trading-research-watchdog-codex', text)
