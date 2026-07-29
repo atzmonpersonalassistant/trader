@@ -540,6 +540,76 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("TRADER_VALUATION_ANCHOR_NO_SESSION_DATA", scan)
         self.assertIn("trader.valuation_date", scan)
 
+    def test_stage2_fails_before_later_day_chains_when_anchor_has_no_option_chain(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("self.valuation_option_chain_slice_count = 0", scan)
+        self.assertIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", scan)
+        self.assertIn("valuation_option_chain_slice_count", scan)
+        self.assertIn("if current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", scan)
+        self.assertIn("self.emit_and_quit()", scan)
+        self.assertIn("return", scan)
+        self.assertIn("if current_date == self.valuation_date:", scan)
+        self.assertIn("self.valuation_option_chain_slice_count += len(chains_by_symbol)", scan)
+
+    def test_stage2_fails_loudly_when_anchor_slice_has_no_option_chain_even_if_later_chain_arrives(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            datetime.date(2026, 7, 14),
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.valuation_option_chain_slice_count = 0", main)
+        self.assertIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", main)
+        self.assertIn("trader.valuation_option_chain_slice_count", main)
+        self.assertIn("current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", main)
+
+        fake_imports = types.ModuleType("AlgorithmImports")
+
+        class QCAlgorithm:
+            def quit(self):
+                self.quit_called = True
+
+        fake_imports.QCAlgorithm = QCAlgorithm
+        old_imports = sys.modules.get("AlgorithmImports")
+        sys.modules["AlgorithmImports"] = fake_imports
+        namespace = {}
+        try:
+            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+        finally:
+            if old_imports is None:
+                sys.modules.pop("AlgorithmImports", None)
+            else:
+                sys.modules["AlgorithmImports"] = old_imports
+
+        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
+        alg.valuation_date = datetime.date(2026, 7, 13)
+        alg.valuation_data_slice_count = 0
+        alg.valuation_option_chain_slice_count = 0
+        alg.option_chain_slice_count = 0
+        alg.max_option_chain_slice_count = 0
+        alg.option_chain_symbols_sample = []
+        alg.option_by_underlying = {}
+        alg.done_by_symbol = {"OPEN": False}
+
+        empty_slice = types.SimpleNamespace(option_chains={})
+        later_chain_slice = types.SimpleNamespace(
+            option_chains={"OPEN": types.SimpleNamespace(symbol="OPEN OPTIONCHAIN")}
+        )
+
+        alg.time = datetime.datetime(2026, 7, 13, 16)
+        alg.on_data(empty_slice)
+        self.assertEqual(alg.valuation_data_slice_count, 1)
+        self.assertEqual(alg.valuation_option_chain_slice_count, 0)
+
+        alg.time = datetime.datetime(2026, 7, 14, 9, 31)
+        with self.assertRaisesRegex(Exception, "TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA") as ctx:
+            alg.on_data(later_chain_slice)
+        self.assertIn("valuation_data_slice_count=1", str(ctx.exception))
+        self.assertIn("valuation_option_chain_slice_count=0", str(ctx.exception))
+        self.assertEqual(alg.option_chain_slice_count, 0)
+
     def test_full_scan_throttles_discovery_and_sequential_chunks(self):
         full = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("QC_FULL_CHUNK_DELAY_SECONDS", full)
@@ -569,8 +639,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("start = previous_weekday_before(valuation_date)", scan)
         self.assertIn("end = valuation_date", scan)
         self.assertIn("self.valuation_date", scan)
-        self.assertIn("self.time.date() < self.valuation_date", scan)
-        self.assertIn("elif self.time.date() > self.valuation_date", scan)
+        self.assertIn("current_date < self.valuation_date", scan)
+        self.assertIn("current_date > self.valuation_date", scan)
         self.assertNotIn("or self.time.date() >= self.valuation_date", scan)
         self.assertNotIn("today - timedelta(days=5)", scan)
         self.assertNotIn("end = valuation_date + timedelta(days=1)", scan)
