@@ -787,9 +787,10 @@ class MVP0AgentTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertEqual(payload["type"], "none")
             self.assertEqual(payload["reason"], "all_queued_candidates_blocked_by_preclaim_gate")
+            self.assertEqual(payload["skipped"], [{"id": "event-candidate-without-date", "reason": "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date"}])
             items = research.load_queue(queue)
-            self.assertEqual(items[0]["status"], "blocked")
-            self.assertEqual(items[0]["blocked_reason"], "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date")
+            self.assertEqual(items[0]["status"], "queued")
+            self.assertNotIn("blocked_reason", items[0])
 
     def test_research_agent_allows_event_candidate_with_explicit_event_date(self):
         research = load("trading_research_agent_event_date_gate", "agent-platform/tools/trading_research_agent.py")
@@ -866,9 +867,10 @@ class MVP0AgentTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertEqual(payload["type"], "none")
             self.assertEqual(payload["reason"], "all_queued_candidates_blocked_by_preclaim_gate")
+            self.assertEqual(payload["skipped"], [{"id": "event-candidate-with-expiry-only", "reason": "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date"}])
             items = research.load_queue(queue)
-            self.assertEqual(items[0]["status"], "blocked")
-            self.assertEqual(items[0]["blocked_reason"], "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date")
+            self.assertEqual(items[0]["status"], "queued")
+            self.assertNotIn("blocked_reason", items[0])
 
     def test_research_agent_allows_non_event_option_contract_candidate_without_provider(self):
         research = load("trading_research_agent_contract_not_event_gate", "agent-platform/tools/trading_research_agent.py")

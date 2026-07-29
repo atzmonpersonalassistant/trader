@@ -966,18 +966,11 @@ def cmd_claim(args: argparse.Namespace) -> int:
         queued = [item for item in queue if item.get("status") == "queued"]
         if not queued:
             return {"ok": True, "type": "none"}, None
-        changed = False
+        skipped_blockers: list[dict[str, str]] = []
         for candidate in sorted(queued, key=lambda item: (item.get("priority", 999), item["id"])):
             blocker = candidate_block_reason_if_unclaimable(candidate)
             if blocker:
-                for item in queue:
-                    if item.get("id") == candidate.get("id"):
-                        item["status"] = "blocked"
-                        item["blocked_reason"] = blocker
-                        item["last_run_id"] = args.run_id
-                        item.pop("active_run_id", None)
-                        changed = True
-                        break
+                skipped_blockers.append({"id": str(candidate.get("id") or ""), "reason": blocker})
                 continue
             for item in queue:
                 if item.get("id") == candidate.get("id"):
@@ -988,7 +981,12 @@ def cmd_claim(args: argparse.Namespace) -> int:
                     candidate = item
                     break
             return {"ok": True, "type": "candidate", "candidate": candidate}, queue
-        return {"ok": True, "type": "none", "reason": "all_queued_candidates_blocked_by_preclaim_gate"}, queue if changed else None
+        return {
+            "ok": True,
+            "type": "none",
+            "reason": "all_queued_candidates_blocked_by_preclaim_gate",
+            "skipped": skipped_blockers,
+        }, None
 
     payload = with_queue_lock(queue_path, claim)
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
