@@ -309,12 +309,12 @@ Status: Completed ✅
 Current evidence:
 
 ```text
-Provider: <vps-provider> VPS
+Provider: VPS provider configured privately by the operator
 Host: <vps-hostname>
 IPv4: <vps-ip>
 OS: Ubuntu 26.04 LTS
 Admin user: <vps-admin-user>
-Access: SSH key <private-ssh-key-path> on the assistant Mac
+Access: private SSH key path configured outside git
 Installed base packages: git, gh, sqlite3, python3, node/npm, Codex CLI, jq, curl, rsync
 Agent Linux users: created with no sudo
 /agents layout: created with role-specific ownership; /agents is traverse-only so role users can enter their owned subtree
