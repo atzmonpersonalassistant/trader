@@ -927,28 +927,39 @@ def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
 
 
 def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
-    event_date_keys = (
-        "event", "catalyst", "earnings", "calendar", "announcement",
-        "report_date", "release_date", "thesis", "rationale", "notes",
-        "description", "entry_rules", "exit_rules", "risk_controls",
-        "minimum_viability",
-    )
-    non_event_date_keys = ("expiry", "expiration", "dte", "maturity")
+    event_date_keys = ("event", "catalyst", "earnings", "calendar", "announcement", "report_date", "release_date", "entry_rules")
+    prose_event_keys = ("thesis", "rationale", "notes", "description")
+    non_event_date_keys = ("expiry", "expiration", "dte", "maturity", "exit_rules", "risk_controls", "minimum_viability")
     iso_date = re.compile(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
     month_date = re.compile(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", re.I)
+    event_context = re.compile(r"\b(earnings|catalyst|event|fomc|cpi|q[1-4]|announcement|release|report)\b", re.I)
+
+    def has_date(text: str) -> bool:
+        return bool(iso_date.search(text) or month_date.search(text))
+
+    def has_event_context_date(text: str) -> bool:
+        for match in list(iso_date.finditer(text)) + list(month_date.finditer(text)):
+            start = max(0, match.start() - 80)
+            end = min(len(text), match.end() + 80)
+            if event_context.search(text[start:end]):
+                return True
+        return False
 
     def walk(value: Any, path: tuple[str, ...] = ()) -> bool:
         role_text = " ".join(path).lower()
         if any(term in role_text for term in non_event_date_keys):
             return False
         role_is_event = any(term in role_text for term in event_date_keys)
+        role_is_event_prose = any(term in role_text for term in prose_event_keys)
         if isinstance(value, dict):
             return any(walk(child, path + (str(key),)) for key, child in value.items())
         if isinstance(value, list):
             return any(walk(child, path) for child in value)
         if role_is_event:
             text = str(value)
-            return bool(iso_date.search(text) or month_date.search(text))
+            return has_date(text)
+        if role_is_event_prose:
+            return has_event_context_date(str(value))
         return False
     return walk(item)
 
