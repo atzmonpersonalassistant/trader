@@ -72,15 +72,18 @@ strong; a no-trade conclusion from doing nothing is weak.
 
 ## Runtime interface
 
-All commands run on the Trader VPS as `agent-research`, via SSH:
+All commands run on the Trader VPS as `agent-research`, via SSH. Keep concrete hostnames, IPs, usernames, and key paths outside this public repo; source them from your private operator environment:
 
- ssh -i <private-ssh-key-path> -o BatchMode=yes -o IdentitiesOnly=yes \
- -o ConnectTimeout=15 <vps-admin-user>@<vps-ip> \
+ export TRADER_VPS_SSH_KEY=<private-ssh-key-path>
+ export TRADER_VPS_USER=<vps-admin-user>
+ export TRADER_VPS_HOST=<vps-host-or-ip>
+ ssh -i "$TRADER_VPS_SSH_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+ -o ConnectTimeout=15 "$TRADER_VPS_USER@$TRADER_VPS_HOST" \
  'sudo -n -u agent-research env HOME=/home/agent-research \
  PYTHONDONTWRITEBYTECODE=1 \
  /agents/research/bin/earnings-qc-research <COMMAND...>'
 
-(Below, commands are shown bare; always wrap them in this SSH pattern.)
+(Below, commands are shown bare; always wrap them in this SSH pattern using private operator configuration.)
 
 ### Discover capabilities via help — encouraged
 
