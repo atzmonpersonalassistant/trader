@@ -908,49 +908,98 @@ def event_provider_ready() -> bool:
     return ready.exists() and ready.stat().st_size > 0
 
 
-def candidate_text_for_gates(item: dict[str, Any]) -> str:
-    try:
-        return json.dumps(item, ensure_ascii=False).lower()
-    except Exception:
-        return str(item).lower()
-
-
 def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
-    text = candidate_text_for_gates(item)
-    event_patterns = [
-        r"\bearnings\b", r"\bq[1-4]\b", r"\bfomc\b", r"\bcpi\b",
-        r"(?<!non-)\bevent\b", r"\bcatalyst\b", r"\bcertification\b",
-        r"\bclinical\b", r"\baward window\b", r"\bhistorical earnings\b",
-        r"\bcalendar data\b", r"\bevent_alignment\b", r"\bcatalyst_window\b",
+    event_keys = {
+        "event_type", "event_date", "event_window", "event_windows",
+        "catalyst_type", "catalyst_date", "catalyst_window", "catalyst_windows",
+        "earnings_date", "earnings_window", "announcement_date", "report_date",
+        "release_date",
+    }
+    event_calendar_flags = {
+        "requires_event_calendar", "require_event_calendar", "event_calendar_required",
+        "requires_earnings_calendar", "require_earnings_calendar",
+    }
+    data_requirement_keys = {"required_data", "data_requirements", "required_datasets"}
+    event_calendar_requirement_patterns = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in [
+            r"\b(historical\s+)?earnings\s+calendar\b",
+            r"\bevent\s+calendar\b",
+            r"\bcalendar\s+data\b",
+            r"\bevent[_ -]?alignment\b",
+            r"\bcatalyst\s+calendar\b",
+        ]
     ]
-    return any(re.search(pattern, text) for pattern in event_patterns)
+    optional_event_data_pattern = re.compile(r"\b(when\s+available|if\s+available|optional|avoid|no\s+earnings|without\s+earnings)\b", re.IGNORECASE)
+
+    def truthy_event_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip()) and value.strip().lower() not in {"none", "false", "no", "n/a", "na"}
+        if isinstance(value, (list, tuple, set, dict)):
+            return bool(value)
+        return bool(value)
+
+    def data_requirement_needs_event_calendar(value: Any) -> bool:
+        if isinstance(value, dict):
+            values = value.values()
+        elif isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = [value]
+        for child in values:
+            if isinstance(child, (dict, list, tuple, set)):
+                if data_requirement_needs_event_calendar(child):
+                    return True
+                continue
+            text = str(child)
+            if optional_event_data_pattern.search(text):
+                continue
+            if any(pattern.search(text) for pattern in event_calendar_requirement_patterns):
+                return True
+        return False
+
+    def walk(value: Any) -> bool:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_text = str(key).lower()
+                if key_text in event_calendar_flags:
+                    if truthy_event_value(child):
+                        return True
+                    continue
+                if key_text in event_keys and truthy_event_value(child):
+                    return True
+                if key_text in data_requirement_keys and data_requirement_needs_event_calendar(child):
+                    return True
+                if walk(child):
+                    return True
+        elif isinstance(value, list):
+            return any(walk(child) for child in value)
+        return False
+
+    return walk(item)
 
 
 def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
-    event_date_keys = ("event", "catalyst", "earnings", "calendar", "announcement", "report_date", "release_date")
-    prose_event_keys = ("thesis", "rationale", "notes", "description", "entry_rules")
+    event_date_keys = (
+        "event_date", "event_dates", "event_window", "event_windows",
+        "catalyst_date", "catalyst_dates", "catalyst_window", "catalyst_windows",
+        "earnings_date", "earnings_dates", "earnings_window", "earnings_windows",
+        "announcement_date", "report_date", "release_date",
+    )
     non_event_date_keys = ("expiry", "expiration", "dte", "maturity", "exit_rules", "risk_controls", "minimum_viability")
     iso_date = re.compile(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
     month_date = re.compile(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", re.I)
-    event_context = re.compile(r"\b(earnings|catalyst|event|fomc|cpi|q[1-4]|announcement|release|report)\b", re.I)
 
     def has_date(text: str) -> bool:
         return bool(iso_date.search(text) or month_date.search(text))
-
-    def has_event_context_date(text: str) -> bool:
-        for match in list(iso_date.finditer(text)) + list(month_date.finditer(text)):
-            start = max(0, match.start() - 80)
-            end = min(len(text), match.end() + 80)
-            if event_context.search(text[start:end]):
-                return True
-        return False
 
     def walk(value: Any, path: tuple[str, ...] = ()) -> bool:
         role_text = " ".join(path).lower()
         if any(term in role_text for term in non_event_date_keys):
             return False
-        role_is_event = any(term in role_text for term in event_date_keys)
-        role_is_event_prose = any(term in role_text for term in prose_event_keys)
+        role_is_event = any(term == part for part in role_text.split() for term in event_date_keys)
         if isinstance(value, dict):
             return any(walk(child, path + (str(key),)) for key, child in value.items())
         if isinstance(value, list):
@@ -958,8 +1007,6 @@ def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
         if role_is_event:
             text = str(value)
             return has_date(text)
-        if role_is_event_prose:
-            return has_event_context_date(str(value))
         return False
     return walk(item)
 
@@ -1039,9 +1086,15 @@ def cmd_seed(args: argparse.Namespace) -> int:
 def cmd_generate_ideas(args: argparse.Namespace) -> int:
     queue_path = Path(args.queue)
     initial_queue = load_queue(queue_path)
+    provider_is_ready = event_provider_ready()
+
+    def is_claimable_queued(item: dict[str, Any]) -> bool:
+        return item.get("status") == "queued" and (provider_is_ready or not candidate_block_reason_if_unclaimable(item))
+
     queued_count = sum(1 for item in initial_queue if item.get("status") == "queued")
-    if queued_count >= args.min_queued:
-        print(json.dumps({"ok": True, "queue": str(queue_path), "count": len(initial_queue), "queued": queued_count, "added": 0, "reason": "min_queued_satisfied"}, ensure_ascii=False, sort_keys=True))
+    claimable_queued_count = sum(1 for item in initial_queue if is_claimable_queued(item))
+    if claimable_queued_count >= args.min_queued:
+        print(json.dumps({"ok": True, "queue": str(queue_path), "count": len(initial_queue), "queued": queued_count, "claimable_queued": claimable_queued_count, "added": 0, "reason": "min_queued_satisfied"}, ensure_ascii=False, sort_keys=True))
         return 0
 
     generator = getattr(args, "generator", "codex")
@@ -1071,14 +1124,29 @@ def cmd_generate_ideas(args: argparse.Namespace) -> int:
                 return 1
             source = "deterministic_idea_generator_fallback"
             generated = generated_research_ideas(initial_queue, limit=args.limit)
+    generated_before_filter = len(generated)
+    skipped_unclaimable_event_candidates = 0
+    if not provider_is_ready:
+        claimable_generated = []
+        for candidate in generated:
+            item = asdict(candidate)
+            if candidate_block_reason_if_unclaimable(item):
+                skipped_unclaimable_event_candidates += 1
+            else:
+                claimable_generated.append(candidate)
+        generated = claimable_generated
 
     def merge(queue: list[dict[str, Any]]):
         current_queued = sum(1 for item in queue if item.get("status") == "queued")
-        if current_queued >= args.min_queued:
-            return {"ok": True, "queue": str(queue_path), "count": len(queue), "queued": current_queued, "added": 0, "reason": "min_queued_satisfied_after_generation"}, None
+        current_claimable_queued = sum(1 for item in queue if is_claimable_queued(item))
+        if current_claimable_queued >= args.min_queued:
+            return {"ok": True, "queue": str(queue_path), "count": len(queue), "queued": current_queued, "claimable_queued": current_claimable_queued, "added": 0, "reason": "min_queued_satisfied_after_generation"}, None
         new_queue, added = merge_candidates(queue, generated, source=source)
         new_queued_count = sum(1 for item in new_queue if item.get("status") == "queued")
-        result = {"ok": True, "queue": str(queue_path), "count": len(new_queue), "queued": new_queued_count, "added": added, "source": source, "generated": len(generated)}
+        new_claimable_queued_count = sum(1 for item in new_queue if is_claimable_queued(item))
+        result = {"ok": True, "queue": str(queue_path), "count": len(new_queue), "queued": new_queued_count, "claimable_queued": new_claimable_queued_count, "added": added, "source": source, "generated": generated_before_filter}
+        if skipped_unclaimable_event_candidates:
+            result["skipped_unclaimable_event_candidates"] = skipped_unclaimable_event_candidates
         if fallback_detail:
             result["fallback_detail"] = fallback_detail
         if generated and added == 0:

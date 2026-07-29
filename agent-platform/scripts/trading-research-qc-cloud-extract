@@ -99,13 +99,23 @@ def infer_event_and_expiry_windows(run_dir):
     txt = candidate_text(run_dir)
     mentions = _date_mentions_with_context(txt)
     low = txt.lower()
+    event_intent_patterns = [
+        r"\b20\d{2}[-_](0[1-9]|1[0-2])\b(?![-_]\d{1,2})\s+earnings\b",
+        r"\bearnings\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|20\d{2})\b",
+        r"\bearnings\s+(call|report|release|announcement|date|catalyst|event)\b",
+        r"\b(q[1-4])\s+(earnings|report|release)\b",
+        r"\b(fomc|cpi)\b",
+        r"\b(catalyst|clinical|certification|conference)\b",
+        r"\b(contract award|awarded contract)\b",
+    ]
+    has_positive_event_intent = any(re.search(pattern, low, re.I) for pattern in event_intent_patterns)
     event_type = "unknown"
     if "fomc" in low: event_type = "fomc"
     elif "cpi" in low: event_type = "cpi"
-    elif any(x in low for x in ["earnings", "q1", "q2", "q3", "q4"]): event_type = "earnings"
-    elif any(x in low for x in ["catalyst", "clinical", "contract", "certification", "conference"]): event_type = "catalyst"
+    elif has_positive_event_intent and any(x in low for x in ["earnings", "q1", "q2", "q3", "q4"]): event_type = "earnings"
+    elif any(x in low for x in ["catalyst", "clinical", "contract award", "awarded contract", "certification", "conference"]): event_type = "catalyst"
     expiry_words = ("expir", "weekly", "weeklies", "call chain", "put chain", "target expir", "expiry_target", "expiration")
-    event_words = ("event", "earnings", "fomc", "cpi", "print", "entry", "catalyst", "decision", "statement", "conference", "clinical", "contract", "certification")
+    event_words = ("event", "earnings", "fomc", "cpi", "print", "entry", "catalyst", "decision", "statement", "conference", "clinical", "contract award", "awarded contract", "certification")
     expiry_dates, event_dates = {}, {}
     for item in mentions:
         day = dt.date.fromisoformat(item["date"])
@@ -135,7 +145,7 @@ def infer_event_and_expiry_windows(run_dir):
     # This is not proof of an earnings timestamp; it only targets expiries before row-cap.
     if not enriched:
         ym = None
-        m = re.search(r"\b(20\d{2})[-_](0[1-9]|1[0-2])\b", txt)
+        m = re.search(r"\b(20\d{2})[-_](0[1-9]|1[0-2])\b(?![-_]\d{1,2})", txt)
         if m:
             ym = (int(m.group(1)), int(m.group(2)))
         else:
@@ -143,7 +153,7 @@ def infer_event_and_expiry_windows(run_dir):
             m = re.search(r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(20\d{2})\b", txt)
             if m:
                 ym = (int(m.group(2)), month_map[m.group(1).lower().rstrip('.')])
-        if ym and any(w in low for w in event_words):
+        if ym and has_positive_event_intent:
             y, mo = ym
             start_day = dt.date(y, mo, 1)
             end_day = dt.date(y + (1 if mo == 12 else 0), 1 if mo == 12 else mo + 1, 1) - dt.timedelta(days=1)
@@ -248,10 +258,11 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         self.event_underlying_windows = {{}}
         self.realized_volatility = {{}}
         self.option_symbols = []
+        self.strike_window_per_expiry = int(SPEC.get("strike_window_per_expiry", 30))
         for ticker in SPEC["underlyings"]:
             eq = self.AddEquity(ticker, Resolution.Minute)
             opt = self.AddOption(ticker, Resolution.Minute)
-            opt.SetFilter(lambda u: u.IncludeWeeklys().Strikes(-100, 100).Expiration(datetime.timedelta(days=int(SPEC.get("min_dte", 0))), datetime.timedelta(days=int(SPEC.get("max_dte", 180)))))
+            opt.SetFilter(lambda u: u.IncludeWeeklys().Strikes(-self.strike_window_per_expiry, self.strike_window_per_expiry).Expiration(datetime.timedelta(days=int(SPEC.get("min_dte", 0))), datetime.timedelta(days=int(SPEC.get("max_dte", 180)))))
             self.option_symbols.append((ticker, eq.Symbol, opt.Symbol))
             self.diagnostics[ticker] = {{"chain_seen_count": 0, "after_dte_filter_count": 0, "after_target_expiry_filter_count": 0, "rows_emitted": 0, "available_expiries": [], "target_expiries": sorted(list(self.target_expiries)), "zero_rows_reason": None, "equity_symbol": str(eq.Symbol), "option_symbol": str(opt.Symbol)}}
             hist = self.History(eq.Symbol, int(SPEC.get("history_lookback_days", 30)), Resolution.Daily)
@@ -293,7 +304,6 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         for ticker, eqsym, optsym in self.option_symbols:
             chain = data.OptionChains.get(optsym)
             if chain is None:
-                self.diagnostics[ticker]["zero_rows_reason"] = self.diagnostics[ticker].get("zero_rows_reason") or "option_chain_missing_in_OnData"
                 continue
             contracts = sorted(list(chain), key=lambda x: (x.Expiry, x.Strike))
             self.diagnostics[ticker]["chain_seen_count"] += len(contracts)

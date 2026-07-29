@@ -502,6 +502,156 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(candidates[0].id, "codex-vol-calendar")
             self.assertEqual(candidates[0].priority, 20)
 
+    def test_research_generate_ideas_filters_unclaimable_event_candidates_without_starving_non_event_work(self):
+        research = load("trading_research_agent_generate_event_gate", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        original_generator = research.generated_research_ideas
+        event_candidate = research.StrategyCandidate(
+            id="event-calendar-required",
+            name="Event calendar required",
+            priority=1,
+            family="calendar_spread",
+            thesis="Options event setup.",
+            structure="Buy longer expiry and sell shorter expiry.",
+            universe=["SPY"],
+            entry_rules=["event aligned entry"],
+            exit_rules=["exit before expiry"],
+            risk_controls=["max loss limited to debit"],
+            required_data=["historical earnings calendar"],
+            llm_value="test event gate",
+            pitfalls=["calendar missing"],
+            minimum_viability=["positive expectancy"],
+            quantconnect_test_spec={"strategy": "calendar_spread", "underlying": "SPY"},
+        )
+        non_event_candidate = research.StrategyCandidate(
+            id="plain-vol-spread",
+            name="Plain vol spread",
+            priority=2,
+            family="bull_call_spread",
+            thesis="Options continuation setup without a required calendar.",
+            structure="Buy one call and sell a higher-strike call.",
+            universe=["SPY"],
+            entry_rules=["liquidity passes"],
+            exit_rules=["exit before expiry"],
+            risk_controls=["max loss limited to debit"],
+            required_data=["option chain liquidity", "event calendar when available"],
+            llm_value="test non-event generation",
+            pitfalls=["poor fills"],
+            minimum_viability=["positive expectancy"],
+            quantconnect_test_spec={"strategy": "bull_call_spread", "underlying": "SPY"},
+        )
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                research.generated_research_ideas = lambda existing, limit: [event_candidate, non_event_candidate]
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_generate_ideas(argparse.Namespace(
+                        queue=str(queue),
+                        min_queued=1,
+                        limit=2,
+                        generator="deterministic",
+                        reports_dir=str(Path(tmp) / "reports"),
+                        fallback=True,
+                    ))
+            finally:
+                research.generated_research_ideas = original_generator
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["generated"], 2)
+            self.assertEqual(payload["skipped_unclaimable_event_candidates"], 1)
+            self.assertEqual(payload["added"], 1)
+            items = research.load_queue(queue)
+            self.assertEqual([item["id"] for item in items], ["plain-vol-spread"])
+
+    def test_research_generate_ideas_ignores_existing_blocked_event_candidates_for_min_queued(self):
+        research = load("trading_research_agent_generate_claimable_count", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        original_generator = research.generated_research_ideas
+        replacement = research.StrategyCandidate(
+            id="replacement-vol-spread",
+            name="Replacement vol spread",
+            priority=2,
+            family="bull_call_spread",
+            thesis="Options continuation setup without a required calendar.",
+            structure="Buy one call and sell a higher-strike call.",
+            universe=["SPY"],
+            entry_rules=["liquidity passes"],
+            exit_rules=["exit before expiry"],
+            risk_controls=["max loss limited to debit"],
+            required_data=["option chain liquidity"],
+            llm_value="test claimable count",
+            pitfalls=["poor fills"],
+            minimum_viability=["positive expectancy"],
+            quantconnect_test_spec={"strategy": "bull_call_spread", "underlying": "SPY"},
+        )
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            queue.write_text(json.dumps([
+                {
+                    "id": "blocked-event-a",
+                    "priority": 1,
+                    "status": "queued",
+                    "family": "calendar_spread",
+                    "required_data": ["historical earnings calendar"],
+                },
+                {
+                    "id": "blocked-event-b",
+                    "priority": 2,
+                    "status": "queued",
+                    "family": "calendar_spread",
+                    "quantconnect_test_spec": {"event_type": "earnings"},
+                },
+            ]))
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                research.generated_research_ideas = lambda existing, limit: [replacement]
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_generate_ideas(argparse.Namespace(
+                        queue=str(queue),
+                        min_queued=1,
+                        limit=1,
+                        generator="deterministic",
+                        reports_dir=str(Path(tmp) / "reports"),
+                        fallback=True,
+                    ))
+            finally:
+                research.generated_research_ideas = original_generator
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["queued"], 3)
+            self.assertEqual(payload["claimable_queued"], 1)
+            self.assertEqual(payload["added"], 1)
+            self.assertEqual([item["id"] for item in research.load_queue(queue)], ["blocked-event-a", "blocked-event-b", "replacement-vol-spread"])
+
     def test_research_ai_generator_uses_official_openai_endpoint_and_ideas_wrapper(self):
         text = Path("agent-platform/tools/trading_research_agent.py").read_text()
         self.assertIn('"https://api.openai.com/v1/responses"', text)
@@ -792,6 +942,43 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(items[0]["status"], "queued")
             self.assertNotIn("blocked_reason", items[0])
 
+    def test_research_agent_false_event_calendar_flag_does_not_bypass_other_event_requirements(self):
+        research = load("trading_research_agent_false_event_flag_gate", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            queue.write_text(json.dumps([{
+                "id": "false-flag-then-required-calendar",
+                "priority": 1,
+                "status": "queued",
+                "family": "calendar_spread",
+                "event_calendar_required": False,
+                "required_data": ["historical earnings calendar"],
+            }]))
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-false-flag"))
+            finally:
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "none")
+            self.assertEqual(payload["reason"], "all_queued_candidates_blocked_by_preclaim_gate")
+
     def test_research_agent_allows_event_candidate_with_explicit_event_date(self):
         research = load("trading_research_agent_event_date_gate", "agent-platform/tools/trading_research_agent.py")
         old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
@@ -805,8 +992,9 @@ class MVP0AgentTests(unittest.TestCase):
                 "status": "queued",
                 "family": "calendar_spread",
                 "thesis": "earnings catalyst requires validation",
-                "entry_rules": ["Enter on Aug. 5, 2026 after the earnings catalyst and liquidity checks"],
+                "entry_rules": ["Enter after the earnings catalyst and liquidity checks"],
                 "required_data": ["historical earnings calendar"],
+                "quantconnect_test_spec": {"event_type": "earnings", "event_date": "2026-08-05"},
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
             os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
@@ -844,7 +1032,7 @@ class MVP0AgentTests(unittest.TestCase):
                 "family": "calendar_spread",
                 "thesis": "earnings catalyst window requires calendar data",
                 "required_data": ["historical earnings calendar"],
-                "quantconnect_test_spec": {"target_expiry": "2026-08-21"},
+                "quantconnect_test_spec": {"event_type": "earnings", "target_expiry": "2026-08-21"},
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
             os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
@@ -923,6 +1111,7 @@ class MVP0AgentTests(unittest.TestCase):
                 "family": "calendar_spread",
                 "thesis": "earnings catalyst window requires calendar data",
                 "required_data": ["historical earnings calendar"],
+                "quantconnect_test_spec": {"event_type": "earnings"},
                 "exit_rules": ["Exit at 2026-08-21 expiration"],
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
@@ -964,6 +1153,7 @@ class MVP0AgentTests(unittest.TestCase):
                 "family": "calendar_spread",
                 "thesis": "earnings catalyst window requires calendar data",
                 "required_data": ["historical earnings calendar"],
+                "quantconnect_test_spec": {"event_type": "earnings"},
                 "entry_rules": ["Enter on 2026-08-05 if price breaks out"],
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
@@ -990,6 +1180,45 @@ class MVP0AgentTests(unittest.TestCase):
             items = research.load_queue(queue)
             self.assertEqual(items[0]["status"], "queued")
             self.assertNotIn("blocked_reason", items[0])
+
+    def test_research_agent_allows_avoidance_event_wording_without_calendar_requirement(self):
+        research = load("trading_research_agent_avoidance_wording_event_gate", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            queue.write_text(json.dumps([{
+                "id": "avoid-earnings-exposure",
+                "priority": 1,
+                "status": "queued",
+                "family": "bull_call_spread",
+                "thesis": "Momentum continuation while avoiding earnings exposure.",
+                "entry_rules": ["Enter only when no earnings event is inside the holding window"],
+                "required_data": ["option chain liquidity", "avoid earnings exposure"],
+                "quantconnect_test_spec": {"underlying": "SPY", "strategy": "bull_call_spread", "target_expiry": "2026-08-21"},
+            }]))
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-avoidance"))
+            finally:
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "candidate")
+            self.assertEqual(payload["candidate"]["status"], "in_progress")
 
     def test_research_agent_reconcile_stale_clears_terminal_and_old_in_progress(self):
         research = load("trading_research_agent_reconcile", "agent-platform/tools/trading_research_agent.py")
@@ -1034,8 +1263,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("qc_research_execution_diagnostic.json", text)
         self.assertIn("qc_option_history_extract.json", text)
         self.assertIn("qc_option_history_probe.py", text)
-        self.assertIn("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", text)
-        self.assertIn("skip idea generation: event provider not configured/ready", text)
+        self.assertNotIn("skip idea generation: event provider not configured/ready", text)
         self.assertIn("RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research-runner}", text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn('setfacl -m "u:agent-research:rwx,u:$RUNNER_USER:rwx,m::rwx,d:u:agent-research:rwx,d:u:$RUNNER_USER:rwx,d:m::rwx" "$RUN_DIR"', text)
@@ -1127,6 +1355,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("codex_generated_research_ideas", research_tool)
         self.assertIn("_grant_runner_traversal", research_tool)
         self.assertIn("_write_text_no_follow", research_tool)
+        self.assertIn("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", research_tool)
         self.assertIn("O_NOFOLLOW", research_tool)
         self.assertIn("exclusive=True", research_tool)
         self.assertIn("setfacl", research_tool)
@@ -1197,6 +1426,72 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual([x["date"] for x in ctx["target_event_windows"]], ["2026-08-05"])
         self.assertEqual(spec["event_aligned_backtest_request"]["status"], "event_or_expiry_plan_produced")
 
+    def test_qc_cloud_extract_does_not_treat_option_contract_expiry_as_event(self):
+        mod = load("trading_research_qc_cloud_extract_contract_expiry_test", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            (run_dir / "qc_option_history_probe.py").write_text(
+                "UNDERLYINGS = ['SPY']\n"
+                "HISTORY_LOOKBACK_DAYS = 30\n"
+                "EXPIRY_WINDOW_DAYS = 90\n"
+                "MAX_CONTRACT_ROWS_PER_UNDERLYING = 200\n"
+            )
+            (run_dir / "candidate.json").write_text(json.dumps({"candidate": {
+                "id": "spy-option-contract-expiry",
+                "family": "bull_call_spread",
+                "thesis": "Select a liquid option contract and avoid earnings exposure.",
+                "quantconnect_test_spec": {"spec": "snapshot the option contract chain into the 2026-08-21 target expiry"},
+                "required_data": ["option chain liquidity"],
+            }}))
+            spec = mod.parse_probe(run_dir)
+        ctx = spec["candidate_event_context"]
+        self.assertIn({"date": "2026-08-21", "source": "candidate_text_iso_date", "context_role": "target_expiry"}, ctx["target_expiries"])
+        self.assertEqual(ctx["target_event_windows"], [])
+
+    def test_qc_cloud_extract_keeps_month_only_earnings_catalyst_proxy(self):
+        mod = load("trading_research_qc_cloud_extract_month_earnings_test", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            (run_dir / "qc_option_history_probe.py").write_text(
+                "UNDERLYINGS = ['APP']\n"
+                "HISTORY_LOOKBACK_DAYS = 30\n"
+                "EXPIRY_WINDOW_DAYS = 90\n"
+                "MAX_CONTRACT_ROWS_PER_UNDERLYING = 200\n"
+            )
+            (run_dir / "candidate.json").write_text(json.dumps({"candidate": {
+                "id": "app-month-earnings-catalyst",
+                "family": "call_backspread",
+                "catalyst_window": "2026-08 earnings",
+                "quantconnect_test_spec": {"spec": "snapshot the chain for August earnings"},
+                "required_data": ["historical earnings calendar"],
+            }}))
+            spec = mod.parse_probe(run_dir)
+        ctx = spec["candidate_event_context"]
+        self.assertEqual([x["source"] for x in ctx["target_event_windows"]], ["candidate_month_proxy_unverified"])
+        self.assertEqual(ctx["target_event_windows"][0]["event_window_start"], "2026-08-01")
+        self.assertEqual(ctx["target_event_windows"][0]["event_window_end"], "2026-08-31")
+
+    def test_qc_cloud_extract_month_proxy_ignores_full_target_expiry_dates(self):
+        mod = load("trading_research_qc_cloud_extract_month_from_expiry_test", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            (run_dir / "qc_option_history_probe.py").write_text(
+                "UNDERLYINGS = ['SPY']\n"
+                "HISTORY_LOOKBACK_DAYS = 30\n"
+                "EXPIRY_WINDOW_DAYS = 90\n"
+                "MAX_CONTRACT_ROWS_PER_UNDERLYING = 200\n"
+            )
+            (run_dir / "candidate.json").write_text(json.dumps({"candidate": {
+                "id": "spy-expiry-not-catalyst-month",
+                "family": "bull_call_spread",
+                "thesis": "No catalyst required; test ordinary option expiry selection.",
+                "quantconnect_test_spec": {"target_expiry": "2026-08-21"},
+                "required_data": ["option chain liquidity"],
+            }}))
+            spec = mod.parse_probe(run_dir)
+        ctx = spec["candidate_event_context"]
+        self.assertEqual(ctx["target_event_windows"], [])
+
     def test_qc_cloud_extract_generated_algorithm_uses_event_window_and_target_expiry_filter(self):
         text = (ROOT / "agent-platform/scripts/trading-research-qc-cloud-extract").read_text()
         self.assertIn('historical_event_dates = [d for d in event_dates if d <= last_data_day]', text)
@@ -1206,6 +1501,10 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('self.SetEndDate(end.year, end.month, end.day)', text)
         self.assertIn('self.target_expiries = set', text)
         self.assertIn('if self.target_expiries and expiry_key not in self.target_expiries: continue', text)
+        self.assertNotIn('zero_rows_reason"] = self.diagnostics[ticker].get("zero_rows_reason") or "option_chain_missing_in_OnData"', text)
+        self.assertIn('self.strike_window_per_expiry = int(SPEC.get("strike_window_per_expiry", 30))', text)
+        self.assertIn('.Strikes(-self.strike_window_per_expiry, self.strike_window_per_expiry)', text)
+        self.assertNotIn('.Strikes(-100, 100)', text)
         self.assertIn('"sample_window"', text)
         self.assertIn('"zero_rows_reason"', text)
         self.assertIn('"validation_mode"', text)
