@@ -927,8 +927,8 @@ def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
 
 
 def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
-    event_date_keys = ("event", "catalyst", "earnings", "calendar", "announcement", "report_date", "release_date", "entry_rules")
-    prose_event_keys = ("thesis", "rationale", "notes", "description")
+    event_date_keys = ("event", "catalyst", "earnings", "calendar", "announcement", "report_date", "release_date")
+    prose_event_keys = ("thesis", "rationale", "notes", "description", "entry_rules")
     non_event_date_keys = ("expiry", "expiration", "dte", "maturity", "exit_rules", "risk_controls", "minimum_viability")
     iso_date = re.compile(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
     month_date = re.compile(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", re.I)

@@ -805,7 +805,7 @@ class MVP0AgentTests(unittest.TestCase):
                 "status": "queued",
                 "family": "calendar_spread",
                 "thesis": "earnings catalyst requires validation",
-                "entry_rules": ["Enter on Aug. 5, 2026 after liquidity checks"],
+                "entry_rules": ["Enter on Aug. 5, 2026 after the earnings catalyst and liquidity checks"],
                 "required_data": ["historical earnings calendar"],
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
@@ -933,6 +933,47 @@ class MVP0AgentTests(unittest.TestCase):
                 out = io.StringIO()
                 with contextlib.redirect_stdout(out):
                     rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-exit-expiration"))
+            finally:
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "none")
+            self.assertEqual(payload["reason"], "all_queued_candidates_blocked_by_preclaim_gate")
+            items = research.load_queue(queue)
+            self.assertEqual(items[0]["status"], "queued")
+            self.assertNotIn("blocked_reason", items[0])
+
+    def test_research_agent_blocks_event_candidate_with_unrelated_entry_date(self):
+        research = load("trading_research_agent_unrelated_entry_date", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            queue.write_text(json.dumps([{
+                "id": "event-candidate-with-unrelated-entry-date",
+                "priority": 1,
+                "status": "queued",
+                "family": "calendar_spread",
+                "thesis": "earnings catalyst window requires calendar data",
+                "required_data": ["historical earnings calendar"],
+                "entry_rules": ["Enter on 2026-08-05 if price breaks out"],
+            }]))
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-unrelated-entry"))
             finally:
                 if old_require is None:
                     os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
