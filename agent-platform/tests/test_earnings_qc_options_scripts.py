@@ -729,6 +729,22 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("trader.option_chain_slice_count", scan)
         self.assertIn("trader.option_chain_symbols_sample", scan)
 
+    def test_cloud_extract_reports_zero_rows_reason_and_probe_mode(self):
+        extract = (ROOT / "agent-platform/scripts/trading-research-qc-cloud-extract").read_text()
+        self.assertIn("zero_rows_reason", extract)
+        self.assertIn("option_chain_provider_returned_no_contracts", extract)
+        self.assertIn("all_contracts_filtered_by_target_expiry", extract)
+        self.assertIn('"validation_mode": validation_mode', extract)
+        self.assertIn('"is_strategy_validation": False', extract)
+        self.assertIn("qc_research_execution_diagnostic.json", extract)
+        self.assertIn("candidate_month_proxy_unverified_requires_real_event_calendar", extract)
+
+    def test_qc_broker_marks_extracts_as_probe_only_until_validated(self):
+        broker = (ROOT / "agent-platform/scripts/trading-research-qc-broker").read_text()
+        self.assertIn("extract_probe_only unless is_strategy_validation=true", broker)
+        self.assertIn("row_cap_policy", broker)
+        self.assertIn("sort_by_expiry_then_distance_to_spot_before_cap", broker)
+
 
 
     def test_scanner_cli_accepts_max_premium_below_half_dollar(self):
@@ -1121,7 +1137,8 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertIn("event_underlying_windows", script)
         self.assertIn("event_aligned_backtest_request", script)
         self.assertIn("event_plan_produced_quote_slices_bounded", script)
-        self.assertIn("historical_option_chain_event_slices_only_if_event_is_inside_bounded_backtest_window", script)
+        self.assertIn("future_event_proxy_only", script)
+        self.assertIn("historical_earnings_calendar_provider_not_configured", script)
 
     def test_skill_prioritizes_daily_historical_before_side_ideas(self):
         skill = (ROOT / "agent-platform" / "skills" / "trader-research-system" / "SKILL.md").read_text()

@@ -115,6 +115,47 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertIn("quantconnect_test_spec", items[0])
             self.assertIn(items[0]["family"], {"bull_call_spread", "long_call"})
 
+    def test_research_agent_blocks_event_candidates_without_event_provider(self):
+        research = load("trading_research_agent_blockers", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        with TemporaryDirectory() as tmp:
+            try:
+                os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+                os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(Path(tmp) / "missing-ready-file")
+                queue = Path(tmp) / "strategy-queue.json"
+                queue.write_text(json.dumps([{
+                    "id": "undated-earnings-candidate",
+                    "status": "queued",
+                    "priority": 1,
+                    "family": "long_call",
+                    "catalyst_window": "August 2026 earnings",
+                }]))
+                rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-test"))
+                self.assertEqual(rc, 0)
+                items = json.loads(queue.read_text())
+                self.assertEqual(items[0]["status"], "blocked")
+                self.assertEqual(items[0]["blocked_reason"], "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date")
+            finally:
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+
+    def test_research_agent_loop_requires_event_provider_before_generation(self):
+        loop = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
+        self.assertIn("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", loop)
+        self.assertIn("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", loop)
+        self.assertIn("skip idea generation: event provider not configured/ready", loop)
+
+    def test_deployed_research_agent_wrapper_uses_installed_library(self):
+        wrapper = (ROOT / "agent-platform/tools/trading-research-agent").read_text()
+        self.assertIn("exec python3 /usr/local/lib/trading_research_agent.py", wrapper)
+
 
     def test_research_agent_collects_curated_idea_context(self):
         research = load("trading_research_agent_context", "agent-platform/tools/trading_research_agent.py")
@@ -927,7 +968,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('"cloud_backtest_submitted": cloud_backtest_submitted', text)
         self.assertIn('"required_next_artifact": "qc_option_history_extract.json"', text)
         self.assertIn('"capability_gap"', text)
-        self.assertIn("Do not treat qc_option_history_probe.py as extracted market data", text)
+        self.assertIn("Do not treat qc_option_history_probe.py or a 0-trade cloud backtest as strategy validation", text)
         self.assertIn("exit 0", text)
         self.assertNotIn("QC_BROKER_RESEARCH_ARTIFACT_BLOCKED", text)
 

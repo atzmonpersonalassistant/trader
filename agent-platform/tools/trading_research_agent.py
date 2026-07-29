@@ -901,6 +901,45 @@ def with_queue_lock(path: Path, func):
         return result
 
 
+def event_provider_ready() -> bool:
+    if os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", "1") != "1":
+        return True
+    ready = Path(os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", "/agents/research/state/event-provider-ready"))
+    return ready.exists() and ready.stat().st_size > 0
+
+
+def candidate_text_for_gates(item: dict[str, Any]) -> str:
+    try:
+        return json.dumps(item, ensure_ascii=False).lower()
+    except Exception:
+        return str(item).lower()
+
+
+def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
+    text = candidate_text_for_gates(item)
+    event_terms = [
+        "earnings", "q1", "q2", "q3", "q4", "fomc", "cpi", "event",
+        "catalyst", "contract", "certification", "clinical", "award window",
+        "historical earnings", "calendar data", "event_alignment", "catalyst_window",
+    ]
+    return any(term in text for term in event_terms)
+
+
+def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
+    text = candidate_text_for_gates(item)
+    if re.search(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b", text):
+        return True
+    if re.search(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", text, re.I):
+        return True
+    return False
+
+
+def candidate_block_reason_if_unclaimable(item: dict[str, Any]) -> str | None:
+    if candidate_needs_event_calendar(item) and not event_provider_ready() and not candidate_has_explicit_event_date(item):
+        return "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date"
+    return None
+
+
 def cmd_claim(args: argparse.Namespace) -> int:
     queue_path = Path(args.queue)
 
@@ -908,16 +947,29 @@ def cmd_claim(args: argparse.Namespace) -> int:
         queued = [item for item in queue if item.get("status") == "queued"]
         if not queued:
             return {"ok": True, "type": "none"}, None
-        candidate = sorted(queued, key=lambda item: (item.get("priority", 999), item["id"]))[0]
-        for item in queue:
-            if item.get("id") == candidate.get("id"):
-                item["status"] = "in_progress"
-                item["active_run_id"] = args.run_id
-                item.setdefault("attempts", 0)
-                item["attempts"] += 1
-                candidate = item
-                break
-        return {"ok": True, "type": "candidate", "candidate": candidate}, queue
+        changed = False
+        for candidate in sorted(queued, key=lambda item: (item.get("priority", 999), item["id"])):
+            blocker = candidate_block_reason_if_unclaimable(candidate)
+            if blocker:
+                for item in queue:
+                    if item.get("id") == candidate.get("id"):
+                        item["status"] = "blocked"
+                        item["blocked_reason"] = blocker
+                        item["last_run_id"] = args.run_id
+                        item.pop("active_run_id", None)
+                        changed = True
+                        break
+                continue
+            for item in queue:
+                if item.get("id") == candidate.get("id"):
+                    item["status"] = "in_progress"
+                    item["active_run_id"] = args.run_id
+                    item.setdefault("attempts", 0)
+                    item["attempts"] += 1
+                    candidate = item
+                    break
+            return {"ok": True, "type": "candidate", "candidate": candidate}, queue
+        return {"ok": True, "type": "none", "reason": "all_queued_candidates_blocked_by_preclaim_gate"}, queue if changed else None
 
     payload = with_queue_lock(queue_path, claim)
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
