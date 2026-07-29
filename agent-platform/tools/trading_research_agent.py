@@ -930,7 +930,8 @@ def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
     event_date_keys = (
         "event", "catalyst", "earnings", "calendar", "announcement",
         "report_date", "release_date", "thesis", "rationale", "notes",
-        "description",
+        "description", "entry_rules", "exit_rules", "risk_controls",
+        "minimum_viability",
     )
     non_event_date_keys = ("expiry", "expiration", "dte", "maturity")
     iso_date = re.compile(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")

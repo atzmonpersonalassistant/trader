@@ -803,7 +803,8 @@ class MVP0AgentTests(unittest.TestCase):
                 "priority": 1,
                 "status": "queued",
                 "family": "calendar_spread",
-                "thesis": "earnings catalyst on 2026-08-05 requires validation",
+                "thesis": "earnings catalyst requires validation",
+                "entry_rules": ["Enter on Aug. 5, 2026 after liquidity checks"],
                 "required_data": ["historical earnings calendar"],
             }]))
             os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
