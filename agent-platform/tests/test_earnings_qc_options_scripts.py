@@ -496,7 +496,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("(oi >= self.min_open_interest or vol >= self.min_volume)", main)
         self.assertIn("open_interest_volume_policy=\"diagnostic_warning_only_not_gate\"", main)
         self.assertIn("spread_policy=\"volatility_aware_relative_expected_move_no_absolute_spread_gate\"", main)
-        self.assertIn("liquidity_fail_reasons=\"gate_only\"", main)
+        self.assertIn("liquidity_fail_reasons=\"gate_all_reasons_per_contract\"", main)
         self.assertIn("liquidity_warnings=\"zero_volume_zero_open_interest\"", main)
         self.assertIn("liquidity_fail_reason_counts", main)
         self.assertIn("liquidity_warning_counts", main)
@@ -529,8 +529,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_retry_failed_uses_end_to_end_runner(self):
         full = (SCRIPTS / "earnings-qc-research").read_text()
-        self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, args.years, args.end_to_end)", full)
+        self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, validation_years, args.end_to_end)", full)
         self.assertIn("rf.add_argument('--end-to-end'", full)
+        self.assertIn("rf.add_argument('--validation-years'", full)
+
+    def test_stage2_fails_loudly_when_valuation_anchor_has_no_data(self):
+        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        self.assertIn("self.valuation_data_slice_count = 0", scan)
+        self.assertIn("TRADER_VALUATION_ANCHOR_NO_SESSION_DATA", scan)
+        self.assertIn("trader.valuation_date", scan)
 
     def test_full_scan_throttles_discovery_and_sequential_chunks(self):
         full = (SCRIPTS / "earnings-qc-research").read_text()
@@ -719,6 +726,27 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         rc = mod.cmd_run(args)
         self.assertEqual(rc, 0)
         self.assertEqual(calls, [[0]])
+
+    def test_cmd_run_uses_validation_years_for_historical_runner(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        calls = []
+        mod.STATE_DIR = tmp / "state"
+        mod.require_research_db = lambda: True
+        mod.upsert_campaign = lambda *a, **k: None
+        mod.upsert_run = lambda *a, **k: None
+        mod.latest_db_run = lambda campaign: {"run_id": "rid", "run_dir": str(tmp)}
+        mod.discover_calendar_total = lambda run_dir, batch_size, start_offset, validation_years, end_to_end, symbols, args=None: calls.append(("discover", validation_years)) or 1
+        mod.run_chunks_parallel = lambda run_dir, offsets, batch_size, parallel, validation_years, end_to_end, symbols, args=None: calls.append(("chunks", validation_years))
+        mod.write_summary = lambda run_dir, batch_size, notify=False: {"ok": True, "status": "OK_FULL_QC_SCAN"}
+        mod.persist_summary_to_db = lambda campaign_id, run_id, run_dir, summary, params: calls.append(("params", params.get("validation_years")))
+        mod.run_multiyear_if_requested = lambda *a, **k: None
+        args = mod.build_parser().parse_args(["run", "--run-dir", str(tmp), "--run-id", "rid", "--years", "1", "--validation-years", "10", "--no-outbox"])
+        rc = mod.cmd_run(args)
+        self.assertEqual(rc, 0)
+        self.assertIn(("discover", 10), calls)
+        self.assertIn(("chunks", 10), calls)
+        self.assertIn(("params", 10), calls)
 
 
     def test_cmd_run_rejects_put_or_both_for_historical_until_supported(self):
