@@ -501,6 +501,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("liquidity_fail_reason_counts", main)
         self.assertIn("liquidity_warning_counts", main)
         self.assertIn("cheap_contract_diagnostics_sample", main)
+        self.assertIn("strike_spot_ratio", main)
         self.assertIn("low_bid", main)
         self.assertIn("missing_greeks", main)
         self.assertIn("missing_iv", main)
