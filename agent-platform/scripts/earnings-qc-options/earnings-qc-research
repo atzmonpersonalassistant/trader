@@ -241,6 +241,8 @@ def multiyear_result_passes(r: dict) -> bool:
     if r.get('status') != 'OK':
         return False
     sample_size = int(r.get('sample_size') if r.get('sample_size') is not None else 0)
+    historical_event_count = int(r.get('historical_event_count') if r.get('historical_event_count') is not None else 0)
+    dropout_pct = 0.0 if historical_event_count <= 0 else (1.0 - (sample_size / historical_event_count)) * 100.0
     win_rate = float(r.get('win_rate') if r.get('win_rate') is not None else 0.0)
     median_return = float(r.get('median_return_pct') if r.get('median_return_pct') is not None else -999.0)
     mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
@@ -253,6 +255,7 @@ def multiyear_result_passes(r: dict) -> bool:
         and mean_return > float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0'))
         and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
         and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
+        and (historical_event_count <= 0 or dropout_pct <= float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')))
     )
     windows = r.get('window_results') or []
     if windows:
@@ -589,6 +592,7 @@ def aggregate(chunks: list[dict]) -> dict:
             'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
             'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
             'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
+            'max_dropout_pct_lte': float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')),
         },
         'guardrails': {
             'no_yahoo_yfinance': True,
