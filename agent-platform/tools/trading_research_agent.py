@@ -917,12 +917,13 @@ def candidate_text_for_gates(item: dict[str, Any]) -> str:
 
 def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
     text = candidate_text_for_gates(item)
-    event_terms = [
-        "earnings", "q1", "q2", "q3", "q4", "fomc", "cpi", "event",
-        "catalyst", "contract", "certification", "clinical", "award window",
-        "historical earnings", "calendar data", "event_alignment", "catalyst_window",
+    event_patterns = [
+        r"\bearnings\b", r"\bq[1-4]\b", r"\bfomc\b", r"\bcpi\b",
+        r"(?<!non-)\bevent\b", r"\bcatalyst\b", r"\bcertification\b",
+        r"\bclinical\b", r"\baward window\b", r"\bhistorical earnings\b",
+        r"\bcalendar data\b", r"\bevent_alignment\b", r"\bcatalyst_window\b",
     ]
-    return any(term in text for term in event_terms)
+    return any(re.search(pattern, text) for pattern in event_patterns)
 
 
 def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
