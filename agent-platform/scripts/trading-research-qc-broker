@@ -253,7 +253,7 @@ summary = [
     "Status: `generated_probe_pending_execution`",
     "",
     "Generated a bounded QC/QuantBook extraction script and queued a broker-side execution attempt.",
-    "This is not extracted market data unless `qc_option_history_extract.json` exists.",
+    "Do not treat qc_option_history_probe.py as extracted market data. Extracted data exists only when `qc_option_history_extract.json` exists.",
     "",
     "## Limits",
     "- max_underlyings: 3",
