@@ -309,12 +309,12 @@ Status: Completed ✅
 Current evidence:
 
 ```text
-Provider: OVHcloud VPS
+Provider: VPS provider configured privately by the operator
 Host: <vps-hostname>
 IPv4: <vps-ip>
 OS: Ubuntu 26.04 LTS
-Admin user: ubuntu
-Access: SSH key ~/.ssh/ovh_vps_ce2ba5e7 on the assistant Mac
+Admin user: <vps-admin-user>
+Access: private SSH key path configured outside git
 Installed base packages: git, gh, sqlite3, python3, node/npm, Codex CLI, jq, curl, rsync
 Agent Linux users: created with no sudo
 /agents layout: created with role-specific ownership; /agents is traverse-only so role users can enter their owned subtree
@@ -350,12 +350,12 @@ Actual MVP-0 VM:
 
 ```yaml
 vm:
-  provider: ovhcloud
+  provider: <vps-provider>
   host: <vps-hostname>
   ipv4: <vps-ip>
   os: Ubuntu 26.04 LTS
-  admin_user: ubuntu
-  ssh_key: ~/.ssh/ovh_vps_ce2ba5e7
+  admin_user: <vps-admin-user>
+  ssh_key: <private-ssh-key-path>
 ```
 
 ---
