@@ -828,6 +828,47 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(payload["type"], "candidate")
             self.assertEqual(payload["candidate"]["status"], "in_progress")
 
+    def test_research_agent_blocks_event_candidate_with_only_target_expiry_date(self):
+        research = load("trading_research_agent_expiry_is_not_event_date", "agent-platform/tools/trading_research_agent.py")
+        old_require = os.environ.get("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER")
+        old_ready = os.environ.get("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE")
+        with TemporaryDirectory() as tmp:
+            ready_file = Path(tmp) / "missing-ready"
+            queue = Path(tmp) / "strategy-queue.json"
+            queue.write_text(json.dumps([{
+                "id": "event-candidate-with-expiry-only",
+                "priority": 1,
+                "status": "queued",
+                "family": "calendar_spread",
+                "thesis": "earnings catalyst window requires calendar data",
+                "required_data": ["historical earnings calendar"],
+                "quantconnect_test_spec": {"target_expiry": "2026-08-21"},
+            }]))
+            os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = "1"
+            os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = str(ready_file)
+            try:
+                import contextlib
+                import io
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    rc = research.cmd_claim(argparse.Namespace(queue=str(queue), run_id="run-event-expiry"))
+            finally:
+                if old_require is None:
+                    os.environ.pop("TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER", None)
+                else:
+                    os.environ["TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER"] = old_require
+                if old_ready is None:
+                    os.environ.pop("TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE", None)
+                else:
+                    os.environ["TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE"] = old_ready
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["type"], "none")
+            self.assertEqual(payload["reason"], "all_queued_candidates_blocked_by_preclaim_gate")
+            items = research.load_queue(queue)
+            self.assertEqual(items[0]["status"], "blocked")
+            self.assertEqual(items[0]["blocked_reason"], "event_calendar_provider_not_configured_and_candidate_has_no_explicit_event_date")
+
     def test_research_agent_reconcile_stale_clears_terminal_and_old_in_progress(self):
         research = load("trading_research_agent_reconcile", "agent-platform/tools/trading_research_agent.py")
         with TemporaryDirectory() as tmp:

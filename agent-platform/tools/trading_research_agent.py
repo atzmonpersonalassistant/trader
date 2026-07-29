@@ -926,12 +926,29 @@ def candidate_needs_event_calendar(item: dict[str, Any]) -> bool:
 
 
 def candidate_has_explicit_event_date(item: dict[str, Any]) -> bool:
-    text = candidate_text_for_gates(item)
-    if re.search(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b", text):
-        return True
-    if re.search(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", text, re.I):
-        return True
-    return False
+    event_date_keys = (
+        "event", "catalyst", "earnings", "calendar", "announcement",
+        "report_date", "release_date", "thesis", "rationale", "notes",
+        "description",
+    )
+    non_event_date_keys = ("expiry", "expiration", "dte", "maturity")
+    iso_date = re.compile(r"\b20\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+    month_date = re.compile(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,)?\s+20\d{2}\b", re.I)
+
+    def walk(value: Any, path: tuple[str, ...] = ()) -> bool:
+        role_text = " ".join(path).lower()
+        if any(term in role_text for term in non_event_date_keys):
+            return False
+        role_is_event = any(term in role_text for term in event_date_keys)
+        if isinstance(value, dict):
+            return any(walk(child, path + (str(key),)) for key, child in value.items())
+        if isinstance(value, list):
+            return any(walk(child, path) for child in value)
+        if role_is_event:
+            text = str(value)
+            return bool(iso_date.search(text) or month_date.search(text))
+        return False
+    return walk(item)
 
 
 def candidate_block_reason_if_unclaimable(item: dict[str, Any]) -> str | None:
