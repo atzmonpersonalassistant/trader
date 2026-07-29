@@ -1042,22 +1042,23 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
 
     def test_chunked_final_candidates_reject_blocked_candidate_status(self):
         mod = load_script("earnings-qc-research")
+        blocked_symbols = ["SPCE", "SUNDAY2", "SUNDAY3"]
         out = mod.aggregate([{
             "ok": True,
-            "calendar_row_count": 1,
-            "calendar_universe_count": 1,
-            "qc_processed_row_count": 1,
+            "calendar_row_count": 3,
+            "calendar_universe_count": 3,
+            "qc_processed_row_count": 3,
             "candidate_details": [{
-                "symbol": "TE",
+                "symbol": symbol,
                 "earnings_date": "2026-08-01",
                 "historical_backtest_status": "BLOCKED_HISTORICAL_EARNINGS_DATES_NOT_READY",
-            }],
+            } for symbol in blocked_symbols],
             "funnel": {},
             "chunk_multiyear_backtest": {
                 "ok": True,
                 "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST",
                 "results": [{
-                    "symbol": "TE",
+                    "symbol": symbol,
                     "status": "OK",
                     "sample_size": 12,
                     "win_rate": 0.8,
@@ -1065,7 +1066,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
                     "mean_return_pct": 0.1,
                     "max_drawdown_pct": 10,
                     "max_loss_pct": -20,
-                }],
+                } for symbol in blocked_symbols],
             },
         }])
         self.assertFalse(out["ok"])
