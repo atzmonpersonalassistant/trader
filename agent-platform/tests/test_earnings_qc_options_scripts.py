@@ -105,7 +105,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
              mock.patch.object(mod, "upsert_campaign", side_effect=lambda *a, **k: calls.append("campaign")), \
              mock.patch.object(mod, "upsert_run", side_effect=lambda *a, **k: calls.append("run")), \
              mock.patch.object(mod, "upsert_stage", side_effect=lambda *a, **k: calls.append("stage")), \
-             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 10, "win_rate": 0.6, "median_return_pct": 0.1, "mean_return_pct": 0.1, "max_drawdown_pct": 10, "max_loss_pct": -20}]}), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 12, "historical_event_count": 12, "win_rate": 0.6, "median_return_pct": -0.1, "mean_return_pct": 0.1, "leave_one_out_mean_return_pct": 0.1, "max_drawdown_pct": 10, "max_loss_pct": -20}]}), \
              mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
              mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
@@ -374,14 +374,63 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 {
                     "status": "OK",
                     "sample_size": 12,
+                    "historical_event_count": 12,
                     "win_rate": 0.5,
-                    "median_return_pct": 10.0,
+                    "median_return_pct": -10.0,
                     "mean_return_pct": 15.0,
+                    "leave_one_out_mean_return_pct": 5.0,
                     "max_drawdown_pct": 40.0,
                     "max_loss_pct": -70.0,
                 }
             )
         )
+
+    def test_multiyear_result_pass_gate_requires_leave_one_out_evidence(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        self.assertFalse(
+            mod.result_passes(
+                {
+                    "status": "OK",
+                    "sample_size": 18,
+                    "historical_event_count": 22,
+                    "win_rate": 0.6,
+                    "median_return_pct": 10.0,
+                    "mean_return_pct": 20.0,
+                    "max_drawdown_pct": 20.0,
+                    "max_loss_pct": -50.0,
+                }
+            )
+        )
+        self.assertTrue(
+            mod.result_passes(
+                {
+                    "status": "OK",
+                    "sample_size": 12,
+                    "historical_event_count": 12,
+                    "win_rate": 0.25,
+                    "median_return_pct": -50.0,
+                    "mean_return_pct": 5.0,
+                    "trade_returns_pct": [-20, -20, -10, -10, -10, -10, 10, 10, 20, 20, 40, 50],
+                    "max_drawdown_pct": 20.0,
+                    "max_loss_pct": -50.0,
+                }
+            )
+        )
+
+    def test_multiyear_result_pass_gate_rejects_high_dropout(self):
+        full = load_script("earnings-qc-research")
+        row = {
+            "status": "OK",
+            "sample_size": 12,
+            "historical_event_count": 24,
+            "win_rate": 0.8,
+            "median_return_pct": 10.0,
+            "mean_return_pct": 20.0,
+            "leave_one_out_mean_return_pct": 10.0,
+            "max_drawdown_pct": 20.0,
+            "max_loss_pct": -50.0,
+        }
+        self.assertFalse(full.multiyear_result_passes(row))
 
     def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
         mod = load_script("earnings-qc-research")
@@ -432,8 +481,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_multiyear_final_candidates_require_summary_ok(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         self.assertTrue(mod.result_passes({
-            "status": "OK", "sample_size": 12, "win_rate": 0.5,
-            "median_return_pct": 10.0, "mean_return_pct": 15.0,
+            "status": "OK", "sample_size": 12, "historical_event_count": 12, "win_rate": 0.5,
+            "median_return_pct": -10.0, "mean_return_pct": 15.0,
+            "leave_one_out_mean_return_pct": 5.0,
             "max_drawdown_pct": 40.0, "max_loss_pct": -70.0,
         }))
         # Promotion code must additionally require summary["ok"], not just result_passes().
@@ -457,8 +507,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         full = load_script("earnings-qc-research")
         multi = load_script("earnings-qc-multiyear-backtest")
         row = {
-            "status": "OK", "sample_size": 12, "win_rate": 0.5,
-            "median_return_pct": 10.0, "mean_return_pct": 15.0,
+            "status": "OK", "sample_size": 12, "historical_event_count": 12, "win_rate": 0.5,
+            "median_return_pct": -10.0, "mean_return_pct": 15.0,
+            "leave_one_out_mean_return_pct": 5.0,
             "max_drawdown_pct": 0.0, "max_loss_pct": 0.0,
         }
         self.assertTrue(full.multiyear_result_passes(row))

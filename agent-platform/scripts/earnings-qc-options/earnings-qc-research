@@ -242,17 +242,20 @@ def multiyear_result_passes(r: dict) -> bool:
         return False
     sample_size = int(r.get('sample_size') if r.get('sample_size') is not None else 0)
     historical_event_count = int(r.get('historical_event_count') if r.get('historical_event_count') is not None else 0)
-    dropout_pct = 0.0 if historical_event_count <= 0 else (1.0 - (sample_size / historical_event_count)) * 100.0
-    win_rate = float(r.get('win_rate') if r.get('win_rate') is not None else 0.0)
-    median_return = float(r.get('median_return_pct') if r.get('median_return_pct') is not None else -999.0)
+    dropout_pct = float(r.get('dropout_pct') if r.get('dropout_pct') is not None else (0.0 if historical_event_count <= 0 else (1.0 - (sample_size / historical_event_count)) * 100.0))
     mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
+    loo_mean_return = r.get('leave_one_out_mean_return_pct')
+    if loo_mean_return is None:
+        returns = [float(x) for x in (r.get('trade_returns_pct') or []) if x is not None]
+        if len(returns) > 1:
+            loo_mean_return = round((sum(returns) - max(returns)) / (len(returns) - 1), 2)
+    loo_mean_return = float(loo_mean_return if loo_mean_return is not None else -999.0)
     max_drawdown = float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999.0)
     max_loss = float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999.0)
     base_ok = (
-        sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8'))
-        and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
-        and median_return > float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0'))
+        sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12'))
         and mean_return > float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0'))
+        and loo_mean_return > float(os.environ.get('QC_FINAL_MIN_LEAVE_ONE_OUT_MEAN_RETURN_PCT', '0'))
         and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
         and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
         and (historical_event_count <= 0 or dropout_pct <= float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')))
@@ -586,10 +589,9 @@ def aggregate(chunks: list[dict]) -> dict:
         'historical_gate_no_pass': historical_gate_no_pass,
         'multiyear_failed': multiyear_failed,
         'final_candidate_gate': {
-            'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '8')),
-            'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
-            'min_median_return_pct': float(os.environ.get('QC_FINAL_MIN_MEDIAN_RETURN_PCT', '0')),
+            'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
             'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
+            'min_leave_one_out_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_LEAVE_ONE_OUT_MEAN_RETURN_PCT', '0')),
             'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
             'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
             'max_dropout_pct_lte': float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')),
