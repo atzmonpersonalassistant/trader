@@ -141,6 +141,28 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("full['ok']=bool(base_scan_ok) and bool(summary.get('ok'))", multi)
         self.assertNotIn("full['ok']=bool(full.get('ok')) and bool(summary.get('ok'))", multi)
 
+    def test_multiyear_uses_forward_candidates_and_split_year_defaults(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        with mock.patch.object(mod, "run_backtest", return_value={"ok": True, "status": "OK"}):
+            rc = mod.main(["--run-dir", tempfile.mkdtemp()])
+            mod.run_backtest.assert_called_once()
+            _, years, validation_years = mod.run_backtest.call_args.args[:3]
+        self.assertEqual(rc, 0)
+        self.assertEqual(years, 10)
+        self.assertEqual(validation_years, 10)
+
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "forward_candidates": [{"symbol": "AAA"}],
+            "candidates": [{"symbol": "BBB"}],
+        }))
+        self.assertEqual(mod.load_candidates(run_dir), [{"symbol": "AAA"}])
+
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "candidates": [{"symbol": "BBB"}],
+        }))
+        self.assertEqual(mod.load_candidates(run_dir), [])
+
     def test_stage_counts_are_integer_coerced_before_sql(self):
         mod = load_script("earnings-qc-research")
         self.assertEqual(mod.sql_int_or_null(3), "3")
@@ -233,6 +255,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("historical_contract_pass_debug_only", main)
         self.assertNotIn("historical_runup_pass", main)
         self.assertIn("FORWARD_LIQUIDITY_GREEKS_PASS_REQUIRES_MULTIYEAR_OPTION_PNL", main)
+        self.assertIn("FAILED_NO_OPTION_CHAIN_SLICES_ON_VALUATION_DATE", main)
+        self.assertIn('liquidity_fail_reasons="all_gate_failures_per_contract"', main)
 
     def test_stage2_accepts_dynamic_liquidity_tuning_from_env_or_args(self):
         mod = load_script("earnings-qc-options-scan")
@@ -496,7 +520,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("(oi >= self.min_open_interest or vol >= self.min_volume)", main)
         self.assertIn("open_interest_volume_policy=\"diagnostic_warning_only_not_gate\"", main)
         self.assertIn("spread_policy=\"volatility_aware_relative_expected_move_no_absolute_spread_gate\"", main)
-        self.assertIn("liquidity_fail_reasons=\"gate_only\"", main)
+        self.assertIn("liquidity_fail_reasons=\"all_gate_failures_per_contract\"", main)
         self.assertIn("liquidity_warnings=\"zero_volume_zero_open_interest\"", main)
         self.assertIn("liquidity_fail_reason_counts", main)
         self.assertIn("liquidity_warning_counts", main)
