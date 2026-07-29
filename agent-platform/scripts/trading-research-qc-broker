@@ -148,7 +148,7 @@ manifest = {
         "contains_tokens_or_secret_paths": False,
         "runner_may_read": True,
     },
-    "next_research_instruction": "Use qc_option_history_extract.json when present. Otherwise inspect qc_research_execution_diagnostic.json for the exact authenticated QC/Lean execution surface that was unavailable. Do not treat qc_option_history_probe.py as extracted market data.",
+    "next_research_instruction": "Use qc_option_history_extract.json when present, but treat it as extract_probe_only unless is_strategy_validation=true. Always inspect qc_research_execution_diagnostic.json when option rows are zero or validation_mode is future_event_proxy_only. Do not treat qc_option_history_probe.py or a 0-trade cloud backtest as strategy validation.",
     "extracted_artifacts": [],
     "required_next_artifact": "qc_option_history_extract.json",
     "capability_gap": "Execution attempt has not completed yet.",
@@ -209,9 +209,19 @@ for ticker in UNDERLYINGS:
                 "style": str(sid.OptionStyle),
                 "dte": dte,
             }})
-        if len(filtered) >= MAX_CONTRACT_ROWS_PER_UNDERLYING:
-            break
-    rows.extend(filtered)
+    spot = None
+    try:
+        htmp = qb.History(equity.Symbol, 1, Resolution.Daily)
+        if htmp is not None and len(htmp):
+            rec = htmp.loc[equity.Symbol] if hasattr(htmp, "loc") else htmp
+            spot = float(rec.iloc[-1].get("close"))
+    except Exception:
+        spot = None
+    if spot is not None:
+        filtered = sorted(filtered, key=lambda r: (r["expiry"], abs(float(r["strike"]) - spot), float(r["strike"])))
+    else:
+        filtered = sorted(filtered, key=lambda r: (r["expiry"], float(r["strike"])))
+    rows.extend(filtered[:MAX_CONTRACT_ROWS_PER_UNDERLYING])
     hist = qb.History(equity.Symbol, HISTORY_LOOKBACK_DAYS, Resolution.Daily)
     history_summary[ticker] = {{
         "rows": int(0 if hist is None else len(hist)),
@@ -227,6 +237,7 @@ artifact = {{
         "history_lookback_days": HISTORY_LOOKBACK_DAYS,
         "expiry_window_days": EXPIRY_WINDOW_DAYS,
         "max_contract_rows_per_underlying": MAX_CONTRACT_ROWS_PER_UNDERLYING,
+        "row_cap_policy": "sort_by_expiry_then_distance_to_spot_before_cap",
     }},
 }}
 output_dir = Path(os.environ.get("TRADER_QC_OUTPUT_DIR", "."))
@@ -258,6 +269,9 @@ summary = [
     "- `qc_research_execution_diagnostic.json`: structured non-secret failure details, only when execution cannot produce the extract.",
     "",
     "Raw QC credentials were not written to this artifact.",
+    "",
+    "## System blocker note",
+    "If repeated extracts show chain_seen_count=0 for multiple liquid symbols, set/record TRADER_QC_CHAIN_SYSTEM_BLOCKER and stop candidate-level retests until a SPY/QQQ minimal probe succeeds.",
 ]
 
 manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
