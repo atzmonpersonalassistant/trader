@@ -1270,6 +1270,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("EVENT_PROVIDER_READY_FILE=${TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE:-/agents/research/state/event-provider-ready}", text)
         self.assertIn('if [ "$REQUIRE_EVENT_PROVIDER" = "1" ] && [ ! -s "$EVENT_PROVIDER_READY_FILE" ]; then', text)
         self.assertIn("skip idea generation: event provider not configured/ready", text)
+        self.assertIn("event_provider_allows_idea_generation", text)
+        self.assertLess(text.index("event_provider_allows_idea_generation"), text.index('trading-research-agent --queue "$QUEUE" seed-cheap-calls'))
         self.assertLess(text.index('if [ "$REQUIRE_EVENT_PROVIDER" = "1" ] && [ ! -s "$EVENT_PROVIDER_READY_FILE" ]; then'), text.index('trading-research-agent --queue "$QUEUE" generate-ideas'))
         self.assertIn("RUNNER_USER=${TRADING_RESEARCH_RUNNER_USER:-agent-research-runner}", text)
         self.assertIn("trading-research-runner-codex", text)
