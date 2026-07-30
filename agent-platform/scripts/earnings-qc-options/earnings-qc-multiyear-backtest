@@ -42,25 +42,6 @@ def ensure_project(project_dir:pathlib.Path):
 def load_candidates(run_dir:pathlib.Path):
     full=json.loads((run_dir/'full_summary.json').read_text()); return full.get('forward_candidates') or full.get('candidates') or []
 
-def result_passes(r:dict)->bool:
-    if r.get('status')!='OK': return False
-    sample=int(r.get('sample_size') if r.get('sample_size') is not None else 0); win=float(r.get('win_rate') if r.get('win_rate') is not None else 0); mean=float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999); loo=float(r.get('leave_one_out_mean_return_pct') if r.get('leave_one_out_mean_return_pct') is not None else -999); dd=float(r.get('max_drawdown_pct') if r.get('max_drawdown_pct') is not None else 999); ml=float(r.get('max_loss_pct') if r.get('max_loss_pct') is not None else -999); events=int(r.get('historical_event_count') if r.get('historical_event_count') is not None else 0); dropout=float(r.get('dropout_pct') if r.get('dropout_pct') is not None else (round(max(0.0,(events-sample)/events*100.0),2) if events>0 else 100.0))
-    base_ok = sample>=12 and win>=0.35 and mean>0 and loo>0 and dropout<=40 and dd<80 and ml>-95
-    windows = r.get('window_results') or []
-    if windows:
-        return base_ok and all(w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1 for w in windows)
-    return base_ok
-
-def candidate_historical_status_blocks(c:dict)->bool:
-    return str(c.get('historical_backtest_status') or '').upper().startswith('BLOCKED')
-
-def promoted_final_candidate(c:dict, historical_result:dict|None)->dict|None:
-    if not historical_result or candidate_historical_status_blocks(c) or not result_passes(historical_result):
-        return None
-    out=dict(c)
-    out['historical_backtest_status']=historical_result.get('status') or 'OK'
-    return out
-
 def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int):
     project_dir.mkdir(parents=True,exist_ok=True)
     today=datetime.date.today(); start=today.replace(year=max(2018,today.year-years)); end=today
@@ -92,50 +73,10 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
         js=''.join(parts) if parts else None
         if js:
             try:
-                payload=json.loads(js); summary.update(payload); any_pass=any(result_passes(r) for r in summary.get('results',[])); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); summary.update({'ok': bool(qc_ok and any_pass), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if (qc_ok and any_pass) else ('QC_BACKTEST_FAILED' if not qc_ok else 'BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS')})
+                payload=json.loads(js); summary.update(payload); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); summary.update({'ok': bool(qc_ok), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if qc_ok else 'QC_BACKTEST_FAILED'})
             except Exception as e: summary['parse_error']=repr(e)
         summary['qc_status']=b.get('status'); summary['qc_error']=b.get('error'); summary['qc_stacktrace']=b.get('stacktrace')
     (out_dir/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
-    fs=run_dir/'full_summary.json'
-    if fs.exists():
-        full=json.loads(fs.read_text()); full['multiyear_backtest']=summary; full['historical_gate_ran']=True; full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')
-        # Final candidates only where the per-candidate and option-PnL records agree.
-        passing_results={r.get('symbol'): r for r in summary.get('results',[]) if summary.get('ok') and result_passes(r)}
-        src=full.get('forward_candidates') or full.get('candidates',[])
-        full['final_candidates']=[final_candidate for c in src for final_candidate in [promoted_final_candidate(c, passing_results.get(c.get('symbol')))] if final_candidate]
-        full['candidates']=full['final_candidates']
-        full['candidate_count']=len(full['final_candidates'])
-        full['final_candidate_count']=len(full['final_candidates'])
-        historical_failed = list(full.get('historical_failed_chunks') or [])
-        scanner_failed = []
-        for x in (full.get('failed_chunks') or []):
-            text = (str(x.get('status')) + ' ' + str(x.get('blocked_reason'))).upper()
-            # Keep scanner failures separate from historical/multiyear option-PnL failures.
-            # Retry logic relies on the inverse check: 'MULTIYEAR' not in str(x.get('status')).
-            if any(marker in text for marker in ['MULTIYEAR', 'HISTORICAL', 'OPTION-PNL', 'OPTION_PNL']):
-                historical_failed.append(x)
-            else:
-                scanner_failed.append(x)
-        base_scan_ok = not scanner_failed and int(full.get('qc_symbols_scanned') or 0) >= int(full.get('calendar_row_count') or full.get('calendar_universe_count') or 0)
-        no_pass = bool(src) and bool(base_scan_ok) and not bool(full['final_candidates']) and summary.get('status') == 'BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS'
-        infra_failed = bool(src) and not bool(summary.get('ok')) and not no_pass
-        full['historical_gate_no_pass']=no_pass
-        full['historical_gate_blocked']=bool(src) and bool(base_scan_ok) and not bool(full['final_candidates']) and (infra_failed or not no_pass)
-        full['multiyear_failed']=infra_failed
-        full['failed_chunks'] = scanner_failed
-        full['failed_chunk_count'] = len(scanner_failed)
-        full['historical_failed_chunks'] = historical_failed
-        full['historical_failed_chunk_count'] = len(historical_failed)
-        full['ok']=bool(base_scan_ok) and bool(summary.get('ok')) and bool(full['final_candidates'])
-        if full['ok']:
-            full['status']='OK_FULL_QC_SCAN'
-        elif no_pass:
-            full['status']='NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'
-        elif full['historical_gate_blocked']:
-            full['status']='BLOCKED_HISTORICAL_OPTION_PNL_GATE'
-        elif full['multiyear_failed']:
-            full['status']='BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
-        fs.write_text(json.dumps(full,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
     return summary
 
 def main(argv):

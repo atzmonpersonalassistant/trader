@@ -260,12 +260,13 @@ def multiyear_result_passes(r: dict) -> bool:
         and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
     )
     windows = r.get('window_results') or []
-    if windows:
-        return base_ok and all(
-            w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
-            for w in windows
-        )
-    return base_ok
+    return base_ok and bool(windows) and all(
+        w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
+        for w in windows
+    )
+
+def multiyear_result_has_window_evidence(r: dict) -> bool:
+    return bool((r or {}).get('window_results'))
 
 def candidate_historical_status_blocks(c: dict) -> bool:
     status = str(c.get('historical_backtest_status') or '').upper()
@@ -516,6 +517,10 @@ def multiyear_no_passing_symbols(status: str | None) -> bool:
     return str(status or '') in ('BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS', 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL')
 
 
+def multiyear_completed_without_infra_failure(status: str | None, ok: bool | None) -> bool:
+    return bool(ok) or multiyear_no_passing_symbols(status)
+
+
 def multiyear_infrastructure_failed(status: str | None) -> bool:
     status_s = str(status or '')
     return bool(status_s) and not multiyear_no_passing_symbols(status_s) and status_s != 'OK_MULTIYEAR_OPTION_PNL_BACKTEST'
@@ -532,7 +537,7 @@ def aggregate(chunks: list[dict]) -> dict:
     for k in INT_FUNNEL_KEYS:
         vals = [(d.get('funnel') or {}).get(k) for d in chunks]
         agg[k] = sum(v for v in vals if isinstance(v, int))
-    forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]
+    forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]; historical_result_symbols=set(); historical_results_by_symbol={}
     for d in chunks:
         offset = d.get('_chunk_offset')
         if calendar_rows and offset is not None and int(offset) >= int(calendar_rows) and (d.get('status') == 'BLOCKED_QC_BATCH_FAILED') and ((d.get('qc_checks') or {}).get('qc_option_chain_batch_diagnostic') or {}).get('reason') == 'empty_batch':
@@ -543,6 +548,10 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
+            for r in mb.get('results', []):
+                if r.get('symbol'):
+                    historical_result_symbols.add(r.get('symbol'))
+                    historical_results_by_symbol.setdefault(r.get('symbol'), []).append(r)
             passing_results={r.get('symbol'): r for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
         else:
             passing_results={}
@@ -558,13 +567,24 @@ def aggregate(chunks: list[dict]) -> dict:
     all_candidate_chunks_validated = candidate_chunk_count > 0 and validated_candidate_chunk_count == candidate_chunk_count
     historical_gate_ran = bool(multiyear_statuses)
     base_scan_complete = bool(chunks) and not failed and scanned >= calendar_rows
-    historical_gate_no_pass = bool(forward_candidates) and base_scan_complete and all_candidate_chunks_validated and historical_gate_ran and not final_candidates and all(multiyear_no_passing_symbols(x.get('status')) for x in multiyear_statuses)
+    all_forward_candidates_had_historical_results = bool(forward_candidates) and all(c.get('symbol') in historical_result_symbols for c in forward_candidates)
+    # Evidence deficiencies are blocked; terminal no-pass means every consulted candidate was fully evaluated.
+    all_consulted_results_had_window_evidence = (
+        all_forward_candidates_had_historical_results
+        and all(
+            all(multiyear_result_has_window_evidence(r) for r in historical_results_by_symbol.get(c.get('symbol'), []))
+            for c in forward_candidates
+        )
+    )
+    no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in forward_candidates)
+    historical_gate_no_pass = bool(forward_candidates) and base_scan_complete and all_candidate_chunks_validated and historical_gate_ran and not final_candidates and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and all(multiyear_completed_without_infra_failure(x.get('status'), x.get('ok')) for x in multiyear_statuses)
     historical_failed_chunks = [x for x in multiyear_statuses if x.get('ok') is False and multiyear_infrastructure_failed(x.get('status'))]
     if historical_failed_chunks:
         for x in historical_failed_chunks:
             x.setdefault('blocked_reason', 'mandatory multiyear option-PnL backtest failed')
     multiyear_failed = bool(historical_failed_chunks)
     historical_gate_blocked = base_scan_complete and bool(forward_candidates) and not final_candidates and (not historical_gate_ran or multiyear_failed or (historical_gate_ran and not historical_gate_no_pass))
+    missing_window_evidence = historical_gate_blocked and historical_gate_ran and all_forward_candidates_had_historical_results and no_forward_candidates_preblocked and not all_consulted_results_had_window_evidence
     if multiyear_statuses:
         if all(x.get('ok') for x in multiyear_statuses):
             agg['07_multi_year_backtest_status'] = 'OK_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
@@ -573,7 +593,7 @@ def aggregate(chunks: list[dict]) -> dict:
         else:
             agg['07_multi_year_backtest_status'] = 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     ok = base_scan_complete and not historical_gate_blocked and not multiyear_failed and not historical_gate_no_pass
-    status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN')))
+    status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else ('BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE' if missing_window_evidence else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN'))))
     return {
         'ok': ok,
         'status': status,
@@ -794,10 +814,9 @@ def cmd_run(args) -> int:
                 fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         mb = None if (args.end_to_end and summary.get('chunk_multiyear_statuses')) else run_multiyear_if_requested(run_dir, args)
         if mb is not None:
-            fp=run_dir/'full_summary.json'
-            if fp.exists():
-                summary=json.loads(fp.read_text())
+            summary = refresh_summary_after_historical(run_dir, mb)
             summary['end_to_end'] = {'requested': True, 'multiyear_status': mb.get('status'), 'multiyear_ok': mb.get('ok'), 'parallel_forward_chunks': args.parallel, 'years': args.validation_years, 'scan_years': args.years}
+            fp=run_dir/'full_summary.json'
             fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params; summary['stage_range'] = {'from_stage': args.from_stage, 'to_stage': args.to_stage}
         persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
@@ -941,6 +960,11 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['historical_gate_ran'] = True
     summary['aggregate_funnel'] = dict(summary.get('aggregate_funnel') or {})
     summary['aggregate_funnel']['07_multi_year_backtest_status'] = mb.get('status')
+    result_symbols = {r.get('symbol') for r in mb.get('results', []) if r.get('symbol')}
+    results_by_symbol = {}
+    for r in mb.get('results', []):
+        if r.get('symbol'):
+            results_by_symbol.setdefault(r.get('symbol'), []).append(r)
     passing_results = {r.get('symbol'): r for r in mb.get('results', []) if mb.get('ok') and multiyear_result_passes(r)}
     src = summary.get('forward_candidates') or summary.get('candidates') or []
     summary['final_candidates'] = [
@@ -971,7 +995,17 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['historical_failed_chunks'] = historical_failed
     summary['historical_failed_chunk_count'] = len(historical_failed)
     base_scan_ok = not scanner_failed and int(summary.get('qc_symbols_scanned') or 0) >= int(summary.get('calendar_row_count') or summary.get('calendar_universe_count') or 0)
-    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and multiyear_no_passing_symbols(mb.get('status'))
+    all_forward_candidates_had_historical_results = bool(src) and all(c.get('symbol') in result_symbols for c in src)
+    # Evidence deficiencies are blocked; terminal no-pass means every consulted candidate was fully evaluated.
+    all_consulted_results_had_window_evidence = (
+        all_forward_candidates_had_historical_results
+        and all(
+            all(multiyear_result_has_window_evidence(r) for r in results_by_symbol.get(c.get('symbol'), []))
+            for c in src
+        )
+    )
+    no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in src)
+    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb.get('status'), mb.get('ok'))
     summary['historical_gate_no_pass'] = no_pass
     summary['historical_gate_blocked'] = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and (infra_failed or not no_pass)
     summary['multiyear_failed'] = infra_failed
@@ -980,6 +1014,8 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
         summary['status'] = 'OK_FULL_QC_SCAN'
     elif no_pass:
         summary['status'] = 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'
+    elif bool(src) and bool(base_scan_ok) and no_forward_candidates_preblocked and all_forward_candidates_had_historical_results and not all_consulted_results_had_window_evidence:
+        summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE'
     elif infra_failed:
         summary['status'] = 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     elif bool(src) and not summary['final_candidates']:
