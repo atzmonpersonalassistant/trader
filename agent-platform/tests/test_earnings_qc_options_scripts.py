@@ -737,6 +737,57 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("trader.stage2_json_%02d", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
+        self.assertIn('"candidate_details": self.candidate_details', scan)
+
+    def test_run_now_uses_chunked_stage2_candidate_details_before_capped_stat(self):
+        mod = load_script("earnings-qc-options-scan")
+        old_root = mod.REPORT_ROOT
+        mod.REPORT_ROOT = pathlib.Path(tempfile.mkdtemp())
+        bulky_contract = {
+            "contract": "OPEN 260807C00010000",
+            "expiry": "2026-08-07",
+            "dte": 37,
+            "days_after_earnings": 3,
+            "strike": 10.0,
+            "ask": 0.25,
+            "bid": 0.2,
+            "diagnostic": "x" * 1800,
+        }
+        candidate_details = [
+            {"symbol": symbol, "earnings_date": "2026-08-04", "contracts": [bulky_contract]}
+            for symbol in ["AAA", "BBB", "CCC"]
+        ]
+        truncated_legacy_json = json.dumps(candidate_details, sort_keys=True)[:3900]
+        calendar_rows = [{"symbol": c["symbol"], "report_date": c["earnings_date"]} for c in candidate_details]
+
+        mod.nasdaq_calendar_window = lambda start, end: (calendar_rows, [{"start": start.isoformat(), "end": end.isoformat()}])
+        mod.qc_capability_probe = lambda *a, **k: {
+            "qc_option_chain_batch_diagnostic": {
+                "ok": True,
+                "runtime_statistics": {
+                    "trader.candidates": "3",
+                    "trader.candidates_json": truncated_legacy_json,
+                    "trader.symbols_input": "3",
+                },
+                "symbols_requested": 3,
+                "parsed_result": {
+                    "rows": [{"symbol": c["symbol"]} for c in candidate_details],
+                    "candidate_details": candidate_details,
+                },
+            }
+        }
+        try:
+            rc = mod.run_now(notify=False, qc_batch_limit=3, as_of_date="2026-07-01")
+            result_path = next(mod.REPORT_ROOT.glob("*/result.json"))
+            result = json.loads(result_path.read_text())
+        finally:
+            mod.REPORT_ROOT = old_root
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["candidate_details_parse_failed"])
+        self.assertEqual(result["candidate_count"], 3)
+        self.assertEqual([c["symbol"] for c in result["candidate_details"]], ["AAA", "BBB", "CCC"])
 
     def test_stage2_reports_qc_capacity_without_exposing_cli_output(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
