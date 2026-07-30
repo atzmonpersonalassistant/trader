@@ -236,8 +236,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.vol_spread_factor = 0.5
         alg.expected_move_spread_fraction = 0.15
         alg.min_bid = 0.05
-        alg.min_open_interest = 0
-        alg.min_volume = 0
+        alg.min_open_interest = 50
+        alg.min_volume = 10
         return alg
 
 
@@ -2180,9 +2180,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.on_data(types.SimpleNamespace(option_chains={"OPEN OPTION": chain}))
 
         self.assertTrue(alg.quit_called)
-        self.assertEqual(alg.funnel["liquidity_pass"], 1)
-        self.assertEqual(alg.funnel["candidates"], 1)
-        self.assertEqual(alg.rows[0]["liquidity_fail_reason_counts"], {})
+        self.assertEqual(alg.funnel["liquidity_pass"], 0)
+        self.assertEqual(alg.funnel["candidates"], 0)
+        self.assertEqual(
+            alg.rows[0]["liquidity_fail_reason_counts"],
+            {"low_open_interest_and_volume": 1},
+        )
         self.assertEqual(
             alg.rows[0]["liquidity_warning_counts"],
             {"zero_open_interest": 1, "zero_volume": 1},
@@ -2193,11 +2196,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
         tuning = json.loads(alg.runtime_statistics["trader.tuning"])
         self.assertIsNone(tuning["max_spread"])
-        self.assertEqual(tuning["min_open_interest"], 0)
-        self.assertEqual(tuning["min_volume"], 0)
+        self.assertEqual(tuning["min_open_interest"], 50)
+        self.assertEqual(tuning["min_volume"], 10)
         self.assertEqual(
             tuning["open_interest_volume_policy"],
-            "diagnostic_warning_only_not_gate",
+            "gate_if_both_open_interest_and_volume_below_thresholds",
         )
         self.assertEqual(
             tuning["spread_policy"],
@@ -2838,7 +2841,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.option_right = 'both'", main)
         self.assertIn("self.delta_min = 0.05", main)
         self.assertIn("failure_reasons.append(\"delta_out_of_range\")", main)
-        self.assertIn("failure_reasons.append(\"low_open_interest\")", main)
+        self.assertIn("failure_reasons.append(\"low_open_interest_and_volume\")", main)
 
 
 class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
