@@ -3,6 +3,7 @@ import argparse
 import datetime
 import io
 import importlib.machinery
+import os
 import importlib.util
 import json
 import pathlib
@@ -132,14 +133,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(captured["summary"]["status"], "BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST")
         self.assertTrue(captured["summary"]["multiyear_failed"])
 
-    def test_multiyear_expansion_can_turn_historical_blocker_into_ok(self):
+    def test_multiyear_runner_updates_backtest_artifact_only_not_promotion(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
-        self.assertIn("scanner_failed", multi)
-        self.assertIn("'MULTIYEAR' not in str(x.get('status'))", multi)
-        self.assertIn("base_scan_ok", multi)
-        self.assertIn("no_pass = bool(src) and bool(base_scan_ok)", multi)
-        self.assertIn("full['ok']=bool(base_scan_ok) and bool(summary.get('ok'))", multi)
-        self.assertNotIn("full['ok']=bool(full.get('ok')) and bool(summary.get('ok'))", multi)
+        self.assertIn("full['multiyear_backtest']=summary", multi)
+        self.assertIn("full['historical_gate_ran']=True", multi)
+        self.assertIn("full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')", multi)
+        self.assertNotIn("scanner_failed", multi)
+        self.assertNotIn("base_scan_ok", multi)
+        self.assertNotIn("full['ok']=", multi)
+        self.assertNotIn("full['status']=", multi)
 
     def test_stage_counts_are_integer_coerced_before_sql(self):
         mod = load_script("earnings-qc-research")
@@ -354,37 +356,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.candidates = json.loads('[{", main)
         compile(main, str(project_dir / "main.py"), "exec")
 
-    def test_multiyear_result_pass_gate_rejects_bad_completed_results(self):
+    def test_multiyear_runner_no_longer_owns_final_gate(self):
         mod = load_script("earnings-qc-multiyear-backtest")
-        self.assertFalse(
-            mod.result_passes(
-                {
-                    "status": "OK",
-                    "sample_size": 18,
-                    "win_rate": 0.2222,
-                    "median_return_pct": -59.86,
-                    "mean_return_pct": 52.02,
-                    "max_drawdown_pct": 100.0,
-                    "max_loss_pct": -96.55,
-                }
-            )
-        )
-        self.assertTrue(
-            mod.result_passes(
-                {
-                    "status": "OK",
-                    "sample_size": 12,
-                    "win_rate": 0.5,
-                    "median_return_pct": 10.0,
-                    "mean_return_pct": 15.0,
-                    "leave_one_out_mean_return_pct": 5.0,
-                    "historical_event_count": 12,
-                    "dropout_pct": 0.0,
-                    "max_drawdown_pct": 40.0,
-                    "max_loss_pct": -70.0,
-                }
-            )
-        )
+        self.assertFalse(hasattr(mod, "result_passes"))
+        self.assertFalse(hasattr(mod, "candidate_historical_status_blocks"))
+        self.assertFalse(hasattr(mod, "promoted_final_candidate"))
 
     def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
         mod = load_script("earnings-qc-research")
@@ -432,16 +408,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(len(chunks), 1)
         self.assertEqual(chunks[0]["_chunk_seconds"], 2)
 
-    def test_multiyear_final_candidates_require_summary_ok(self):
-        mod = load_script("earnings-qc-multiyear-backtest")
-        self.assertTrue(mod.result_passes({
-            "status": "OK", "sample_size": 12, "win_rate": 0.5,
-            "median_return_pct": 10.0, "mean_return_pct": 15.0,
-            "leave_one_out_mean_return_pct": 5.0,
-            "historical_event_count": 12, "dropout_pct": 0.0,
-            "max_drawdown_pct": 40.0, "max_loss_pct": -70.0,
-        }))
-        # Promotion code must additionally require summary["ok"], not just result_passes().
+    def test_multiyear_runner_does_not_write_promotion_fields(self):
+        script = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
+        self.assertNotIn("full['final_candidates']", script)
+        self.assertNotIn("full['candidate_count']", script)
+        self.assertNotIn("full['final_candidate_count']", script)
+        self.assertNotIn("full['ok']=", script)
+        self.assertNotIn("full['status']=", script)
 
     def test_stage2_candidate_json_parse_failure_should_block_when_count_positive(self):
         # Regression guard for runtime-stat truncation: if trader.candidates says >0 but
@@ -469,7 +442,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "max_drawdown_pct": 0.0, "max_loss_pct": 0.0,
         }
         self.assertTrue(full.multiyear_result_passes(row))
-        self.assertTrue(multi.result_passes(row))
+        self.assertFalse(hasattr(multi, "result_passes"))
 
 
     def test_stage2_uses_volatility_aware_spread_policy(self):
@@ -1067,6 +1040,40 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertEqual(out["final_candidate_count"], 0)
         self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+
+    def test_final_candidate_gate_honors_qc_final_min_win_rate_override(self):
+        mod = load_script("earnings-qc-research")
+        otherwise_passing_result = {
+            "symbol": "TE",
+            "status": "OK",
+            "sample_size": 12,
+            "win_rate": 0.8,
+            "mean_return_pct": 5.0,
+            "leave_one_out_mean_return_pct": 1.0,
+            "historical_event_count": 12,
+            "dropout_pct": 0.0,
+            "max_drawdown_pct": 10,
+            "max_loss_pct": -20,
+            "window_results": [{"status": "OK", "sample_size": 3}],
+        }
+        with mock.patch.dict(os.environ, {"QC_FINAL_MIN_WIN_RATE": "0.99"}):
+            out = mod.aggregate([{
+                "ok": True,
+                "calendar_row_count": 1,
+                "calendar_universe_count": 1,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {
+                    "ok": True,
+                    "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST",
+                    "results": [otherwise_passing_result],
+                },
+            }])
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["final_candidate_count"], 0)
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
+        self.assertEqual(out["final_candidate_gate"]["min_win_rate"], 0.99)
 
     def test_chunked_final_candidates_reject_blocked_candidate_status(self):
         mod = load_script("earnings-qc-research")
