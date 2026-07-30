@@ -23,6 +23,8 @@ RUNNER_HANDOFF_DIR=${TRADING_RESEARCH_RUNNER_HANDOFF_DIR:-/agents/research/hando
 LOCK=${TRADING_RESEARCH_LOCK:-/agents/research/state/research-agent-loop.lock}
 LOOP_ONCE=${TRADING_RESEARCH_LOOP_ONCE:-0}
 DISABLE_SEED=${TRADING_RESEARCH_LOOP_DISABLE_SEED:-0}
+REQUIRE_EVENT_PROVIDER=${TRADING_RESEARCH_REQUIRE_EVENT_PROVIDER:-1}
+EVENT_PROVIDER_READY_FILE=${TRADING_RESEARCH_EVENT_PROVIDER_READY_FILE:-/agents/research/state/event-provider-ready}
 DRY_RUN=${TRADING_RESEARCH_LOOP_DRY_RUN:-0}
 mkdir -p "$LOG_DIR" "$REPORTS_DIR" /agents/research/tmp "$RUNNER_HANDOFF_DIR"
 
@@ -52,7 +54,11 @@ fi
 while true; do
   trading-research-agent --queue "$QUEUE" reconcile-stale --reports-dir "$REPORTS_DIR" --stale-seconds "${TRADING_RESEARCH_STALE_IN_PROGRESS_SECONDS:-21600}" >> "$LOG_DIR/loop.log" 2>&1 || true
   if [ "$DISABLE_SEED" != "1" ]; then
-    trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 --reports-dir "$REPORTS_DIR" >> "$LOG_DIR/loop.log" 2>&1 || true
+    if [ "$REQUIRE_EVENT_PROVIDER" = "1" ] && [ ! -s "$EVENT_PROVIDER_READY_FILE" ]; then
+      echo "$(date -u +%FT%TZ) skip idea generation: event provider not configured/ready" >> "$LOG_DIR/loop.log"
+    else
+      trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 --reports-dir "$REPORTS_DIR" >> "$LOG_DIR/loop.log" 2>&1 || true
+    fi
   fi
   RUN_ID="research-pass-$(date -u +%Y%m%d-%H%M%S)"
   RUN_DIR="$REPORTS_DIR/$RUN_ID"
