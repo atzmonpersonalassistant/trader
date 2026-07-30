@@ -413,6 +413,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                                 "mean_return_pct": 15.0,
                                 "max_drawdown_pct": 40.0,
                                 "max_loss_pct": -70.0,
+                                "window_results": PASSING_WINDOWS,
                             }
                         ],
                     },
@@ -1047,7 +1048,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "forward_candidates": [{"symbol": "TE"}],
             "final_candidates": [],
         }))
-        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE", "sample_size": 4}]}
+        mb = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE", "sample_size": 4, "window_results": PASSING_WINDOWS}]}
         out = mod.refresh_summary_after_historical(tmp, mb)
         self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
         self.assertTrue(out["historical_gate_ran"])
@@ -1065,7 +1066,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "qc_processed_row_count": 1,
             "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
             "funnel": {},
-            "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE"}]},
+            "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS", "results": [{"symbol": "TE", "window_results": PASSING_WINDOWS}]},
         }
         out = mod.aggregate([chunk])
         self.assertEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
@@ -1074,6 +1075,47 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertTrue(out["historical_gate_no_pass"])
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["multiyear_failed"])
+
+    def test_chunked_aggregate_missing_window_evidence_blocks_no_pass(self):
+        mod = load_script("earnings-qc-research")
+        for result in [{"symbol": "TE"}, {"symbol": "TE", "window_results": []}]:
+            chunk = {
+                "ok": True,
+                "calendar_row_count": 1,
+                "calendar_universe_count": 1,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [result]},
+            }
+            out = mod.aggregate([chunk])
+            self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE")
+            self.assertFalse(out["historical_gate_no_pass"])
+            self.assertTrue(out["historical_gate_blocked"])
+            self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
+
+    def test_refresh_summary_missing_window_evidence_blocks_no_pass(self):
+        mod = load_script("earnings-qc-research")
+        for result in [{"symbol": "TE"}, {"symbol": "TE", "window_results": []}]:
+            tmp = pathlib.Path(tempfile.mkdtemp())
+            (tmp / "full_summary.json").write_text(json.dumps({
+                "ok": False,
+                "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE",
+                "calendar_row_count": 1,
+                "calendar_universe_count": 1,
+                "qc_symbols_scanned": 1,
+                "failed_chunks": [],
+                "failed_chunk_count": 0,
+                "aggregate_funnel": {},
+                "forward_candidates": [{"symbol": "TE"}],
+                "final_candidates": [],
+            }))
+            mb = {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [result]}
+            out = mod.refresh_summary_after_historical(tmp, mb)
+            self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE")
+            self.assertFalse(out["historical_gate_no_pass"])
+            self.assertTrue(out["historical_gate_blocked"])
+            self.assertNotEqual(out["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
 
     def test_refresh_summary_no_forward_candidates_is_not_multiyear_infra_failure(self):
         mod = load_script("earnings-qc-research")
