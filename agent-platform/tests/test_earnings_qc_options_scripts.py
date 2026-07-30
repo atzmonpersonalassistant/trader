@@ -366,12 +366,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "min_open_interest": 11,
                 "min_volume": 4,
                 "max_contracts": 2,
+                "historical_resolution": "minute",
             },
         )
         main = (project_dir / "main.py").read_text()
         self.assertIn("self.max_premium = 0.250000", main)
         self.assertIn("self.entry_min_days = 14", main)
         self.assertIn("self.entry_max_days = 35", main)
+        self.assertIn("self.universe_settings.resolution = Resolution.MINUTE", main)
+        self.assertIn("opt = self.add_option(c[\"symbol\"], Resolution.MINUTE)", main)
         self.assertIn("strikes(-20, 100).expiration(timedelta(5), timedelta(45))", main)
         self.assertIn("if dte < 5 or dte > 45: continue", main)
         self.assertIn("self.max_days_after_earnings = 10", main)
@@ -379,6 +382,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
+        self.assertIn("blockers['missing_volatility_inputs']", main)
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
