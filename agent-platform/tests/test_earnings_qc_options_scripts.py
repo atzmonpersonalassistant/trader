@@ -446,10 +446,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_stage2_candidate_json_parse_failure_should_block_when_count_positive(self):
         # Regression guard for runtime-stat truncation: if trader.candidates says >0 but
         # details JSON cannot parse, the run must block rather than silently skip
-        # mandatory multiyear validation. This script-level invariant is enforced in
-        # run_now; here we keep the expected status string pinned.
+        # mandatory multiyear validation. The primary path should use the chunked
+        # stage2 payload; the legacy single-stat JSON remains a fallback only.
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("BLOCKED_QC_CANDIDATE_DETAILS_MISSING_OR_TRUNCATED", scan)
+        self.assertIn('"candidate_details": self.candidate_details', scan)
+        self.assertIn("parsed_candidate_details", scan)
         self.assertIn("candidate_details_parse_failed", scan)
         self.assertIn("len(candidate_details)", scan)
 
@@ -735,7 +737,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_runner_parses_chunked_stage2_json(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        self.assertIn("trader.stage2_json_%02d", scan)
+        self.assertIn("trader.stage2_json_%04d", scan)
+        self.assertIn("int(k.rsplit('_', 1)[1])", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
 
     def test_stage2_reports_qc_capacity_without_exposing_cli_output(self):
