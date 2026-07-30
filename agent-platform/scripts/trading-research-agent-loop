@@ -41,9 +41,10 @@ make_runner_task_inputs_readable() {
   done
 }
 
-event_provider_allows_static_seed() {
+event_provider_ready_or_optional() {
+  local action="$1"
   if [ "$REQUIRE_EVENT_PROVIDER" = "1" ] && [ ! -s "$EVENT_PROVIDER_READY_FILE" ]; then
-    echo "$(date -u +%FT%TZ) skip static seed: event provider not configured/ready" >> "$LOG_DIR/loop.log"
+    echo "$(date -u +%FT%TZ) skip $action: event provider not configured/ready" >> "$LOG_DIR/loop.log"
     return 1
   fi
   return 0
@@ -56,14 +57,14 @@ if ! flock -n 9; then
 fi
 
 if [ "$DISABLE_SEED" != "1" ] && [ ! -s "$QUEUE" ]; then
-  if event_provider_allows_static_seed; then
+  if event_provider_ready_or_optional "static seed"; then
     trading-research-agent --queue "$QUEUE" seed-cheap-calls >> "$LOG_DIR/loop.log" 2>&1 || true
   fi
 fi
 
 while true; do
   trading-research-agent --queue "$QUEUE" reconcile-stale --reports-dir "$REPORTS_DIR" --stale-seconds "${TRADING_RESEARCH_STALE_IN_PROGRESS_SECONDS:-21600}" >> "$LOG_DIR/loop.log" 2>&1 || true
-  if [ "$DISABLE_SEED" != "1" ]; then
+  if [ "$DISABLE_SEED" != "1" ] && event_provider_ready_or_optional "idea generation"; then
     trading-research-agent --queue "$QUEUE" generate-ideas --min-queued 3 --limit 6 --reports-dir "$REPORTS_DIR" >> "$LOG_DIR/loop.log" 2>&1 || true
   fi
   RUN_ID="research-pass-$(date -u +%Y%m%d-%H%M%S)"
