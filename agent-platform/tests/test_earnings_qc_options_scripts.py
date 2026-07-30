@@ -379,6 +379,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "min_open_interest": 11,
                 "min_volume": 4,
                 "max_contracts": 2,
+                "final_min_sample_size": 8,
+                "final_max_dropout_pct": 55,
             },
         )
         main = (project_dir / "main.py").read_text()
@@ -393,6 +395,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
+        self.assertIn("overall=metrics(trades,'all',8)", main)
+        self.assertIn("dropout_pct<=55.000000", main)
+        self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
+        self.assertIn("windows.append(metrics(rows, str(wy)+'y', 1))", main)
+        self.assertNotIn("overall['sample_size']>=12", main)
+        self.assertNotIn("dropout_pct<=40", main)
+        self.assertNotIn("min(4, wy)", main)
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
