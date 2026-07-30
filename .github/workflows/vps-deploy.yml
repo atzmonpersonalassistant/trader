@@ -584,8 +584,8 @@ jobs:
           sudo -n -u agent-research-runner bash -lc 'test "$(cat /agents/research/handoff/deploy-runner-readable.txt)" = ok'
           sudo -n -u agent-research bash -lc "test -r '$latest_smoke_dir/candidate.json' && test -r '$latest_smoke_dir/mandate.json' && test -r '$latest_smoke_dir/qc_prompt.json' && test -r '$latest_smoke_dir/task.txt'"
           sudo -n -u agent-research trading-research-qc-broker research-artifact "$latest_smoke_dir" "$latest_smoke_dir/candidate.json" --dry-run >/tmp/trader-research-qc-artifact-dry-run.txt
-          if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service | grep -q '^trading-research-agent\.service'; then
-            sudo systemctl restart trading-research-agent.service
+          if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet trading-research-agent.service && systemctl is-active --quiet trading-research-agent.service; then
+            sudo systemctl try-restart trading-research-agent.service
           fi
           bash -n /usr/local/bin/trading-research-agent-loop
           bash -n /usr/local/bin/trading-research-qc-smoke
