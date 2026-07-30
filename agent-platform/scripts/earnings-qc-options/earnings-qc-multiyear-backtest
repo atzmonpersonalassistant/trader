@@ -51,6 +51,16 @@ def result_passes(r:dict)->bool:
         return base_ok and all(w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1 for w in windows)
     return base_ok
 
+def candidate_historical_status_blocks(c:dict)->bool:
+    return str(c.get('historical_backtest_status') or '').upper().startswith('BLOCKED')
+
+def promoted_final_candidate(c:dict, historical_result:dict|None)->dict|None:
+    if not historical_result or candidate_historical_status_blocks(c) or not result_passes(historical_result):
+        return None
+    out=dict(c)
+    out['historical_backtest_status']=historical_result.get('status') or 'OK'
+    return out
+
 def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int):
     project_dir.mkdir(parents=True,exist_ok=True)
     today=datetime.date.today(); start=today.replace(year=max(2018,today.year-years)); end=today
@@ -89,10 +99,10 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
     fs=run_dir/'full_summary.json'
     if fs.exists():
         full=json.loads(fs.read_text()); full['multiyear_backtest']=summary; full['historical_gate_ran']=True; full['aggregate_funnel']['07_multi_year_backtest_status']=summary.get('status')
-        # final candidates only where option pnl backtest has sufficient OK status; stricter pass criteria can be tuned later
-        ok_syms={r['symbol'] for r in summary.get('results',[]) if summary.get('ok') and result_passes(r)}
+        # Final candidates only where the per-candidate and option-PnL records agree.
+        passing_results={r.get('symbol'): r for r in summary.get('results',[]) if summary.get('ok') and result_passes(r)}
         src=full.get('forward_candidates') or full.get('candidates',[])
-        full['final_candidates']=[c for c in src if c.get('symbol') in ok_syms]
+        full['final_candidates']=[final_candidate for c in src for final_candidate in [promoted_final_candidate(c, passing_results.get(c.get('symbol')))] if final_candidate]
         full['candidates']=full['final_candidates']
         full['candidate_count']=len(full['final_candidates'])
         full['final_candidate_count']=len(full['final_candidates'])

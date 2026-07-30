@@ -267,6 +267,17 @@ def multiyear_result_passes(r: dict) -> bool:
         )
     return base_ok
 
+def candidate_historical_status_blocks(c: dict) -> bool:
+    status = str(c.get('historical_backtest_status') or '').upper()
+    return status.startswith('BLOCKED')
+
+def promoted_final_candidate(c: dict, historical_result: dict | None) -> dict | None:
+    if not historical_result or candidate_historical_status_blocks(c) or not multiyear_result_passes(historical_result):
+        return None
+    out = dict(c)
+    out['historical_backtest_status'] = historical_result.get('status') or 'OK'
+    return out
+
 def load_chunk(run_dir: pathlib.Path, offset: int) -> dict:
     p = run_dir / f'chunk-{offset}.stdout.json'
     try:
@@ -532,15 +543,16 @@ def aggregate(chunks: list[dict]) -> dict:
         mb=d.get('chunk_multiyear_backtest') or {}
         if mb:
             multiyear_statuses.append({'offset': d.get('_chunk_offset'), 'status': mb.get('status'), 'ok': mb.get('ok'), 'mode': mb.get('mode')})
-            ok_syms={r.get('symbol') for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
+            passing_results={r.get('symbol'): r for r in mb.get('results',[]) if mb.get('ok') and multiyear_result_passes(r)}
         else:
-            ok_syms=set()
+            passing_results={}
         for c in d.get('candidate_details') or []:
             key=(c.get('symbol'), c.get('earnings_date'))
             if key not in seen:
                 forward_candidates.append(c); seen.add(key)
-            if c.get('symbol') in ok_syms and key not in final_seen:
-                final_candidates.append(c); final_seen.add(key)
+            final_candidate = promoted_final_candidate(c, passing_results.get(c.get('symbol')))
+            if final_candidate and key not in final_seen:
+                final_candidates.append(final_candidate); final_seen.add(key)
     candidate_chunk_count = sum(1 for d in chunks if d.get('candidate_details'))
     validated_candidate_chunk_count = sum(1 for d in chunks if d.get('candidate_details') and d.get('chunk_multiyear_backtest'))
     all_candidate_chunks_validated = candidate_chunk_count > 0 and validated_candidate_chunk_count == candidate_chunk_count
@@ -929,9 +941,13 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['historical_gate_ran'] = True
     summary['aggregate_funnel'] = dict(summary.get('aggregate_funnel') or {})
     summary['aggregate_funnel']['07_multi_year_backtest_status'] = mb.get('status')
-    ok_syms = {r.get('symbol') for r in mb.get('results', []) if mb.get('ok') and multiyear_result_passes(r)}
+    passing_results = {r.get('symbol'): r for r in mb.get('results', []) if mb.get('ok') and multiyear_result_passes(r)}
     src = summary.get('forward_candidates') or summary.get('candidates') or []
-    summary['final_candidates'] = [c for c in src if c.get('symbol') in ok_syms]
+    summary['final_candidates'] = [
+        final_candidate for c in src
+        for final_candidate in [promoted_final_candidate(c, passing_results.get(c.get('symbol')))]
+        if final_candidate
+    ]
     summary['candidates'] = summary['final_candidates']
     summary['candidate_count'] = len(summary['final_candidates'])
     summary['final_candidate_count'] = len(summary['final_candidates'])
