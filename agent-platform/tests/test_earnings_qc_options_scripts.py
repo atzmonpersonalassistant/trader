@@ -915,12 +915,16 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "stop_loss_max_loss_pct": -50,
                 "final_min_sample_size": 8,
                 "final_max_dropout_pct": 55,
+                "historical_resolution": "minute",
             },
         )
         main = (project_dir / "main.py").read_text()
         self.assertIn("self.max_premium = 0.250000", main)
         self.assertIn("self.entry_min_days = 14", main)
         self.assertIn("self.entry_max_days = 35", main)
+        self.assertIn("self.universe_settings.resolution = Resolution.MINUTE", main)
+        self.assertIn('self.add_equity(c["symbol"], Resolution.MINUTE)', main)
+        self.assertIn('self.add_option(c["symbol"], Resolution.MINUTE)', main)
         self.assertIn("strikes(-20, 100).expiration(timedelta(5), timedelta(45))", main)
         self.assertIn("if dte < 5 or dte > 45: continue", main)
         self.assertIn("self.max_days_after_earnings = 10", main)
@@ -952,6 +956,36 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
+        compile(main, str(project_dir / "main.py"), "exec")
+
+    def test_multiyear_generated_qc_algorithm_defaults_resolution_to_daily(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+            8,
+            {},
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.universe_settings.resolution = Resolution.DAILY", main)
+        self.assertIn('self.add_equity(c["symbol"], Resolution.DAILY)', main)
+        self.assertIn('self.add_option(c["symbol"], Resolution.DAILY)', main)
+        compile(main, str(project_dir / "main.py"), "exec")
+
+    def test_multiyear_generated_qc_algorithm_prefers_option_resolution(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+            8,
+            {"historical_resolution": "daily", "option_resolution": "hour"},
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.universe_settings.resolution = Resolution.HOUR", main)
+        self.assertIn('self.add_equity(c["symbol"], Resolution.HOUR)', main)
+        self.assertIn('self.add_option(c["symbol"], Resolution.HOUR)', main)
         compile(main, str(project_dir / "main.py"), "exec")
 
     def test_multiyear_generated_qc_algorithm_preserves_default_dte_and_spread(self):
@@ -2245,13 +2279,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_right="put", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_resolution="hour", option_right="put", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
         self.assertIn("14:28", argv)
         self.assertIn("--historical-resolution", argv)
         self.assertIn("minute", argv)
+        self.assertIn("--option-resolution", argv)
+        self.assertIn("hour", argv)
         self.assertIn("--option-right", argv)
         self.assertIn("put", argv)
         self.assertIn("--max-contracts", argv)
