@@ -106,7 +106,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
              mock.patch.object(mod, "upsert_campaign", side_effect=lambda *a, **k: calls.append("campaign")), \
              mock.patch.object(mod, "upsert_run", side_effect=lambda *a, **k: calls.append("run")), \
              mock.patch.object(mod, "upsert_stage", side_effect=lambda *a, **k: calls.append("stage")), \
-             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 12, "win_rate": 0.6, "median_return_pct": 0.1, "mean_return_pct": 5.0, "leave_one_out_mean_return_pct": 1.0, "historical_event_count": 12, "dropout_pct": 0.0, "max_drawdown_pct": 10, "max_loss_pct": -20}]}), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [{"symbol": "AAA", "status": "OK", "sample_size": 12, "win_rate": 0.6, "median_return_pct": 0.1, "mean_return_pct": 5.0, "leave_one_out_mean_return_pct": 1.0, "historical_event_count": 12, "dropout_pct": 0.0, "max_drawdown_pct": 10, "max_loss_pct": -20, "window_results": [{"status": "OK", "sample_size": 3}]}]}), \
              mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
              mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
@@ -440,6 +440,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "leave_one_out_mean_return_pct": 5.0,
             "historical_event_count": 12, "dropout_pct": 0.0,
             "max_drawdown_pct": 0.0, "max_loss_pct": 0.0,
+            "window_results": [{"status": "OK", "sample_size": 3}],
         }
         self.assertTrue(full.multiyear_result_passes(row))
         self.assertFalse(hasattr(multi, "result_passes"))
@@ -691,7 +692,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         }
         self.assertFalse(full.multiyear_result_passes(dict(base)))
         self.assertFalse(full.multiyear_result_passes(dict(base, leave_one_out_mean_return_pct=5.0, historical_event_count=22, dropout_pct=45.5)))
-        self.assertTrue(full.multiyear_result_passes(dict(base, leave_one_out_mean_return_pct=5.0)))
+        self.assertTrue(full.multiyear_result_passes(dict(base, leave_one_out_mean_return_pct=5.0, window_results=[{"status": "OK", "sample_size": 3}])))
 
     def test_multiyear_backtest_persists_trade_arrays_and_dropout_fields(self):
         multi = (SCRIPTS / "earnings-qc-multiyear-backtest").read_text()
@@ -1074,6 +1075,37 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertEqual(out["final_candidate_count"], 0)
         self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
         self.assertEqual(out["final_candidate_gate"]["min_win_rate"], 0.99)
+
+    def test_final_candidate_gate_blocks_missing_window_evidence(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "TE", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {
+                "ok": True,
+                "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST",
+                "results": [{
+                    "symbol": "TE",
+                    "status": "OK",
+                    "sample_size": 12,
+                    "win_rate": 0.8,
+                    "mean_return_pct": 5.0,
+                    "leave_one_out_mean_return_pct": 1.0,
+                    "historical_event_count": 12,
+                    "dropout_pct": 0.0,
+                    "max_drawdown_pct": 10,
+                    "max_loss_pct": -20,
+                }],
+            },
+        }])
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["final_candidate_count"], 0)
+        self.assertEqual(out["chunk_multiyear_statuses"][0]["results"][0]["status"], "OK")
+        self.assertEqual(out["status"], "BLOCKED_HISTORICAL_OPTION_PNL_GATE")
 
     def test_chunked_final_candidates_reject_blocked_candidate_status(self):
         mod = load_script("earnings-qc-research")

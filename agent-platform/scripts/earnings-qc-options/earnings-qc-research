@@ -259,13 +259,13 @@ def multiyear_result_passes(r: dict) -> bool:
         and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
         and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
     )
-    windows = r.get('window_results') or []
-    if windows:
-        return base_ok and all(
-            w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
-            for w in windows
-        )
-    return base_ok
+    windows = r.get('window_results')
+    if not windows:
+        return False
+    return base_ok and all(
+        w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
+        for w in windows
+    )
 
 def candidate_historical_status_blocks(c: dict) -> bool:
     status = str(c.get('historical_backtest_status') or '').upper()
@@ -280,6 +280,15 @@ def promoted_final_candidate(c: dict, historical_result: dict | None) -> dict | 
 
 def apply_multiyear_promotion(summary: dict, mb: dict | None) -> dict:
     """Apply the single authoritative final-candidate promotion gate."""
+    if mb:
+        mb = dict(mb)
+        normalized_results = []
+        for r in mb.get('results') or []:
+            rr = dict(r)
+            if rr.get('status') == 'OK' and not rr.get('window_results'):
+                rr['status'] = 'BLOCKED_MISSING_WINDOW_EVIDENCE'
+            normalized_results.append(rr)
+        mb['results'] = normalized_results
     summary['multiyear_backtest'] = mb
     summary['historical_gate_ran'] = bool(mb)
     summary['aggregate_funnel'] = dict(summary.get('aggregate_funnel') or {})
