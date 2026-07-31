@@ -1233,6 +1233,28 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
         self.assertIn("self.stop_loss_max_loss_pct = -50.0", main)
+
+    def test_multiyear_runtime_stat_chunks_sort_numeric_suffixes(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        stats = {
+            "multiyear_json_0000": "a",
+            "multiyear_json_0010": "k",
+            "multiyear_json_0002": "c",
+            "unrelated": "z",
+        }
+        self.assertEqual(mod.runtime_stat_chunks(stats, "multiyear_json_"), ["a", "c", "k"])
+
+    def test_multiyear_generated_payload_records_historical_resolution(self):
+        alg = self.build_multiyear_algorithm({"historical_resolution": "minute"})
+        alg.snapshots = {"XYZ": {}}
+        alg.on_end_of_algorithm()
+
+        payload = json.loads("".join(
+            alg.runtime_statistics[key]
+            for key in sorted(alg.runtime_statistics)
+            if key.startswith("multiyear_json_")
+        ))
+        self.assertEqual(payload["historical_resolution"], "minute")
         self.assertIn("contract_quotes_between", main)
         self.assertIn("apply_stop_loss_variants", main)
         self.assertIn("stop_loss_same_day_trades", main)

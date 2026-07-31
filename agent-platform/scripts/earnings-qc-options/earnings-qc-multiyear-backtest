@@ -58,8 +58,13 @@ def parse_range(value: str | None, default_lo: int, default_hi: int) -> tuple[in
         raise SystemExit(f'invalid range {value!r}; low > high')
     return lo, hi
 
-def qc_resolution_expr(value: str | None, default: str = 'daily') -> str:
+def qc_resolution_key(value: str | None, default: str = 'daily') -> str:
     v = (value or default).strip().lower()
+    if v not in {'tick', 'second', 'minute', 'hour', 'daily'}:
+        raise SystemExit(f'invalid resolution {value!r}')
+    return v
+
+def qc_resolution_expr(value: str | None, default: str = 'daily') -> str:
     mapping = {
         'tick': 'Resolution.TICK',
         'second': 'Resolution.SECOND',
@@ -67,9 +72,15 @@ def qc_resolution_expr(value: str | None, default: str = 'daily') -> str:
         'hour': 'Resolution.HOUR',
         'daily': 'Resolution.DAILY',
     }
-    if v not in mapping:
-        raise SystemExit(f'invalid resolution {value!r}')
-    return mapping[v]
+    return mapping[qc_resolution_key(value, default)]
+
+def runtime_stat_chunks(stats:dict, prefix:str)->list[str]:
+    def chunk_index(key:str)->int:
+        try:
+            return int(key.rsplit('_', 1)[1])
+        except Exception:
+            return 10**9
+    return [stats[k] for k in sorted((k for k in stats if k.startswith(prefix)), key=chunk_index)]
 
 def hist_params(params:dict|None) -> dict:
     p = dict(params or {})
@@ -88,6 +99,7 @@ def hist_params(params:dict|None) -> dict:
     if exit_policy not in {'before-earnings', 'after-market-report-day-close', 'sell-before-earnings-no-hold-through'}:
         raise SystemExit(f"invalid exit_policy {exit_policy!r}; expected before-earnings")
     return {
+        'historical_resolution': qc_resolution_key(p.get('historical_resolution'), 'daily'),
         'option_right': option_right,
         'exit_days_before': exit_days_before,
         'exit_policy': 'sell_before_earnings_no_hold_through',
@@ -212,6 +224,10 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if payload_policy_marker not in code:
         raise RuntimeError('generated multiyear payload policy marker not found')
     code = code.replace(payload_policy_marker, '"exit_policy":self.exit_policy', 1)
+    payload_years_marker = f'"years":{years}'
+    if payload_years_marker not in code:
+        raise RuntimeError('generated multiyear years marker not found')
+    code = code.replace(payload_years_marker, f'"historical_resolution":{hp["historical_resolution"]!r},"years":{years}', 1)
     runtime_marker = "self.set_runtime_statistic('multiyear_candidate_count', str(len(self.candidates)))"
     if runtime_marker not in code:
         raise RuntimeError('generated multiyear candidate-count statistic marker not found')
@@ -441,7 +457,7 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
         snapshot_memory = snapshot_memory_from_runtime_stats(stats)
         if snapshot_memory:
             summary['snapshot_memory'] = snapshot_memory
-        parts=[stats[k] for k in sorted(stats) if k.startswith('multiyear_json_')]
+        parts=runtime_stat_chunks(stats, 'multiyear_json_')
         js=''.join(parts) if parts else None
         if js:
             try:
