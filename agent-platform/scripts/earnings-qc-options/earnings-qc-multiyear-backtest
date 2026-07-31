@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, datetime, json, pathlib, re, subprocess, time, urllib.request, urllib.parse, hashlib, base64
+import argparse, datetime, json, pathlib, re, subprocess, time, urllib.request, urllib.parse, hashlib, base64, sys
 from urllib.parse import urljoin
+
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from qc_cloud_capacity import classify_qc_cloud_capacity
 
 REPORT_ROOT = pathlib.Path('/agents/research/reports')
 STATE_DIR = pathlib.Path('/agents/research/state/earnings-qc-options-scan')
@@ -66,6 +71,9 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
     (out_dir/'push.stdout').write_text(push.stdout); (out_dir/'push.stderr').write_text(push.stderr); (out_dir/'backtest.stdout').write_text(bt.stdout); (out_dir/'backtest.stderr').write_text(bt.stderr)
     m=re.search(r'Backtest id:\s*([0-9a-f]+)', bt.stdout+'\n'+bt.stderr); backtest_id=m.group(1) if m else None
     summary={'ok':False,'status':'QC_BACKTEST_FAILED','project_id':project_id,'backtest_id':backtest_id,'backtest_name':name,'push_returncode':push.returncode,'backtest_returncode':bt.returncode,'parameters': params or {}}
+    capacity = classify_qc_cloud_capacity(bt.stdout + '\n' + bt.stderr) if bt.returncode != 0 else None
+    if capacity:
+        summary.update(capacity)
     if backtest_id:
         b=qc_api('GET','backtests/read',{'projectId':project_id,'backtestId':backtest_id}).get('backtest',{})
         (out_dir/'backtest_read.json').write_text(json.dumps(b,ensure_ascii=False,indent=2,sort_keys=True)+'\n')
@@ -73,7 +81,7 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
         js=''.join(parts) if parts else None
         if js:
             try:
-                payload=json.loads(js); summary.update(payload); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); summary.update({'ok': bool(qc_ok), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if qc_ok else 'QC_BACKTEST_FAILED'})
+                payload=json.loads(js); summary.update(payload); qc_ok=b.get('completed') and b.get('status')=='Completed.' and not b.get('error') and not b.get('stacktrace'); capacity = classify_qc_cloud_capacity('\n'.join(str(x or '') for x in [b.get('status'), b.get('error'), b.get('stacktrace')])) if not qc_ok else None; summary.update(capacity or {'ok': bool(qc_ok), 'status':'OK_MULTIYEAR_OPTION_PNL_BACKTEST' if qc_ok else 'QC_BACKTEST_FAILED'})
             except Exception as e: summary['parse_error']=repr(e)
         summary['qc_status']=b.get('status'); summary['qc_error']=b.get('error'); summary['qc_stacktrace']=b.get('stacktrace')
     (out_dir/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)+'\n')

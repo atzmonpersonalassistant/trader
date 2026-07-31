@@ -2,6 +2,11 @@
 from __future__ import annotations
 import argparse, concurrent.futures, datetime, hashlib, json, os, pathlib, re, shutil, sqlite3, subprocess, sys, threading, time
 
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from qc_cloud_capacity import classify_qc_cloud_capacity, is_qc_cloud_capacity_status
+
 REPORT_ROOT = pathlib.Path('/agents/research/reports')
 STATE_DIR = pathlib.Path('/agents/research/state/earnings-qc-options-scan')
 ORCH_DB = pathlib.Path('/agents/orchestrator/state/orchestrator.db')
@@ -498,7 +503,10 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
     try:
         mb = json.loads(p.stdout)
     except Exception as e:
+        capacity = classify_qc_cloud_capacity(p.stdout + '\n' + p.stderr)
         mb = {'ok': False, 'status': 'BLOCKED_MULTIYEAR_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+        if capacity:
+            mb.update(capacity)
     return mb
 
 
@@ -523,7 +531,7 @@ def multiyear_completed_without_infra_failure(status: str | None, ok: bool | Non
 
 def multiyear_infrastructure_failed(status: str | None) -> bool:
     status_s = str(status or '')
-    return bool(status_s) and not multiyear_no_passing_symbols(status_s) and status_s != 'OK_MULTIYEAR_OPTION_PNL_BACKTEST'
+    return bool(status_s) and not is_qc_cloud_capacity_status(status_s) and not multiyear_no_passing_symbols(status_s) and status_s != 'OK_MULTIYEAR_OPTION_PNL_BACKTEST'
 
 
 def aggregate(chunks: list[dict]) -> dict:
@@ -579,11 +587,15 @@ def aggregate(chunks: list[dict]) -> dict:
     no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in forward_candidates)
     historical_gate_no_pass = bool(forward_candidates) and base_scan_complete and all_candidate_chunks_validated and historical_gate_ran and not final_candidates and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and all(multiyear_completed_without_infra_failure(x.get('status'), x.get('ok')) for x in multiyear_statuses)
     historical_failed_chunks = [x for x in multiyear_statuses if x.get('ok') is False and multiyear_infrastructure_failed(x.get('status'))]
+    capacity_blocked_chunks = [x for x in multiyear_statuses if x.get('ok') is False and is_qc_cloud_capacity_status(x.get('status'))]
     if historical_failed_chunks:
         for x in historical_failed_chunks:
             x.setdefault('blocked_reason', 'mandatory multiyear option-PnL backtest failed')
     multiyear_failed = bool(historical_failed_chunks)
-    historical_gate_blocked = base_scan_complete and bool(forward_candidates) and not final_candidates and (not historical_gate_ran or multiyear_failed or (historical_gate_ran and not historical_gate_no_pass))
+    qc_capacity_blocked = bool(capacity_blocked_chunks)
+    qc_capacity_statuses = sorted({str(x.get('status')) for x in capacity_blocked_chunks if x.get('status')})
+    qc_capacity_status = qc_capacity_statuses[0] if len(qc_capacity_statuses) == 1 else 'BLOCKED_QC_CLOUD_CAPACITY'
+    historical_gate_blocked = base_scan_complete and bool(forward_candidates) and not final_candidates and (not historical_gate_ran or multiyear_failed or qc_capacity_blocked or (historical_gate_ran and not historical_gate_no_pass))
     missing_window_evidence = historical_gate_blocked and historical_gate_ran and all_forward_candidates_had_historical_results and no_forward_candidates_preblocked and not all_consulted_results_had_window_evidence
     if multiyear_statuses:
         if all(x.get('ok') for x in multiyear_statuses):
@@ -592,8 +604,8 @@ def aggregate(chunks: list[dict]) -> dict:
             agg['07_multi_year_backtest_status'] = 'NO_PASSING_SYMBOLS_AFTER_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
         else:
             agg['07_multi_year_backtest_status'] = 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
-    ok = base_scan_complete and not historical_gate_blocked and not multiyear_failed and not historical_gate_no_pass
-    status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else ('BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE' if missing_window_evidence else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN'))))
+    ok = base_scan_complete and not historical_gate_blocked and not multiyear_failed and not qc_capacity_blocked and not historical_gate_no_pass
+    status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else (qc_capacity_status if qc_capacity_blocked else ('BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE' if missing_window_evidence else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN')))))
     return {
         'ok': ok,
         'status': status,
@@ -605,6 +617,9 @@ def aggregate(chunks: list[dict]) -> dict:
         'failed_chunks': failed,
         'historical_failed_chunk_count': len(historical_failed_chunks),
         'historical_failed_chunks': historical_failed_chunks,
+        'qc_capacity_blocked': qc_capacity_blocked,
+        'qc_capacity_blocked_chunks': capacity_blocked_chunks,
+        'qc_capacity_status': qc_capacity_status if qc_capacity_blocked else None,
         'aggregate_funnel': agg,
         'forward_candidate_count': len(forward_candidates),
         'forward_candidates': forward_candidates,
@@ -730,7 +745,11 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
     try:
         return json.loads(p.stdout)
     except Exception as e:
-        return {'ok': False, 'status': 'BLOCKED_MULTIYEAR_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+        capacity = classify_qc_cloud_capacity(p.stdout + '\n' + p.stderr)
+        out = {'ok': False, 'status': 'BLOCKED_MULTIYEAR_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+        if capacity:
+            out.update(capacity)
+        return out
 
 
 def cmd_run(args) -> int:
@@ -978,6 +997,7 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     # A historical refresh with no forward candidates is a terminal no-op, not an
     # infrastructure failure to retry/debug. Classify infra failures only when
     # there was actually something to validate.
+    capacity_blocked = bool(src) and bool(mb.get('ok') is False and is_qc_cloud_capacity_status(mb.get('status')))
     infra_failed = bool(src) and bool(mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')))
     historical_failed = list(summary.get('historical_failed_chunks') or [])
     scanner_failed = []
@@ -1007,8 +1027,9 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in src)
     no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb.get('status'), mb.get('ok'))
     summary['historical_gate_no_pass'] = no_pass
-    summary['historical_gate_blocked'] = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and (infra_failed or not no_pass)
+    summary['historical_gate_blocked'] = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and (capacity_blocked or infra_failed or not no_pass)
     summary['multiyear_failed'] = infra_failed
+    summary['qc_capacity_blocked'] = capacity_blocked
     summary['ok'] = bool(base_scan_ok) and bool(mb.get('ok')) and bool(summary['final_candidates'])
     if summary['ok']:
         summary['status'] = 'OK_FULL_QC_SCAN'
@@ -1016,6 +1037,8 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
         summary['status'] = 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'
     elif bool(src) and bool(base_scan_ok) and no_forward_candidates_preblocked and all_forward_candidates_had_historical_results and not all_consulted_results_had_window_evidence:
         summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE'
+    elif capacity_blocked:
+        summary['status'] = mb.get('status')
     elif infra_failed:
         summary['status'] = 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     elif bool(src) and not summary['final_candidates']:

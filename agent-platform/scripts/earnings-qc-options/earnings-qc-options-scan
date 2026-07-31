@@ -11,6 +11,11 @@ from datetime import timedelta
 from typing import Any
 from urllib.parse import urljoin
 
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from qc_cloud_capacity import classify_qc_cloud_capacity
+
 REPORT_ROOT = pathlib.Path('/agents/research/reports')
 ORCH_DB = pathlib.Path('/agents/orchestrator/state/orchestrator.db')
 LEAN_WORKSPACE = pathlib.Path('/agents/research/lean-workspace')
@@ -383,8 +388,9 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
         name = f"earnings-qc-stage2-{today.strftime('%Y%m%d')}-{datetime.datetime.now(datetime.timezone.utc).strftime('%H%M%S')}-n{len(batch_rows)}-a{attempt}"
         bt = subprocess.run(['lean','cloud','backtest',project_name,'--push','--name',name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=900)
         output = (bt.stdout + '\n' + bt.stderr).strip()
-        retryable = bt.returncode != 0 and ('too many backtest requests' in output.lower() or 'no spare nodes available' in output.lower())
-        attempts.append({'attempt': attempt, 'returncode': bt.returncode, 'retryable': retryable, 'rate_limited': 'too many backtest requests' in output.lower(), 'capacity_blocked': 'no spare nodes available' in output.lower()})
+        capacity = classify_qc_cloud_capacity(output)
+        retryable = bt.returncode != 0 and bool(capacity)
+        attempts.append({'attempt': attempt, 'returncode': bt.returncode, 'retryable': retryable, 'rate_limited': bool((capacity or {}).get('rate_limited')), 'capacity_blocked': bool((capacity or {}).get('capacity_blocked'))})
         if bt.returncode == 0 or not retryable or attempt >= max_attempts:
             break
         time.sleep(base_delay * attempt)
@@ -398,16 +404,9 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
     backtest_id = m.group(1) if m else None
     backtest_output = (bt.stdout + '\n' + bt.stderr).strip()
     out = {'ok': push.returncode == 0 and bt.returncode == 0 and bool(backtest_id), 'tuning': tuning, 'stage2_params': parse_stage2_params(**(stage2_params or {})), 'project_id': project_id, 'organization_id': organization_id, 'project_name': project_name, 'backtest_id': backtest_id, 'backtest_name': name, 'symbols_requested': len(batch_rows), 'symbols_offset': batch_offset, 'symbols': [r['symbol'] for r in batch_rows], 'push_returncode': push.returncode, 'backtest_returncode': bt.returncode, 'backtest_attempts': attempts}
-    if bt.returncode != 0 and 'too many backtest requests' in backtest_output.lower():
-        out['status'] = 'BLOCKED_QC_CLOUD_RATE_LIMITED'
-        out['rate_limited'] = True
-        out['error'] = 'QuantConnect Cloud rejected the request as too many backtest requests; retry later/slower.'
-        out['error_class'] = 'qc_cloud_rate_limit'
-    elif bt.returncode != 0 and 'no spare nodes available' in backtest_output.lower():
-        out['status'] = 'BLOCKED_QC_CLOUD_NO_SPARE_NODES'
-        out['capacity_blocked'] = True
-        out['error'] = 'QuantConnect Cloud has no spare nodes available for a new backtest.'
-        out['error_class'] = 'qc_cloud_capacity'
+    capacity = classify_qc_cloud_capacity(backtest_output) if bt.returncode != 0 else None
+    if capacity:
+        out.update(capacity)
     if backtest_id:
         try:
             b = qc_api('GET', 'backtests/read', {'projectId': project_id, 'backtestId': backtest_id}).get('backtest', {})
@@ -418,10 +417,13 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
                     out['parsed_result'] = json.loads(''.join(parts))
                 except Exception as e:
                     out['parsed_result_error'] = repr(e)
-            out['status'] = b.get('status')
+            qc_capacity = classify_qc_cloud_capacity('\n'.join(str(x or '') for x in [b.get('status'), b.get('error'), b.get('stacktrace')]))
+            out['status'] = (qc_capacity or {}).get('status') or b.get('status')
             out['completed'] = b.get('completed')
-            out['error'] = b.get('error')
+            out['error'] = (qc_capacity or {}).get('error') or b.get('error')
             out['stacktrace'] = b.get('stacktrace')
+            if qc_capacity:
+                out.update(qc_capacity)
             out['ok'] = bool(out.get('ok') and b.get('completed') and b.get('status') == 'Completed.' and not b.get('error') and not b.get('stacktrace') and 'trader.symbols_input' in (out.get('runtime_statistics') or {}))
             (run_dir/'qc_stage2_backtest_read.json').write_text(json.dumps(b, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         except Exception as e:

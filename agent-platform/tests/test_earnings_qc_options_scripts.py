@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 import types
@@ -813,12 +814,63 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_reports_qc_capacity_without_exposing_cli_output(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
+        helper = (SCRIPTS / "qc_cloud_capacity.py").read_text()
         self.assertIn("BLOCKED_QC_CLOUD_NO_SPARE_NODES", scan)
         self.assertIn("capacity_blocked", scan)
-        self.assertIn("error_class", scan)
-        self.assertIn("no spare nodes available", scan)
+        self.assertIn("classify_qc_cloud_capacity", scan)
+        self.assertIn("error_class", helper)
+        self.assertIn("no spare nodes available", helper)
         self.assertNotIn("'backtest_stdout':", scan)
         self.assertNotIn("'backtest_stderr':", scan)
+
+    def test_stage2_classifies_qc_cloud_rate_limit_from_shared_helper(self):
+        mod = load_script("earnings-qc-options-scan")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        old_workspace = mod.LEAN_WORKSPACE
+        mod.LEAN_WORKSPACE = tmp / "lean"
+        mod.LEAN_WORKSPACE.mkdir()
+        rows = [{"symbol": "AAA", "report_date": "2026-08-01"}]
+        calls = [
+            subprocess.CompletedProcess(["lean", "cloud", "push"], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess(["lean", "cloud", "backtest"], 1, stdout="", stderr="Too many backtest requests; try again later."),
+        ]
+        try:
+            with mock.patch.object(mod, "ensure_qc_project", return_value=(123, "org")), \
+                 mock.patch.object(mod.subprocess, "run", side_effect=calls), \
+                 mock.patch.dict(os.environ, {"QC_STAGE2_BACKTEST_ATTEMPTS": "1"}):
+                out = mod.run_qc_stage2_batch(rows, tmp, 1, datetime.date(2026, 7, 1))
+        finally:
+            mod.LEAN_WORKSPACE = old_workspace
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_RATE_LIMITED")
+        self.assertTrue(out["rate_limited"])
+        self.assertEqual(out["error_class"], "qc_cloud_rate_limit")
+
+    def test_multiyear_reports_qc_capacity_without_strategy_gate_status(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        run_dir = tmp / "run"
+        run_dir.mkdir()
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "forward_candidates": [{"symbol": "WMT", "earnings_date": "2026-08-21", "contracts": []}]
+        }))
+        old_workspace = mod.LEAN_WORKSPACE
+        mod.LEAN_WORKSPACE = tmp / "lean"
+        mod.LEAN_WORKSPACE.mkdir()
+        calls = [
+            subprocess.CompletedProcess(["lean", "cloud", "push"], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess(["lean", "cloud", "backtest"], 1, stdout="", stderr="There are no spare nodes available in your cluster."),
+        ]
+        try:
+            with mock.patch.object(mod, "ensure_project", return_value=456), \
+                 mock.patch.object(mod.subprocess, "run", side_effect=calls):
+                out = mod.run_backtest(run_dir, 10)
+        finally:
+            mod.LEAN_WORKSPACE = old_workspace
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        self.assertNotEqual(out["status"], "BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST")
+        self.assertTrue(out["capacity_blocked"])
 
     def test_stage2_reads_option_chain_values_like_working_qc_templates(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
@@ -1449,6 +1501,79 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(out["failed_chunk_count"], 0)
         self.assertEqual(out["historical_failed_chunk_count"], 1)
         self.assertTrue(out["multiyear_failed"])
+
+    def test_aggregate_keeps_qc_capacity_out_of_historical_failed_chunks(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "qc_processed_row_count": 1,
+            "candidate_details": [{"symbol": "A", "earnings_date": "2026-08-01"}],
+            "funnel": {},
+            "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "results": []},
+        }])
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        self.assertEqual(out["historical_failed_chunk_count"], 0)
+        self.assertTrue(out["qc_capacity_blocked"])
+        self.assertEqual(out["qc_capacity_status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        self.assertFalse(out["multiyear_failed"])
+
+    def test_aggregate_capacity_blocker_prevents_ok_even_with_other_final_candidate(self):
+        mod = load_script("earnings-qc-research")
+        passing_result = {
+            "symbol": "A",
+            "status": "OK",
+            "sample_size": 12,
+            "win_rate": 0.6,
+            "mean_return_pct": 5.0,
+            "median_return_pct": 1.0,
+            "leave_one_out_mean_return_pct": 1.0,
+            "dropout_pct": 0.0,
+            "max_drawdown_pct": 10,
+            "max_loss_pct": -20,
+            "window_results": PASSING_WINDOWS,
+        }
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "A", "earnings_date": "2026-08-01"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": True, "status": "OK_MULTIYEAR_OPTION_PNL_BACKTEST", "results": [passing_result]},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [{"symbol": "B", "earnings_date": "2026-08-02"}],
+                "funnel": {},
+                "chunk_multiyear_backtest": {"ok": False, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "results": []},
+            },
+        ])
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        self.assertTrue(out["qc_capacity_blocked"])
+        self.assertEqual(out["final_candidate_count"], 1)
+        self.assertEqual(out["historical_failed_chunk_count"], 0)
+
+    def test_refresh_summary_preserves_capacity_status(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_symbols_scanned": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [{"symbol": "WMT"}],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        self.assertTrue(out["qc_capacity_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+        self.assertNotEqual(out["status"], "BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST")
 
 if __name__ == "__main__":
     unittest.main()
