@@ -411,7 +411,10 @@ def run_qc_stage2_batch(calendar_rows: list[dict[str, Any]], run_dir: pathlib.Pa
         try:
             b = qc_api('GET', 'backtests/read', {'projectId': project_id, 'backtestId': backtest_id}).get('backtest', {})
             out['runtime_statistics'] = b.get('runtimeStatistics') or {}
-            parts = [out['runtime_statistics'][k] for k in sorted(out['runtime_statistics']) if k.startswith('trader.stage2_json_')]
+            parts = [out['runtime_statistics'][k] for k in sorted(
+                (k for k in out['runtime_statistics'] if k.startswith('trader.stage2_json_')),
+                key=lambda k: int(k.rsplit('_', 1)[1]),
+            )]
             if parts:
                 try:
                     out['parsed_result'] = json.loads(''.join(parts))
