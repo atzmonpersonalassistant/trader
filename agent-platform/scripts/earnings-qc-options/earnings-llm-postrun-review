@@ -92,7 +92,7 @@ WHERE campaign_id = 'daily-earnings-otm'
   AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
   AND COALESCE((parameters_json->>'chunk_size')::int, 25) = 25
   AND COALESCE(parameters_json->>'symbols','') = ''
-  AND COALESCE((parameters_json->>'no_outbox')::boolean, false) = false
+  AND parameters_json->>'no_outbox' = 'false'
   AND COALESCE(parameters_json->>'calendar_source','nasdaq') = 'nasdaq'
 ORDER BY finished_at DESC
 LIMIT 1;
@@ -111,7 +111,7 @@ if [[ -z "$ROW" ]]; then
     AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
     AND COALESCE((parameters_json->>'chunk_size')::int, 25) = 25
     AND COALESCE(parameters_json->>'symbols','') = ''
-    AND COALESCE((parameters_json->>'no_outbox')::boolean, false) = false
+    AND parameters_json->>'no_outbox' = 'false'
     AND COALESCE(parameters_json->>'calendar_source','nasdaq') = 'nasdaq'
   ORDER BY finished_at DESC
   LIMIT 1;
