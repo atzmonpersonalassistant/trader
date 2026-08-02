@@ -1081,7 +1081,14 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['failed_chunk_count'] = len(scanner_failed)
     summary['historical_failed_chunks'] = historical_failed
     summary['historical_failed_chunk_count'] = len(historical_failed)
-    base_scan_ok = not scanner_failed and int(summary.get('qc_symbols_scanned') or 0) >= int(summary.get('calendar_row_count') or summary.get('calendar_universe_count') or 0)
+    calendar_total = int(summary.get('calendar_row_count') or summary.get('calendar_universe_count') or 0)
+    raw_chunk_count = summary.get('chunk_count')
+    scan_artifact_present = int(raw_chunk_count or 0) > 0 or (
+        raw_chunk_count is None and calendar_total > 0
+    ) or (
+        calendar_total == 0 and prior_status == 'BLOCKED_NASDAQ_CALENDAR_EMPTY'
+    )
+    base_scan_ok = scan_artifact_present and not scanner_failed and int(summary.get('qc_symbols_scanned') or 0) >= calendar_total
     all_forward_candidates_had_historical_results = bool(src) and all(c.get('symbol') in result_symbols for c in src)
     # Evidence deficiencies are blocked; terminal no-pass means every consulted candidate was fully evaluated.
     all_consulted_results_had_window_evidence = (
@@ -1145,7 +1152,7 @@ def cmd_historical(args) -> int:
     if not db_after or db_after.get('run_id') != run_id:
         print(json.dumps({'ok': False, 'status': 'DB_SUMMARY_PERSIST_FAILED', 'campaign_id': campaign_id, 'run_id': run_id}, ensure_ascii=False, indent=2)); return 1
     upsert_stage(campaign_id, run_id, f'historical_option_pnl_years_{args.years}', 'completed' if mb and mb.get('status') else 'failed', output_json=mb or {}, artifact_path=str(run_dir/'multiyear_backtest'), params=params, passed=summary.get('final_candidate_count'), blocker=summary.get('status') if not summary.get('ok') else None)
-    print(json.dumps({'ok': bool(mb and summary.get('ok')), 'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'years': args.years, 'multiyear': mb, 'summary': summary}, ensure_ascii=False, indent=2, sort_keys=True))
+    print(json.dumps({'ok': bool(mb and summary.get('ok')), 'status': summary.get('status'), 'campaign_id': campaign_id, 'run_id': run_id, 'run_dir': str(run_dir), 'years': args.years, 'multiyear': mb, 'summary': summary}, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if mb and summary.get('ok') else 2
 
 

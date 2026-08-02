@@ -1,5 +1,8 @@
 import subprocess
 import unittest
+import json
+import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +29,13 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
+
+    def test_daily_selector_requires_explicit_daily_stage_parameters(self):
+        text = SCRIPT.read_text()
+        self.assertIn("parameters_json->>'from_stage' = 'calendar'", text)
+        self.assertIn("parameters_json->>'to_stage' = 'historical_option_pnl'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'", text)
         self.assertIn("flock -n 9", text)
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
@@ -110,7 +120,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
 
     def test_failed_bounded_action_does_not_mark_run_completed(self):
         text = SCRIPT.read_text()
-        self.assertIn('"$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED"', text)
+        self.assertIn('"$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED" || "$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
         self.assertIn('bounded_action_status=$BOUNDED_ACTION_STATUS', text)
         self.assertLess(text.index('bounded_action_status=$BOUNDED_ACTION_STATUS'), text.index('echo "REVIEW_FAILED run_id=$RUN_ID rc=$RC'))
 
@@ -126,11 +136,36 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn('EXECUTED_RESEARCH_BLOCKED', text)
         self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3', text)
+        self.assertIn("(data.get('summary') or {}).get('status')", text)
+        self.assertIn("(data.get('multiyear') or {}).get('status')", text)
         self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade", text)
         self.assertIn("NO_FORWARD_CANDIDATES", text)
         self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", text)
         self.assertIn('earnings-qc-research returns rc=2 for completed research no-trade/blocker', text)
         self.assertIn('"$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
+
+    def test_research_blocker_classifier_falls_back_to_nested_summary_status(self):
+        classifier = self._bounded_action_status_classifier()
+        payload = {"ok": False, "summary": {"status": "NO_FORWARD_CANDIDATES"}}
+        self.assertEqual(self._run_classifier(classifier, payload), 0)
+
+    def test_research_blocker_classifier_falls_back_to_nested_multiyear_status(self):
+        classifier = self._bounded_action_status_classifier()
+        payload = {"ok": False, "multiyear": {"status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES"}}
+        self.assertEqual(self._run_classifier(classifier, payload), 0)
+
+    def _bounded_action_status_classifier(self):
+        text = SCRIPT.read_text()
+        start = text.index("import json, pathlib, sys\ntry:\n    data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))")
+        end = text.index("\nPY_STATUS", start)
+        return text[start:end]
+
+    def _run_classifier(self, classifier, payload):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8") as f:
+            json.dump(payload, f)
+            f.flush()
+            proc = subprocess.run([sys.executable, "-c", classifier, f.name], check=False)
+        return proc.returncode
 
 
 if __name__ == "__main__":

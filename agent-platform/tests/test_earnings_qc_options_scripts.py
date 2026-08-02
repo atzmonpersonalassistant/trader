@@ -112,8 +112,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
              mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: calls.append("persist")), \
              mock.patch.object(mod, "latest_db_run", return_value={"run_id": "db-run", "run_dir": str(run_dir)}), \
              mock.patch.object(mod, "latest_run_dir", side_effect=AssertionError("state file fallback should not be used when DB has a run")):
-            rc = mod.cmd_historical(args)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = mod.cmd_historical(args)
         self.assertEqual(rc, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["status"], "OK_FULL_QC_SCAN")
+        self.assertEqual(payload["summary"]["status"], "OK_FULL_QC_SCAN")
         self.assertLess(calls.index("run"), calls.index("stage"))
 
     def test_historical_without_multiyear_artifact_does_not_succeed_from_stale_summary(self):
@@ -1207,6 +1212,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 2,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1220,6 +1226,48 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["multiyear_failed"])
         self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_refresh_summary_no_forward_candidates_requires_scan_artifact(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_FULL_SCAN_NOT_RUN",
+            "calendar_row_count": 0,
+            "calendar_universe_count": 0,
+            "qc_symbols_scanned": 0,
+            "chunk_count": 0,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_FULL_SCAN_NOT_RUN")
+
+    def test_refresh_summary_zero_calendar_scan_can_finish_cleanly(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_NASDAQ_CALENDAR_EMPTY",
+            "calendar_row_count": 0,
+            "calendar_universe_count": 0,
+            "qc_symbols_scanned": 0,
+            "chunk_count": 1,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["status"], "NO_FORWARD_CANDIDATES")
 
     def test_refresh_summary_no_forward_candidates_does_not_hide_missing_runner(self):
         mod = load_script("earnings-qc-research")
