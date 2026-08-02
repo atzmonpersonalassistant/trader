@@ -29,6 +29,13 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
+
+    def test_daily_selector_requires_explicit_daily_stage_parameters(self):
+        text = SCRIPT.read_text()
+        self.assertIn("parameters_json->>'from_stage' = 'calendar'", text)
+        self.assertIn("parameters_json->>'to_stage' = 'historical_option_pnl'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'", text)
         self.assertIn("flock -n 9", text)
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)

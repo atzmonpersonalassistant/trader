@@ -85,6 +85,14 @@ FROM earnings_cache.research_runs
 WHERE campaign_id = 'daily-earnings-otm'
   AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
   AND finished_at IS NOT NULL
+  AND parameters_json->>'from_stage' = 'calendar'
+  AND parameters_json->>'to_stage' = 'historical_option_pnl'
+  AND COALESCE((parameters_json->>'years')::int, 1) = 1
+  AND COALESCE((parameters_json->>'parallel')::int, 1) = 1
+  AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
+  AND COALESCE((parameters_json->>'chunk_size')::int, 25) = 25
+  AND COALESCE(parameters_json->>'symbols','') = ''
+  AND COALESCE(parameters_json->>'calendar_source','nasdaq') = 'nasdaq'
 ORDER BY finished_at DESC
 LIMIT 1;
 ")"
@@ -95,8 +103,8 @@ if [[ -z "$ROW" ]]; then
   FROM earnings_cache.research_runs
   WHERE run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
     AND finished_at IS NOT NULL
-    AND COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'
-    AND COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'
+    AND parameters_json->>'from_stage' = 'calendar'
+    AND parameters_json->>'to_stage' = 'historical_option_pnl'
     AND COALESCE((parameters_json->>'years')::int, 1) = 1
     AND COALESCE((parameters_json->>'parallel')::int, 1) = 1
     AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
