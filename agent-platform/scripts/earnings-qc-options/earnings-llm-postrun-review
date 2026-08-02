@@ -348,7 +348,8 @@ ok = data.get('ok')
 # earnings-qc-research returns rc=2 for completed research no-trade/blocker
 # outcomes as well as for invalid requests. Treat only known research blocker
 # payloads as executed; wrapper/request errors still remain FAILED.
-if ok is False and status.startswith(('BLOCKED_', 'PARTIAL_')):
+terminal_no_trade = status in ('NO_FORWARD_CANDIDATES', 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL')
+if ok is False and (status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade):
     raise SystemExit(0)
 raise SystemExit(1)
 PY_STATUS

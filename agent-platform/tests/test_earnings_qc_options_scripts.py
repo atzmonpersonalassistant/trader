@@ -972,6 +972,35 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn(("chunks", 10), calls)
         self.assertIn(("params", 10), calls)
 
+    def test_run_multiyear_if_requested_persists_timeout_object(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        runner = tmp / "earnings-qc-multiyear-backtest"
+        runner.write_text("#!/usr/bin/env bash\n")
+        runner.chmod(0o755)
+        mod.MULTIYEAR = runner
+        args = types.SimpleNamespace(
+            end_to_end=True,
+            years=1,
+            validation_years=10,
+            entry_window=None,
+            exit_days_before=None,
+            exit_policy=None,
+            historical_resolution=None,
+            max_contracts=None,
+            path_metrics=None,
+        )
+        exc = subprocess.TimeoutExpired(["multiyear"], 7, output="stdout text", stderr="stderr text")
+        with mock.patch.dict(os.environ, {"QC_MULTIYEAR_TIMEOUT_SECONDS": "7"}), \
+             mock.patch.object(mod.subprocess, "run", side_effect=exc):
+            out = mod.run_multiyear_if_requested(tmp, args)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_MULTIYEAR_TIMEOUT")
+        self.assertEqual(out["blocked_reason"], "multiyear runner timed out after 7s")
+        self.assertIsNone(out["returncode"])
+        self.assertEqual((tmp / "multiyear_runner.stdout.json").read_text(), "stdout text")
+        self.assertEqual((tmp / "multiyear_runner.stderr.log").read_text(), "stderr text")
+
 
     def test_cmd_run_rejects_put_or_both_for_historical_until_supported(self):
         mod = load_script("earnings-qc-research")
@@ -1187,9 +1216,54 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
         out = mod.refresh_summary_after_historical(tmp, mb)
         self.assertEqual(out["status"], "NO_FORWARD_CANDIDATES")
+        self.assertTrue(out["ok"])
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["multiyear_failed"])
         self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_refresh_summary_no_forward_candidates_does_not_hide_missing_runner(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": True,
+            "status": "OK_FULL_QC_SCAN",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 2,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "BLOCKED_MULTIYEAR_RUNNER_MISSING", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_MULTIYEAR_RUNNER_MISSING")
+        self.assertTrue(out["multiyear_failed"])
+        self.assertEqual(out["failed_chunk_count"], 0)
+
+    def test_refresh_summary_no_forward_candidates_preserves_partial_scan_status(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "PARTIAL_FULL_QC_SCAN",
+            "calendar_row_count": 2,
+            "calendar_universe_count": 2,
+            "qc_symbols_scanned": 1,
+            "failed_chunks": [{"status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"}],
+            "failed_chunk_count": 1,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "PARTIAL_FULL_QC_SCAN")
+        self.assertEqual(out["failed_chunk_count"], 1)
+        self.assertFalse(out["multiyear_failed"])
 
     def test_chunked_no_pass_does_not_mask_scanner_failures(self):
         mod = load_script("earnings-qc-research")
@@ -1487,6 +1561,66 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(out["forward_candidate_count"], 0)
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_serial_chunk_runner_records_exceptions_and_continues(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        calls = []
+
+        def fake_run_chunk_end_to_end(run_dir, offset, *args, **kwargs):
+            calls.append(offset)
+            if offset == 10:
+                raise RuntimeError("boom")
+            return {"ok": True, "_chunk_offset": offset}
+
+        with mock.patch.object(mod, "run_chunk_end_to_end", fake_run_chunk_end_to_end), mock.patch.dict(os.environ, {"QC_FULL_CHUNK_DELAY_SECONDS": "0"}):
+            mod.run_chunks_parallel(tmp, [10, 20], 5, 1, 10, True)
+
+        self.assertEqual(calls, [10, 20])
+        written = json.loads((tmp / "chunk-10.stdout.json").read_text())
+        self.assertEqual(written["status"], "BLOCKED_CHUNK_EXCEPTION")
+        self.assertIn("boom", written["blocked_reason"])
+
+    def test_retry_failed_includes_capacity_blocked_offsets(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        retried = []
+        summaries = [{
+            "failed_chunks": [],
+            "historical_failed_chunks": [],
+            "qc_capacity_blocked_chunks": [{"offset": 25, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES"}],
+        }]
+
+        args = types.SimpleNamespace(
+            run_dir=str(tmp),
+            offset=None,
+            validation_years=10,
+            years=1,
+            chunk_size=5,
+            end_to_end=True,
+            notify=False,
+        )
+        with mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=lambda *a, **k: retried.append(a[1])), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}):
+            rc = mod.cmd_retry_failed(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(retried, [25])
+
+    def test_run_chunk_persists_capacity_status_for_bad_json_stdout(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        proc = types.SimpleNamespace(
+            stdout="not json",
+            stderr="QuantConnect Cloud has no spare nodes available",
+            returncode=1,
+        )
+
+        with mock.patch.object(mod.subprocess, "run", return_value=proc):
+            out = mod.run_chunk(tmp, 0, 5)
+
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        reloaded = json.loads((tmp / "chunk-0.stdout.json").read_text())
+        self.assertEqual(reloaded["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
 
     def test_aggregate_separates_multiyear_infra_failures_from_scanner_chunks(self):
         mod = load_script("earnings-qc-research")

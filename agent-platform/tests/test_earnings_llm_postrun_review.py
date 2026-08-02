@@ -126,7 +126,9 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn('EXECUTED_RESEARCH_BLOCKED', text)
         self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3', text)
-        self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_'))", text)
+        self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade", text)
+        self.assertIn("NO_FORWARD_CANDIDATES", text)
+        self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", text)
         self.assertIn('earnings-qc-research returns rc=2 for completed research no-trade/blocker', text)
         self.assertIn('"$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
 

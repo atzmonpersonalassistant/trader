@@ -448,13 +448,39 @@ def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list
     if snapshot.exists():
         cmd += ['--calendar-snapshot', str(snapshot)]
     started = time.time()
-    p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_FULL_CHUNK_TIMEOUT_SECONDS','1200')))
+    timeout = int(os.environ.get('QC_FULL_CHUNK_TIMEOUT_SECONDS','1200'))
+    try:
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ''
+        stderr = e.stderr or ''
+        out_path.write_text(str(stdout))
+        err_path.write_text(str(stderr))
+        d = {
+            'ok': False,
+            'status': 'BLOCKED_CHUNK_TIMEOUT',
+            'blocked_reason': f'chunk timed out after {timeout}s',
+            '_chunk_offset': offset,
+            '_chunk_returncode': None,
+            '_chunk_seconds': round(time.time() - started, 1),
+            'qc_batch_count': 0,
+        }
+        capacity = classify_qc_cloud_capacity(str(stdout) + '\n' + str(stderr))
+        if capacity:
+            d.update(capacity)
+        out_path.write_text(json.dumps(d, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
+        append_chunk_meta(run_dir, d)
+        return d
     out_path.write_text(p.stdout)
     err_path.write_text(p.stderr)
     try:
         d = json.loads(p.stdout)
     except Exception as e:
         d = {'ok': False, 'status': 'BLOCKED_CHUNK_BAD_JSON', 'blocked_reason': repr(e), 'returncode': p.returncode}
+        capacity = classify_qc_cloud_capacity(p.stdout + '\n' + p.stderr)
+        if capacity:
+            d.update(capacity)
+        out_path.write_text(json.dumps(d, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
     d['_chunk_offset'] = offset
     d['_chunk_returncode'] = p.returncode
     d['_chunk_seconds'] = round(time.time() - started, 1)
@@ -497,7 +523,24 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
         add_if_value(cmd, flag, getattr(args, attr, None) if args is not None else None)
     # The current multiyear runner uses one QC project name. Serialize this part to avoid project push/backtest collisions.
     with MULTIYEAR_LOCK:
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
+        timeout = int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400'))
+        try:
+            p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            stdout = e.stdout or ''
+            stderr = e.stderr or ''
+            (chunk_dir/'multiyear_runner.stdout.json').write_text(str(stdout))
+            (chunk_dir/'multiyear_runner.stderr.log').write_text(str(stderr))
+            mb = {
+                'ok': False,
+                'status': 'BLOCKED_MULTIYEAR_TIMEOUT',
+                'blocked_reason': f'multiyear runner timed out after {timeout}s',
+                'returncode': None,
+            }
+            capacity = classify_qc_cloud_capacity(str(stdout) + '\n' + str(stderr))
+            if capacity:
+                mb.update(capacity)
+            return mb
     (chunk_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
     (chunk_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
     try:
@@ -706,7 +749,13 @@ def run_chunks_parallel(run_dir: pathlib.Path, offsets: list[int], batch_size: i
     if parallel == 1:
         delay = float(os.environ.get('QC_FULL_CHUNK_DELAY_SECONDS', '30'))
         for i, off in enumerate(offsets):
-            run_chunk_end_to_end(run_dir, off, batch_size, validation_years, end_to_end, symbols, args=args)
+            try:
+                run_chunk_end_to_end(run_dir, off, batch_size, validation_years, end_to_end, symbols, args=args)
+            except Exception as e:
+                d = {'ok': False, 'status': 'BLOCKED_CHUNK_EXCEPTION', 'blocked_reason': repr(e), '_chunk_offset': off, '_chunk_seconds': None, 'qc_batch_count': 0}
+                (run_dir / f'chunk-{off}.stdout.json').write_text(json.dumps(d, ensure_ascii=False, indent=2))
+                (run_dir / f'chunk-{off}.stderr.log').write_text(repr(e))
+                append_chunk_meta(run_dir, d)
             if delay > 0 and i < len(offsets) - 1:
                 time.sleep(delay)
         return
@@ -739,7 +788,24 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('path_metrics', '--path-metrics'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None))
-    p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
+    timeout = int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400'))
+    try:
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ''
+        stderr = e.stderr or ''
+        (run_dir/'multiyear_runner.stdout.json').write_text(str(stdout))
+        (run_dir/'multiyear_runner.stderr.log').write_text(str(stderr))
+        out = {
+            'ok': False,
+            'status': 'BLOCKED_MULTIYEAR_TIMEOUT',
+            'blocked_reason': f'multiyear runner timed out after {timeout}s',
+            'returncode': None,
+        }
+        capacity = classify_qc_cloud_capacity(str(stdout) + '\n' + str(stderr))
+        if capacity:
+            out.update(capacity)
+        return out
     (run_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
     (run_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
     try:
@@ -882,7 +948,7 @@ def cmd_retry_failed(args) -> int:
     if not run_dir or not run_dir.exists():
         print(json.dumps({'ok': False, 'status':'NO_RUN_FOUND'})); return 1
     summary = aggregate(load_chunks(run_dir))
-    failed = list(summary.get('failed_chunks') or []) + list(summary.get('historical_failed_chunks') or [])
+    failed = list(summary.get('failed_chunks') or []) + list(summary.get('historical_failed_chunks') or []) + list(summary.get('qc_capacity_blocked_chunks') or [])
     if args.offset is not None:
         failed = [{'offset': args.offset}]
     else:
@@ -963,6 +1029,7 @@ VALUES ({sql_lit(did)}, {sql_lit(campaign_id)}, {sql_lit(args.previous_run_id)},
 def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> dict:
     fs = run_dir / 'full_summary.json'
     summary = json.loads(fs.read_text()) if fs.exists() else {'ok': False, 'status': 'NO_FULL_SUMMARY'}
+    prior_status = summary.get('status')
     if not mb:
         src = summary.get('forward_candidates') or summary.get('candidates') or []
         summary['multiyear_backtest'] = None
@@ -994,11 +1061,11 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['candidates'] = summary['final_candidates']
     summary['candidate_count'] = len(summary['final_candidates'])
     summary['final_candidate_count'] = len(summary['final_candidates'])
-    # A historical refresh with no forward candidates is a terminal no-op, not an
-    # infrastructure failure to retry/debug. Classify infra failures only when
-    # there was actually something to validate.
-    capacity_blocked = bool(src) and bool(mb.get('ok') is False and is_qc_cloud_capacity_status(mb.get('status')))
-    infra_failed = bool(src) and bool(mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')))
+    mb_status = mb.get('status')
+    mb_ok = mb.get('ok')
+    mb_no_forward = mb_status == 'NO_FORWARD_CANDIDATES'
+    capacity_blocked = bool(mb.get('ok') is False and not mb_no_forward and is_qc_cloud_capacity_status(mb_status))
+    infra_failed = bool(mb.get('ok') is False and not mb_no_forward and multiyear_infrastructure_failed(mb_status))
     historical_failed = list(summary.get('historical_failed_chunks') or [])
     scanner_failed = []
     for x in (summary.get('failed_chunks') or []):
@@ -1025,26 +1092,31 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
         )
     )
     no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in src)
-    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb.get('status'), mb.get('ok'))
+    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb_status, mb_ok)
     summary['historical_gate_no_pass'] = no_pass
     summary['historical_gate_blocked'] = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and (capacity_blocked or infra_failed or not no_pass)
     summary['multiyear_failed'] = infra_failed
     summary['qc_capacity_blocked'] = capacity_blocked
-    summary['ok'] = bool(base_scan_ok) and bool(mb.get('ok')) and bool(summary['final_candidates'])
-    if summary['ok']:
+    if not src:
+        summary['ok'] = bool(base_scan_ok) and (bool(mb_ok) or mb_no_forward)
+    else:
+        summary['ok'] = bool(base_scan_ok) and bool(mb.get('ok')) and bool(summary['final_candidates'])
+    if summary['ok'] and not src:
+        summary['status'] = 'NO_FORWARD_CANDIDATES'
+    elif summary['ok']:
         summary['status'] = 'OK_FULL_QC_SCAN'
     elif no_pass:
         summary['status'] = 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'
     elif bool(src) and bool(base_scan_ok) and no_forward_candidates_preblocked and all_forward_candidates_had_historical_results and not all_consulted_results_had_window_evidence:
         summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE'
     elif capacity_blocked:
-        summary['status'] = mb.get('status')
+        summary['status'] = mb_status
     elif infra_failed:
-        summary['status'] = 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
+        summary['status'] = mb_status or 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     elif bool(src) and not summary['final_candidates']:
         summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_GATE'
     elif not src:
-        summary['status'] = 'NO_FORWARD_CANDIDATES'
+        summary['status'] = prior_status if prior_status and prior_status != 'NO_FORWARD_CANDIDATES' else 'PARTIAL_FULL_QC_SCAN'
     if fs.exists():
         fs.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
     return summary
