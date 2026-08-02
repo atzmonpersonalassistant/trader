@@ -371,6 +371,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "max_expiration_days": 45,
                 "max_expiry_after_earnings_days": 10,
                 "min_bid": 0.01,
+                "max_spread": 0.35,
                 "max_spread_pct": 0.7,
                 "min_relative_spread": 0.2,
                 "vol_spread_factor": 0.8,
@@ -388,12 +389,27 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("if dte < 5 or dte > 45: continue", main)
         self.assertIn("self.max_days_after_earnings = 10", main)
         self.assertIn("self.min_bid = 0.010000", main)
+        self.assertIn("self.max_spread = 0.350000", main)
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
+
+    def test_multiyear_generated_qc_algorithm_preserves_default_dte_and_spread(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+            8,
+            {},
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("strikes(-50, 300).expiration(timedelta(1), timedelta(60))", main)
+        self.assertIn("if dte < 1 or dte > 60: continue", main)
+        self.assertIn("self.max_spread = 0.250000", main)
 
     def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -1095,7 +1111,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
@@ -1106,6 +1122,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("3", argv)
         self.assertIn("--max-premium", argv)
         self.assertIn("0.25", argv)
+        self.assertIn("--max-spread", argv)
+        self.assertIn("0.35", argv)
         self.assertIn("--strike-range", argv)
         self.assertIn("-20:100", argv)
         self.assertIn("--max-expiration-days", argv)
