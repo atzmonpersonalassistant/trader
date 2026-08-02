@@ -347,6 +347,54 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("expected_option_move", main)
         self.assertIn("allowed_spread", main)
 
+    def test_multiyear_generated_qc_algorithm_threads_runtime_parameters(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{
+                "symbol": "OPEN",
+                "earnings_date": "2026-08-04",
+                "spot": 4.79,
+                "contracts": [
+                    {"strike": 6, "ask": 0.25},
+                    {"strike": 7, "ask": 0.30},
+                    {"strike": 8, "ask": 0.35},
+                ],
+            }],
+            8,
+            {
+                "max_premium": 0.25,
+                "entry_window": "14:35",
+                "strike_range": "-20:100",
+                "min_expiration_days": 5,
+                "max_expiration_days": 45,
+                "max_expiry_after_earnings_days": 10,
+                "min_bid": 0.01,
+                "max_spread_pct": 0.7,
+                "min_relative_spread": 0.2,
+                "vol_spread_factor": 0.8,
+                "expected_move_spread_fraction": 0.3,
+                "min_open_interest": 11,
+                "min_volume": 4,
+                "max_contracts": 2,
+            },
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("self.max_premium = 0.250000", main)
+        self.assertIn("self.entry_min_days = 14", main)
+        self.assertIn("self.entry_max_days = 35", main)
+        self.assertIn("strikes(-20, 100).expiration(timedelta(5), timedelta(45))", main)
+        self.assertIn("if dte < 5 or dte > 45: continue", main)
+        self.assertIn("self.max_days_after_earnings = 10", main)
+        self.assertIn("self.min_bid = 0.010000", main)
+        self.assertIn("self.max_spread_pct = 0.700000", main)
+        self.assertIn("self.min_open_interest = 11", main)
+        self.assertIn("self.min_volume = 4", main)
+        self.assertIn('"strike": 6', main)
+        self.assertIn('"strike": 7', main)
+        self.assertNotIn('"strike": 8', main)
+
     def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         project_dir = pathlib.Path(tempfile.mkdtemp())
@@ -1047,7 +1095,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday")
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
@@ -1056,6 +1104,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("minute", argv)
         self.assertIn("--max-contracts", argv)
         self.assertIn("3", argv)
+        self.assertIn("--max-premium", argv)
+        self.assertIn("0.25", argv)
+        self.assertIn("--strike-range", argv)
+        self.assertIn("-20:100", argv)
+        self.assertIn("--max-expiration-days", argv)
+        self.assertIn("45", argv)
 
     def test_run_now_passes_calendar_window_and_stage2_params_to_probe(self):
         mod = load_script("earnings-qc-options-scan")

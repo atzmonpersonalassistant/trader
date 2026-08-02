@@ -519,6 +519,18 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
         ('historical_resolution', '--historical-resolution'),
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
+        ('max_premium', '--max-premium'),
+        ('min_bid', '--min-bid'),
+        ('max_spread_pct', '--max-spread-pct'),
+        ('min_relative_spread', '--min-relative-spread'),
+        ('vol_spread_factor', '--vol-spread-factor'),
+        ('expected_move_spread_fraction', '--expected-move-spread-fraction'),
+        ('min_open_interest', '--min-open-interest'),
+        ('min_volume', '--min-volume'),
+        ('strike_range', '--strike-range'),
+        ('min_expiration_days', '--min-expiration-days'),
+        ('max_expiration_days', '--max-expiration-days'),
+        ('max_expiry_after_earnings_days', '--max-expiry-after-earnings-days'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None) if args is not None else None)
     # The current multiyear runner uses one QC project name. Serialize this part to avoid project push/backtest collisions.
@@ -786,6 +798,18 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('historical_resolution', '--historical-resolution'),
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
+        ('max_premium', '--max-premium'),
+        ('min_bid', '--min-bid'),
+        ('max_spread_pct', '--max-spread-pct'),
+        ('min_relative_spread', '--min-relative-spread'),
+        ('vol_spread_factor', '--vol-spread-factor'),
+        ('expected_move_spread_fraction', '--expected-move-spread-fraction'),
+        ('min_open_interest', '--min-open-interest'),
+        ('min_volume', '--min-volume'),
+        ('strike_range', '--strike-range'),
+        ('min_expiration_days', '--min-expiration-days'),
+        ('max_expiration_days', '--max-expiration-days'),
+        ('max_expiry_after_earnings_days', '--max-expiry-after-earnings-days'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None))
     timeout = int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400'))
