@@ -788,7 +788,24 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('path_metrics', '--path-metrics'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None))
-    p = subprocess.run(cmd, text=True, capture_output=True, timeout=int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400')))
+    timeout = int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400'))
+    try:
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        stdout = e.stdout or ''
+        stderr = e.stderr or ''
+        (run_dir/'multiyear_runner.stdout.json').write_text(str(stdout))
+        (run_dir/'multiyear_runner.stderr.log').write_text(str(stderr))
+        out = {
+            'ok': False,
+            'status': 'BLOCKED_MULTIYEAR_TIMEOUT',
+            'blocked_reason': f'multiyear runner timed out after {timeout}s',
+            'returncode': None,
+        }
+        capacity = classify_qc_cloud_capacity(str(stdout) + '\n' + str(stderr))
+        if capacity:
+            out.update(capacity)
+        return out
     (run_dir/'multiyear_runner.stdout.json').write_text(p.stdout)
     (run_dir/'multiyear_runner.stderr.log').write_text(p.stderr)
     try:

@@ -972,6 +972,35 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn(("chunks", 10), calls)
         self.assertIn(("params", 10), calls)
 
+    def test_run_multiyear_if_requested_persists_timeout_object(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        runner = tmp / "earnings-qc-multiyear-backtest"
+        runner.write_text("#!/usr/bin/env bash\n")
+        runner.chmod(0o755)
+        mod.MULTIYEAR = runner
+        args = types.SimpleNamespace(
+            end_to_end=True,
+            years=1,
+            validation_years=10,
+            entry_window=None,
+            exit_days_before=None,
+            exit_policy=None,
+            historical_resolution=None,
+            max_contracts=None,
+            path_metrics=None,
+        )
+        exc = subprocess.TimeoutExpired(["multiyear"], 7, output="stdout text", stderr="stderr text")
+        with mock.patch.dict(os.environ, {"QC_MULTIYEAR_TIMEOUT_SECONDS": "7"}), \
+             mock.patch.object(mod.subprocess, "run", side_effect=exc):
+            out = mod.run_multiyear_if_requested(tmp, args)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_MULTIYEAR_TIMEOUT")
+        self.assertEqual(out["blocked_reason"], "multiyear runner timed out after 7s")
+        self.assertIsNone(out["returncode"])
+        self.assertEqual((tmp / "multiyear_runner.stdout.json").read_text(), "stdout text")
+        self.assertEqual((tmp / "multiyear_runner.stderr.log").read_text(), "stderr text")
+
 
     def test_cmd_run_rejects_put_or_both_for_historical_until_supported(self):
         mod = load_script("earnings-qc-research")
