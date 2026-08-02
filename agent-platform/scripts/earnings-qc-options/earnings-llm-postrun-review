@@ -337,22 +337,10 @@ PY
   set -e
   if [[ "$BOUNDED_ACTION_RC" -eq 0 ]]; then
     BOUNDED_ACTION_STATUS="EXECUTED"
-  elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3 - "$BOUNDED_STDOUT" <<'PY_STATUS'
-import json, pathlib, sys
-try:
-    data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
-except Exception:
-    raise SystemExit(1)
-status = str(data.get('status') or '')
-ok = data.get('ok')
 # earnings-qc-research returns rc=2 for completed research no-trade/blocker
 # outcomes as well as for invalid requests. Treat only known research blocker
 # payloads as executed; wrapper/request errors still remain FAILED.
-terminal_no_trade = status in ('NO_FORWARD_CANDIDATES', 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL')
-if ok is False and (status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade):
-    raise SystemExit(0)
-raise SystemExit(1)
-PY_STATUS
+  elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action "$BOUNDED_STDOUT"
   then
     BOUNDED_ACTION_STATUS="EXECUTED_RESEARCH_BLOCKED"
   else

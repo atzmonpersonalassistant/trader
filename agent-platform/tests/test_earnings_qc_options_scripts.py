@@ -99,6 +99,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "status": "OK_FULL_QC_SCAN",
             "calendar_row_count": 1,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "forward_candidates": [{"symbol": "AAA"}],
             "final_candidates": [],
         }))
@@ -1123,6 +1124,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 2,
+            "chunk_count": 1,
             "failed_chunks": [{"status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE"}],
             "failed_chunk_count": 1,
             "aggregate_funnel": {},
@@ -1185,6 +1187,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
                 "calendar_row_count": 1,
                 "calendar_universe_count": 1,
                 "qc_symbols_scanned": 1,
+                "chunk_count": 1,
                 "failed_chunks": [],
                 "failed_chunk_count": 0,
                 "aggregate_funnel": {},
@@ -1207,6 +1210,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 2,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1221,6 +1225,29 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         self.assertFalse(out["multiyear_failed"])
         self.assertEqual(out["failed_chunk_count"], 0)
 
+    def test_refresh_summary_empty_run_dir_does_not_become_no_forward_success(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        (tmp / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_FULL_SCAN_NOT_RUN",
+            "calendar_row_count": 0,
+            "calendar_universe_count": 0,
+            "qc_symbols_scanned": 0,
+            "chunk_count": 0,
+            "failed_chunks": [],
+            "failed_chunk_count": 0,
+            "aggregate_funnel": {},
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
+        out = mod.refresh_summary_after_historical(tmp, mb)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["status"], "BLOCKED_FULL_SCAN_NOT_RUN")
+        self.assertFalse(out["historical_gate_blocked"])
+        self.assertFalse(out["multiyear_failed"])
+
     def test_refresh_summary_no_forward_candidates_does_not_hide_missing_runner(self):
         mod = load_script("earnings-qc-research")
         tmp = pathlib.Path(tempfile.mkdtemp())
@@ -1230,6 +1257,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 2,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1252,6 +1280,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "failed_chunks": [{"status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"}],
             "failed_chunk_count": 1,
             "aggregate_funnel": {},
@@ -1376,6 +1405,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 2,
             "calendar_universe_count": 2,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "failed_chunks": [{"status": "BLOCKED_QC_BATCH_FAILED", "blocked_reason": "QC batch failed"}],
             "failed_chunk_count": 1,
             "aggregate_funnel": {},
@@ -1398,6 +1428,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 1,
             "calendar_universe_count": 1,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1420,6 +1451,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 1,
             "calendar_universe_count": 1,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1459,6 +1491,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
             "calendar_row_count": 1,
             "calendar_universe_count": 1,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "failed_chunks": [],
             "failed_chunk_count": 0,
             "aggregate_funnel": {},
@@ -1525,6 +1558,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             "calendar_row_count": 10,
             "calendar_universe_count": 10,
             "qc_symbols_scanned": 9,
+            "chunk_count": 1,
             "aggregate_funnel": {},
             "forward_candidates": [{"symbol": "A"}],
             "failed_chunks": [
@@ -1698,6 +1732,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             "calendar_row_count": 1,
             "calendar_universe_count": 1,
             "qc_symbols_scanned": 1,
+            "chunk_count": 1,
             "aggregate_funnel": {},
             "forward_candidates": [{"symbol": "WMT"}],
             "final_candidates": [],

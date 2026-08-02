@@ -1,9 +1,12 @@
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review"
+CLASSIFIER = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-qc-classify-bounded-action"
 
 
 class EarningsLlmPostrunReviewTests(unittest.TestCase):
@@ -123,14 +126,40 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
 
 
     def test_research_blocker_returncode_two_counts_as_executed_action(self):
-        text = SCRIPT.read_text()
+        text = SCRIPT.read_text() + CLASSIFIER.read_text()
         self.assertIn('EXECUTED_RESEARCH_BLOCKED', text)
-        self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3', text)
-        self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade", text)
+        self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action "$BOUNDED_STDOUT"', text)
         self.assertIn("NO_FORWARD_CANDIDATES", text)
         self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", text)
         self.assertIn('earnings-qc-research returns rc=2 for completed research no-trade/blocker', text)
         self.assertIn('"$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
+
+    def test_bounded_action_classifier_accepts_actual_research_stdout_shapes(self):
+        payloads = [
+            {"ok": False, "status": "NO_FORWARD_CANDIDATES"},
+            {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+            {
+                "ok": False,
+                "campaign_id": "daily-earnings-otm",
+                "run_id": "run-a",
+                "run_dir": "/agents/research/reports/run-a",
+                "years": 10,
+                "multiyear": {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+                "summary": {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+            },
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                path = Path(tempfile.mkdtemp()) / "stdout.json"
+                path.write_text(json.dumps(payload))
+                result = subprocess.run([str(CLASSIFIER), str(path)], check=False)
+                self.assertEqual(result.returncode, 0)
+
+    def test_bounded_action_classifier_rejects_wrapper_errors(self):
+        path = Path(tempfile.mkdtemp()) / "stdout.json"
+        path.write_text(json.dumps({"ok": False, "status": "INVALID_BOUNDED_ACTION"}))
+        result = subprocess.run([str(CLASSIFIER), str(path)], check=False)
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":
