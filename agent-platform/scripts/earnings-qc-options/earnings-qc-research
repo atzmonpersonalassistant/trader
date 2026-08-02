@@ -1012,6 +1012,7 @@ VALUES ({sql_lit(did)}, {sql_lit(campaign_id)}, {sql_lit(args.previous_run_id)},
 def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> dict:
     fs = run_dir / 'full_summary.json'
     summary = json.loads(fs.read_text()) if fs.exists() else {'ok': False, 'status': 'NO_FULL_SUMMARY'}
+    prior_status = summary.get('status')
     if not mb:
         src = summary.get('forward_candidates') or summary.get('candidates') or []
         summary['multiyear_backtest'] = None
@@ -1043,11 +1044,11 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     summary['candidates'] = summary['final_candidates']
     summary['candidate_count'] = len(summary['final_candidates'])
     summary['final_candidate_count'] = len(summary['final_candidates'])
-    # A historical refresh with no forward candidates is a terminal no-op, not an
-    # infrastructure failure to retry/debug. Classify infra failures only when
-    # there was actually something to validate.
-    capacity_blocked = bool(src) and bool(mb.get('ok') is False and is_qc_cloud_capacity_status(mb.get('status')))
-    infra_failed = bool(src) and bool(mb.get('ok') is False and multiyear_infrastructure_failed(mb.get('status')))
+    mb_status = mb.get('status')
+    mb_ok = mb.get('ok')
+    mb_no_forward = mb_status == 'NO_FORWARD_CANDIDATES'
+    capacity_blocked = bool(mb.get('ok') is False and not mb_no_forward and is_qc_cloud_capacity_status(mb_status))
+    infra_failed = bool(mb.get('ok') is False and not mb_no_forward and multiyear_infrastructure_failed(mb_status))
     historical_failed = list(summary.get('historical_failed_chunks') or [])
     scanner_failed = []
     for x in (summary.get('failed_chunks') or []):
@@ -1074,13 +1075,13 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
         )
     )
     no_forward_candidates_preblocked = not any(candidate_historical_status_blocks(c) for c in src)
-    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb.get('status'), mb.get('ok'))
+    no_pass = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and all_forward_candidates_had_historical_results and all_consulted_results_had_window_evidence and no_forward_candidates_preblocked and multiyear_completed_without_infra_failure(mb_status, mb_ok)
     summary['historical_gate_no_pass'] = no_pass
     summary['historical_gate_blocked'] = bool(src) and bool(base_scan_ok) and not summary['final_candidates'] and (capacity_blocked or infra_failed or not no_pass)
     summary['multiyear_failed'] = infra_failed
     summary['qc_capacity_blocked'] = capacity_blocked
     if not src:
-        summary['ok'] = bool(base_scan_ok) and not scanner_failed
+        summary['ok'] = bool(base_scan_ok) and (bool(mb_ok) or mb_no_forward)
     else:
         summary['ok'] = bool(base_scan_ok) and bool(mb.get('ok')) and bool(summary['final_candidates'])
     if summary['ok'] and not src:
@@ -1092,13 +1093,13 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     elif bool(src) and bool(base_scan_ok) and no_forward_candidates_preblocked and all_forward_candidates_had_historical_results and not all_consulted_results_had_window_evidence:
         summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE'
     elif capacity_blocked:
-        summary['status'] = mb.get('status')
+        summary['status'] = mb_status
     elif infra_failed:
-        summary['status'] = 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
+        summary['status'] = mb_status or 'BLOCKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     elif bool(src) and not summary['final_candidates']:
         summary['status'] = 'BLOCKED_HISTORICAL_OPTION_PNL_GATE'
     elif not src:
-        summary['status'] = 'NO_FORWARD_CANDIDATES'
+        summary['status'] = prior_status if prior_status and prior_status != 'NO_FORWARD_CANDIDATES' else 'PARTIAL_FULL_QC_SCAN'
     if fs.exists():
         fs.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + '\n')
     return summary
