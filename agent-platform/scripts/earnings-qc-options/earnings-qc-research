@@ -133,7 +133,7 @@ def current_parameters(args=None) -> dict:
     keys = ['QC_MAX_PREMIUM','QC_MIN_BID','QC_MAX_SPREAD_PCT','QC_MIN_RELATIVE_SPREAD','QC_VOL_SPREAD_FACTOR','QC_EXPECTED_MOVE_SPREAD_FRACTION','QC_FINAL_MIN_SAMPLE_SIZE','QC_FINAL_MIN_WIN_RATE']
     d = {k: os.environ.get(k) for k in keys if os.environ.get(k) is not None}
     if args is not None:
-        for k in ['chunk_size','parallel','years','validation_years','end_to_end','start_offset','max_chunks','from_stage','to_stage','symbols']:
+        for k in ['chunk_size','parallel','years','validation_years','end_to_end','start_offset','max_chunks','from_stage','to_stage','symbols','no_outbox']:
             if hasattr(args, k): d[k] = getattr(args, k)
         d.update(stage_runtime_params(args))
     return d

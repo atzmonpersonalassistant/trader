@@ -49,6 +49,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(args.years, 1)
         self.assertEqual(args.from_stage, "historical_option_pnl")
 
+    def test_current_parameters_records_bounded_no_outbox_provenance(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args(["run", "--max-chunks", "1", "--no-outbox"])
+        args.from_stage = "calendar"
+        args.to_stage = "historical_option_pnl"
+        params = mod.current_parameters(args)
+        self.assertEqual(params["max_chunks"], 1)
+        self.assertIs(params["no_outbox"], True)
+
     def test_research_cli_has_postgres_persistence_schema(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
         for table in ["research_campaigns", "research_runs", "research_stages", "stage_artifacts", "candidate_dossiers", "research_decisions", "cleanup_runs"]:
