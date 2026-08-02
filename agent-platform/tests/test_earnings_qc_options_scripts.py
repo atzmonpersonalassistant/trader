@@ -1187,6 +1187,7 @@ class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
         mb = {"ok": False, "status": "NO_FORWARD_CANDIDATES", "results": []}
         out = mod.refresh_summary_after_historical(tmp, mb)
         self.assertEqual(out["status"], "NO_FORWARD_CANDIDATES")
+        self.assertTrue(out["ok"])
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["multiyear_failed"])
         self.assertEqual(out["failed_chunk_count"], 0)
@@ -1487,6 +1488,66 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(out["forward_candidate_count"], 0)
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["historical_gate_no_pass"])
+
+    def test_serial_chunk_runner_records_exceptions_and_continues(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        calls = []
+
+        def fake_run_chunk_end_to_end(run_dir, offset, *args, **kwargs):
+            calls.append(offset)
+            if offset == 10:
+                raise RuntimeError("boom")
+            return {"ok": True, "_chunk_offset": offset}
+
+        with mock.patch.object(mod, "run_chunk_end_to_end", fake_run_chunk_end_to_end), mock.patch.dict(os.environ, {"QC_FULL_CHUNK_DELAY_SECONDS": "0"}):
+            mod.run_chunks_parallel(tmp, [10, 20], 5, 1, 10, True)
+
+        self.assertEqual(calls, [10, 20])
+        written = json.loads((tmp / "chunk-10.stdout.json").read_text())
+        self.assertEqual(written["status"], "BLOCKED_CHUNK_EXCEPTION")
+        self.assertIn("boom", written["blocked_reason"])
+
+    def test_retry_failed_includes_capacity_blocked_offsets(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        retried = []
+        summaries = [{
+            "failed_chunks": [],
+            "historical_failed_chunks": [],
+            "qc_capacity_blocked_chunks": [{"offset": 25, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES"}],
+        }]
+
+        args = types.SimpleNamespace(
+            run_dir=str(tmp),
+            offset=None,
+            validation_years=10,
+            years=1,
+            chunk_size=5,
+            end_to_end=True,
+            notify=False,
+        )
+        with mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=lambda *a, **k: retried.append(a[1])), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}):
+            rc = mod.cmd_retry_failed(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(retried, [25])
+
+    def test_run_chunk_persists_capacity_status_for_bad_json_stdout(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        proc = types.SimpleNamespace(
+            stdout="not json",
+            stderr="QuantConnect Cloud has no spare nodes available",
+            returncode=1,
+        )
+
+        with mock.patch.object(mod.subprocess, "run", return_value=proc):
+            out = mod.run_chunk(tmp, 0, 5)
+
+        self.assertEqual(out["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
+        reloaded = json.loads((tmp / "chunk-0.stdout.json").read_text())
+        self.assertEqual(reloaded["status"], "BLOCKED_QC_CLOUD_NO_SPARE_NODES")
 
     def test_aggregate_separates_multiyear_infra_failures_from_scanner_chunks(self):
         mod = load_script("earnings-qc-research")
