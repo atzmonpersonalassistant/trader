@@ -1,9 +1,12 @@
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review"
+CLASSIFIER = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-qc-classify-bounded-action"
 
 
 class EarningsLlmPostrunReviewTests(unittest.TestCase):
@@ -26,11 +29,21 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
+
+    def test_daily_selector_requires_explicit_daily_stage_parameters(self):
+        text = SCRIPT.read_text()
+        self.assertIn("parameters_json->>'from_stage' = 'calendar'", text)
+        self.assertIn("parameters_json->>'to_stage' = 'historical_option_pnl'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'", text)
+        self.assertNotIn("COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'", text)
         self.assertIn("flock -n 9", text)
         self.assertIn("finished_at IS NOT NULL", text)
         self.assertIn("campaign_id = 'daily-earnings-otm'", text)
         self.assertIn("USING_LEGACY_DAILY_RUN_FALLBACK", text)
         self.assertIn("parameters_json->>'to_stage'", text)
+        self.assertIn("parameters_json->>'no_outbox' = 'false'", text)
+        self.assertEqual(text.count("parameters_json->>'no_outbox' = 'false'"), 2)
+        self.assertNotIn("COALESCE((parameters_json->>'no_outbox')::boolean, false) = false", text)
         self.assertIn("parameters_json->>'calendar_source'", text)
         self.assertIn("trading-research-runner-codex", text)
         self.assertIn("trading-research-bounded-earnings-qc", text)
@@ -123,14 +136,40 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
 
 
     def test_research_blocker_returncode_two_counts_as_executed_action(self):
-        text = SCRIPT.read_text()
+        text = SCRIPT.read_text() + CLASSIFIER.read_text()
         self.assertIn('EXECUTED_RESEARCH_BLOCKED', text)
-        self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && python3', text)
-        self.assertIn("status.startswith(('BLOCKED_', 'PARTIAL_')) or terminal_no_trade", text)
+        self.assertIn('elif [[ "$BOUNDED_ACTION_RC" -eq 2 ]] && /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action "$BOUNDED_STDOUT"', text)
         self.assertIn("NO_FORWARD_CANDIDATES", text)
         self.assertIn("NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", text)
         self.assertIn('earnings-qc-research returns rc=2 for completed research no-trade/blocker', text)
         self.assertIn('"$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED"', text)
+
+    def test_bounded_action_classifier_accepts_actual_research_stdout_shapes(self):
+        payloads = [
+            {"ok": False, "status": "NO_FORWARD_CANDIDATES"},
+            {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+            {
+                "ok": False,
+                "campaign_id": "daily-earnings-otm",
+                "run_id": "run-a",
+                "run_dir": "/agents/research/reports/run-a",
+                "years": 10,
+                "multiyear": {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+                "summary": {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"},
+            },
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                path = Path(tempfile.mkdtemp()) / "stdout.json"
+                path.write_text(json.dumps(payload))
+                result = subprocess.run([str(CLASSIFIER), str(path)], check=False)
+                self.assertEqual(result.returncode, 0)
+
+    def test_bounded_action_classifier_rejects_wrapper_errors(self):
+        path = Path(tempfile.mkdtemp()) / "stdout.json"
+        path.write_text(json.dumps({"ok": False, "status": "INVALID_BOUNDED_ACTION"}))
+        result = subprocess.run([str(CLASSIFIER), str(path)], check=False)
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == "__main__":
