@@ -87,8 +87,9 @@ CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_runs (
  run_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), status TEXT NOT NULL,
  started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, parameters_json JSONB NOT NULL DEFAULT '{{}}'::jsonb,
  run_dir TEXT, summary_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, final_candidate_count INTEGER NOT NULL DEFAULT 0,
- bottleneck TEXT, error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+ research_verdict TEXT, bottleneck TEXT, error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {PG_SCHEMA}.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;
 CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.research_stages (
  stage_id TEXT PRIMARY KEY, campaign_id TEXT REFERENCES {PG_SCHEMA}.research_campaigns(campaign_id), run_id TEXT REFERENCES {PG_SCHEMA}.research_runs(run_id),
  stage_name TEXT NOT NULL, status TEXT NOT NULL, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
@@ -146,14 +147,28 @@ VALUES ({sql_lit(campaign_id)}, {sql_lit(campaign_id)}, {sql_lit(goal or 'Find Q
 ON CONFLICT (campaign_id) DO UPDATE SET updated_at=now(), default_parameters_json=EXCLUDED.default_parameters_json;""")
 
 
+def is_run_blocked(summary: dict | None) -> bool:
+    if not summary:
+        return False
+    status = str(summary.get('status') or '')
+    return bool(
+        summary.get('historical_gate_blocked')
+        or summary.get('multiyear_failed')
+        or summary.get('qc_capacity_blocked')
+        or status.startswith('BLOCKED_')
+        or status.startswith('PARTIAL_')
+    )
+
+
 def upsert_run(run_id: str, campaign_id: str, status: str, run_dir: pathlib.Path | None, params: dict, summary: dict | None = None, error: str | None = None, finished: bool = False) -> None:
     if not ensure_research_db(): return
     summary = summary or {}; final_count = int(summary.get('final_candidate_count') or summary.get('candidate_count') or 0) if summary else 0
-    bottleneck = summary.get('status') if summary else error
+    research_verdict = summary.get('status') if summary else None
+    bottleneck = research_verdict if summary and is_run_blocked(summary) else error
     finished_sql = 'now()' if finished else 'NULL'
-    db_exec(f"""INSERT INTO {PG_SCHEMA}.research_runs(run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,summary_json,final_candidate_count,bottleneck,error,updated_at)
-VALUES ({sql_lit(run_id)}, {sql_lit(campaign_id)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(params)}, {sql_lit(str(run_dir) if run_dir else None)}, {sql_json(summary)}, {final_count}, {sql_lit(bottleneck)}, {sql_lit(error)}, now())
-ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(EXCLUDED.finished_at,{PG_SCHEMA}.research_runs.finished_at), parameters_json=EXCLUDED.parameters_json, run_dir=EXCLUDED.run_dir, summary_json=EXCLUDED.summary_json, final_candidate_count=EXCLUDED.final_candidate_count, bottleneck=EXCLUDED.bottleneck, error=EXCLUDED.error, updated_at=now();""")
+    db_exec(f"""INSERT INTO {PG_SCHEMA}.research_runs(run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,summary_json,final_candidate_count,research_verdict,bottleneck,error,updated_at)
+VALUES ({sql_lit(run_id)}, {sql_lit(campaign_id)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(params)}, {sql_lit(str(run_dir) if run_dir else None)}, {sql_json(summary)}, {final_count}, {sql_lit(research_verdict)}, {sql_lit(bottleneck)}, {sql_lit(error)}, now())
+ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(EXCLUDED.finished_at,{PG_SCHEMA}.research_runs.finished_at), parameters_json=EXCLUDED.parameters_json, run_dir=EXCLUDED.run_dir, summary_json=EXCLUDED.summary_json, final_candidate_count=EXCLUDED.final_candidate_count, research_verdict=EXCLUDED.research_verdict, bottleneck=EXCLUDED.bottleneck, error=EXCLUDED.error, updated_at=now();""")
 
 
 def upsert_stage(campaign_id: str, run_id: str, stage_name: str, status: str, input_json=None, output_json=None, artifact_path: str | None = None, params=None, passed=None, failed=None, blocker=None, error=None) -> None:
@@ -198,7 +213,7 @@ ON CONFLICT (run_id,symbol,report_date) DO UPDATE SET contract_json=EXCLUDED.con
 
 
 def persist_summary_to_db(campaign_id: str, run_id: str, run_dir: pathlib.Path, summary: dict, params: dict) -> None:
-    upsert_campaign(campaign_id, params=params); upsert_run(run_id, campaign_id, 'completed' if summary.get('ok') else 'blocked', run_dir, params, summary, finished=True)
+    upsert_campaign(campaign_id, params=params); upsert_run(run_id, campaign_id, 'blocked' if is_run_blocked(summary) else 'completed', run_dir, params, summary, finished=True)
     f = summary.get('aggregate_funnel') or {}; years = params.get('years') or 'unknown'
     upsert_stage(campaign_id, run_id, 'calendar', 'completed', output_json={'row_count': summary.get('calendar_row_count'), 'universe_count': summary.get('calendar_universe_count')}, artifact_path=str(run_dir/'calendar_snapshot.json'), params=params, passed=summary.get('calendar_universe_count'))
     upsert_stage(campaign_id, run_id, 'qc_chain_scan', 'completed', output_json={'available': f.get('02_qc_option_chain_available'), 'scanned': summary.get('qc_symbols_scanned')}, params=params, passed=f.get('02_qc_option_chain_available'))
@@ -211,7 +226,7 @@ def persist_summary_to_db(campaign_id: str, run_id: str, run_dir: pathlib.Path, 
 
 def latest_db_run(campaign_id: str) -> dict | None:
     if not ensure_research_db(): return None
-    out = db_exec(f"SELECT row_to_json(t) FROM (SELECT run_id,campaign_id,status,run_dir,summary_json,parameters_json,created_at,updated_at FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT 1) t", fetch=True)
+    out = db_exec(f"SELECT row_to_json(t) FROM (SELECT run_id,campaign_id,status,research_verdict,run_dir,summary_json,parameters_json,created_at,updated_at FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT 1) t", fetch=True)
     if not out or not out.strip(): return None
     try: return json.loads(out.strip().splitlines()[-1])
     except Exception: return None
@@ -219,7 +234,7 @@ def latest_db_run(campaign_id: str) -> dict | None:
 
 def db_history(campaign_id: str, limit: int=10) -> list[dict]:
     if not ensure_research_db(): return []
-    out = db_exec(f"SELECT COALESCE(json_agg(t),'[]'::json) FROM (SELECT run_id,status,started_at,finished_at,parameters_json,final_candidate_count,bottleneck,run_dir FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT {int(limit)}) t", fetch=True)
+    out = db_exec(f"SELECT COALESCE(json_agg(t),'[]'::json) FROM (SELECT run_id,status,research_verdict,started_at,finished_at,parameters_json,final_candidate_count,bottleneck,run_dir FROM {PG_SCHEMA}.research_runs WHERE campaign_id={sql_lit(campaign_id)} ORDER BY updated_at DESC, created_at DESC LIMIT {int(limit)}) t", fetch=True)
     try: return json.loads(out.strip() or '[]') if out is not None else []
     except Exception: return []
 
@@ -1005,11 +1020,15 @@ def cmd_history(args) -> int:
 def derive_insights(campaign_id: str, limit: int=20) -> dict:
     runs = db_history(campaign_id, limit)
     bottlenecks = {}
+    research_verdicts = {}
     years_seen = []
     candidates = 0
     for r in runs:
-        b = r.get('bottleneck') or r.get('status') or 'unknown'
-        bottlenecks[b] = bottlenecks.get(b, 0) + 1
+        b = r.get('bottleneck')
+        if b:
+            bottlenecks[b] = bottlenecks.get(b, 0) + 1
+        verdict = r.get('research_verdict') or r.get('bottleneck') or r.get('status') or 'unknown'
+        research_verdicts[verdict] = research_verdicts.get(verdict, 0) + 1
         params = r.get('parameters_json') or {}
         if params.get('years') is not None:
             years_seen.append(params.get('years'))
@@ -1017,17 +1036,18 @@ def derive_insights(campaign_id: str, limit: int=20) -> dict:
     suggestions = []
     if runs:
         latest = runs[0]
+        latest_verdict = str(latest.get('research_verdict') or latest.get('bottleneck') or '')
         if latest.get('final_candidate_count'):
             suggestions.append({'action': 'inspect_candidates', 'reason': 'latest run has final candidates'})
-        elif 'BLOCKED_HISTORICAL_OPTION_PNL_GATE' in str(latest.get('bottleneck')):
+        elif 'BLOCKED_HISTORICAL_OPTION_PNL_GATE' in latest_verdict:
             suggestions.append({'action': 'try_more_years_or_stop', 'reason': 'forward candidates failed historical PnL gate; compare 1-year vs wider windows before loosening filters'})
-        elif 'PARTIAL' in str(latest.get('bottleneck')):
+        elif 'PARTIAL' in latest_verdict:
             suggestions.append({'action': 'resume', 'reason': 'latest run appears partial'})
         else:
             suggestions.append({'action': 'adjust_one_knob', 'reason': 'no final candidates; change one guardrailed parameter and document decision'})
     else:
         suggestions.append({'action': 'run_initial_one_year', 'reason': 'no DB history yet', 'command': 'earnings-qc-research run --years 1 --parallel 1 --end-to-end'})
-    return {'ok': True, 'campaign_id': campaign_id, 'run_count': len(runs), 'bottlenecks': bottlenecks, 'years_seen': years_seen, 'final_candidates_seen': candidates, 'suggestions': suggestions, 'runs': runs[:5]}
+    return {'ok': True, 'campaign_id': campaign_id, 'run_count': len(runs), 'bottlenecks': bottlenecks, 'research_verdicts': research_verdicts, 'years_seen': years_seen, 'final_candidates_seen': candidates, 'suggestions': suggestions, 'runs': runs[:5]}
 
 
 def cmd_insights(args) -> int:

@@ -64,6 +64,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             self.assertIn(table, cli)
         self.assertIn("historical_option_pnl_years_", cli)
         self.assertIn("derive_insights", cli)
+        self.assertIn("research_verdict TEXT", cli)
+        self.assertIn("ADD COLUMN IF NOT EXISTS research_verdict TEXT", cli)
 
     def test_research_schema_identifier_is_sanitized(self):
         mod = load_script("earnings-qc-research")
@@ -91,6 +93,40 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("sample_size", joined)
         self.assertIn("historical_pnl_json=EXCLUDED.historical_pnl_json", joined)
         self.assertEqual(len(calls), 2)
+
+    def test_upsert_run_splits_lifecycle_verdict_and_bottleneck(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        ok_summary = {"ok": True, "status": "OK_FULL_QC_SCAN", "final_candidate_count": 1}
+        no_pass_summary = {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", "historical_gate_no_pass": True}
+        blocked_summary = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE", "historical_gate_blocked": True}
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.upsert_run("ok-run", "camp", "completed", pathlib.Path("/tmp/ok"), {}, ok_summary, finished=True)
+            mod.persist_summary_to_db("camp", "no-pass-run", pathlib.Path("/tmp/no-pass"), no_pass_summary, {})
+            mod.upsert_run("blocked-run", "camp", "blocked", pathlib.Path("/tmp/blocked"), {}, blocked_summary, finished=True)
+        joined = "\n".join(calls)
+        self.assertIn("research_verdict,bottleneck,error", joined)
+        self.assertIn("'OK_FULL_QC_SCAN', NULL, NULL", joined)
+        self.assertIn("'no-pass-run', 'camp', 'completed'", joined)
+        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', NULL, NULL", joined)
+        self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
+
+    def test_derive_insights_uses_research_verdict_not_only_bottleneck(self):
+        mod = load_script("earnings-qc-research")
+        runs = [{
+            "run_id": "run-1",
+            "status": "completed",
+            "research_verdict": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS",
+            "bottleneck": None,
+            "final_candidate_count": 0,
+            "parameters_json": {"years": 1},
+        }]
+        with mock.patch.object(mod, "db_history", return_value=runs):
+            out = mod.derive_insights("camp", 5)
+        self.assertEqual(out["bottlenecks"], {})
+        self.assertEqual(out["research_verdicts"]["BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS"], 1)
+        self.assertEqual(out["suggestions"][0]["action"], "try_more_years_or_stop")
 
     def test_run_from_historical_stage_delegates_before_new_run_dir(self):
         mod = load_script("earnings-qc-research")

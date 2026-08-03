@@ -78,8 +78,9 @@ if ! flock -n 9; then
   exit 0
 fi
 
+cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
 ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
-SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
 FROM earnings_cache.research_runs
 WHERE campaign_id = 'daily-earnings-otm'
   AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
@@ -90,7 +91,7 @@ LIMIT 1;
 
 if [[ -z "$ROW" ]]; then
   ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
-  SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+  SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
   FROM earnings_cache.research_runs
   WHERE run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
     AND finished_at IS NOT NULL
@@ -115,7 +116,7 @@ if [[ -z "$ROW" ]]; then
   exit 0
 fi
 
-IFS=$'\t' read -r RUN_ID RUN_STATUS FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
+IFS=$'\t' read -r RUN_ID RUN_STATUS RESEARCH_VERDICT FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
 if [[ -z "${RUN_ID:-}" || -z "${RUN_DIR:-}" ]]; then
   echo "ERROR: malformed DB row for date=$DATE: $ROW" >&2
   exit 70
@@ -198,6 +199,7 @@ Important boundary:
 Run context:
 - run_id: __RUN_ID__
 - status: __RUN_STATUS__
+- research_verdict: __RESEARCH_VERDICT__
 - finished_at: __FINISHED_AT__
 - run_dir: __RUN_DIR__
 - final_candidate_count: __FINAL_COUNT__
@@ -249,15 +251,16 @@ printf '%s\n' "$SUMMARY_EXCERPT" > "$OUTPUT_DIR/summary-excerpt.txt"
 printf '%s\n' "$POSTRUN_META" > "$OUTPUT_DIR/postrun-meta.txt"
 printf '%s\n' "$DAILY_LOG_TAIL" > "$OUTPUT_DIR/daily-log-tail.txt"
 printf '%s\n' "$POSTRUN_LOG_TAIL" > "$OUTPUT_DIR/postrun-log-tail.txt"
-python3 - "$TASK_FILE" "$OUTPUT_DIR" "$RUN_ID" "$RUN_STATUS" "$FINISHED_AT" "$RUN_DIR" "$FINAL_COUNT" "$BOTTLENECK" "$RUN_ERROR" "$POSTRUN_DIR" "$FINGERPRINT" <<'PY'
+python3 - "$TASK_FILE" "$OUTPUT_DIR" "$RUN_ID" "$RUN_STATUS" "$RESEARCH_VERDICT" "$FINISHED_AT" "$RUN_DIR" "$FINAL_COUNT" "$BOTTLENECK" "$RUN_ERROR" "$POSTRUN_DIR" "$FINGERPRINT" <<'PY'
 import pathlib, sys
-(task_file, output_dir, run_id, run_status, finished_at, run_dir, final_count, bottleneck, run_error, postrun_dir, fingerprint) = sys.argv[1:]
+(task_file, output_dir, run_id, run_status, research_verdict, finished_at, run_dir, final_count, bottleneck, run_error, postrun_dir, fingerprint) = sys.argv[1:]
 out = pathlib.Path(output_dir)
 text = pathlib.Path(task_file).read_text()
 replacements = {
     '__OUTPUT_DIR__': output_dir,
     '__RUN_ID__': run_id,
     '__RUN_STATUS__': run_status,
+    '__RESEARCH_VERDICT__': research_verdict,
     '__FINISHED_AT__': finished_at,
     '__RUN_DIR__': run_dir,
     '__FINAL_COUNT__': final_count,
@@ -302,12 +305,16 @@ if [[ ! -f "$OUTPUT_DIR/notify.txt" ]]; then
 fi
 
 RUN_ID_JSON="$(printf '%s' "$RUN_ID" | json_escape)"
+RUN_STATUS_JSON="$(printf '%s' "$RUN_STATUS" | json_escape)"
+RESEARCH_VERDICT_JSON="$(printf '%s' "$RESEARCH_VERDICT" | json_escape)"
 RUN_DIR_JSON="$(printf '%s' "$RUN_DIR" | json_escape)"
 POSTRUN_DIR_JSON="$(printf '%s' "$POSTRUN_DIR" | json_escape)"
 FINGERPRINT_JSON="$(printf '%s' "$FINGERPRINT" | json_escape)"
 cat > "$OUTPUT_DIR/run_metadata.json" <<META
 {
   "run_id": "$RUN_ID_JSON",
+  "daily_run_status": "$RUN_STATUS_JSON",
+  "research_verdict": "$RESEARCH_VERDICT_JSON",
   "run_dir": "$RUN_DIR_JSON",
   "postrun_dir": "$POSTRUN_DIR_JSON",
   "fingerprint": "$FINGERPRINT_JSON",
