@@ -382,6 +382,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("liquidity_metrics", main)
         self.assertIn("expected_option_move", main)
         self.assertIn("allowed_spread", main)
+        self.assertIn("self.stop_loss_max_loss_pct = None", main)
+        self.assertIn('"stop_loss_trigger_count"', main)
+        self.assertIn('"stop_loss_fill_variants"', main)
 
     def test_multiyear_generated_qc_algorithm_threads_runtime_parameters(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -415,6 +418,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "min_open_interest": 11,
                 "min_volume": 4,
                 "max_contracts": 2,
+                "stop_loss_max_loss_pct": -50,
                 "final_min_sample_size": 8,
                 "final_max_dropout_pct": 55,
             },
@@ -431,6 +435,16 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
+        self.assertIn("self.stop_loss_max_loss_pct = -50.0", main)
+        self.assertIn("contract_quotes_between", main)
+        self.assertIn("apply_stop_loss_variants", main)
+        self.assertIn("stop_loss_same_day_trades", main)
+        self.assertIn("stop_loss_next_day_trades", main)
+        self.assertIn("stop_loss_mean_slippage_pct", main)
+        self.assertIn("stop_loss_worst_slippage_pct", main)
+        self.assertIn("stop_loss_report_metrics=next_overall", main)
+        self.assertIn("'same_day': dict(same_overall", main)
+        self.assertIn("'next_day': dict(next_overall", main)
         self.assertIn("overall=metrics(trades,'all',8)", main)
         self.assertIn("dropout_pct<=55.000000", main)
         self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
@@ -441,6 +455,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
+        compile(main, str(project_dir / "main.py"), "exec")
 
     def test_multiyear_generated_qc_algorithm_preserves_default_dte_and_spread(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -1156,7 +1171,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
@@ -1173,6 +1188,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("-20:100", argv)
         self.assertIn("--max-expiration-days", argv)
         self.assertIn("45", argv)
+        self.assertIn("--stop-loss-max-loss-pct", argv)
+        self.assertIn("-50", argv)
 
     def test_run_now_passes_calendar_window_and_stage2_params_to_probe(self):
         mod = load_script("earnings-qc-options-scan")
