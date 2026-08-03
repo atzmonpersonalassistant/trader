@@ -115,7 +115,8 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
     project_dir=LEAN_WORKSPACE/PROJECT_NAME; write_project(project_dir,candidates,years,params=params); project_id=ensure_project(project_dir)
     push=subprocess.run(['lean','cloud','push','--project',str(project_dir),'--force'],cwd=str(LEAN_WORKSPACE),text=True,capture_output=True,timeout=180)
     name=f'earnings-qc-historical-option-pnl-{datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")}'
-    bt=subprocess.run(['lean','cloud','backtest',PROJECT_NAME,'--push','--name',name],cwd=str(LEAN_WORKSPACE),text=True,capture_output=True,timeout=1800)
+    backtest_timeout = int(os.environ.get('QC_LEAN_CLOUD_BACKTEST_TIMEOUT_SECONDS', '1800'))
+    bt=subprocess.run(['lean','cloud','backtest',PROJECT_NAME,'--push','--name',name],cwd=str(LEAN_WORKSPACE),text=True,capture_output=True,timeout=backtest_timeout)
     (out_dir/'push.stdout').write_text(push.stdout); (out_dir/'push.stderr').write_text(push.stderr); (out_dir/'backtest.stdout').write_text(bt.stdout); (out_dir/'backtest.stderr').write_text(bt.stderr)
     m=re.search(r'Backtest id:\s*([0-9a-f]+)', bt.stdout+'\n'+bt.stderr); backtest_id=m.group(1) if m else None
     summary={'ok':False,'status':'QC_BACKTEST_FAILED','project_id':project_id,'backtest_id':backtest_id,'backtest_name':name,'push_returncode':push.returncode,'backtest_returncode':bt.returncode,'parameters': params or {}}

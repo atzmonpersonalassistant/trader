@@ -1064,6 +1064,27 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("[1,3,5", multi)
         self.assertIn("BLOCKED_HISTORICAL_OPTION_WINDOW_GATE", multi)
 
+    def test_multiyear_cloud_backtest_timeout_is_configurable(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+        with mock.patch.object(mod, "load_candidates", return_value=[{"symbol": "XYZ"}]), \
+             mock.patch.object(mod, "write_project"), \
+             mock.patch.object(mod, "ensure_project", return_value=123), \
+             mock.patch.object(mod.subprocess, "run", side_effect=fake_run), \
+             mock.patch.dict(os.environ, {"QC_LEAN_CLOUD_BACKTEST_TIMEOUT_SECONDS": "12"}):
+            out = mod.run_backtest(run_dir, 1)
+
+        self.assertFalse(out["ok"])
+        self.assertEqual(calls[0][1]["timeout"], 180)
+        self.assertEqual(calls[1][0][:3], ["lean", "cloud", "backtest"])
+        self.assertEqual(calls[1][1]["timeout"], 12)
+
     def test_full_scan_gate_rejects_failed_window_results(self):
         full = load_script("earnings-qc-research")
         row = {
