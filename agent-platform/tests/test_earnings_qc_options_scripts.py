@@ -30,6 +30,108 @@ def load_script(name: str):
 
 class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
+    def build_multiyear_algorithm(self, params=None):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        params = {
+            "final_min_sample_size": 1,
+            "min_open_interest": 0,
+            "min_volume": 0,
+            **(params or {}),
+        }
+        mod.write_project(project_dir, [{"symbol": "XYZ", "earnings_date": "2026-02-01"}], 1, params=params)
+        main = (project_dir / "main.py").read_text()
+
+        fake_imports = types.ModuleType("AlgorithmImports")
+
+        class QCAlgorithm:
+            def set_runtime_statistic(self, key, value):
+                self.runtime_statistics[key] = value
+
+            def debug(self, message):
+                self.debug_messages.append(message)
+
+        fake_imports.QCAlgorithm = QCAlgorithm
+        fake_imports.Resolution = types.SimpleNamespace(DAILY="Daily")
+        data_source = types.ModuleType("QuantConnect.DataSource")
+        data_source.EODHDUpcomingEarnings = object
+        quantconnect = types.ModuleType("QuantConnect")
+        old_imports = sys.modules.get("AlgorithmImports")
+        old_qc = sys.modules.get("QuantConnect")
+        old_data_source = sys.modules.get("QuantConnect.DataSource")
+        sys.modules["AlgorithmImports"] = fake_imports
+        sys.modules["QuantConnect"] = quantconnect
+        sys.modules["QuantConnect.DataSource"] = data_source
+        namespace = {}
+        try:
+            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+        finally:
+            if old_imports is None:
+                sys.modules.pop("AlgorithmImports", None)
+            else:
+                sys.modules["AlgorithmImports"] = old_imports
+            if old_qc is None:
+                sys.modules.pop("QuantConnect", None)
+            else:
+                sys.modules["QuantConnect"] = old_qc
+            if old_data_source is None:
+                sys.modules.pop("QuantConnect.DataSource", None)
+            else:
+                sys.modules["QuantConnect.DataSource"] = old_data_source
+
+        alg = namespace["EarningsQcHistoricalOptionPnl"]()
+        alg.runtime_statistics = {}
+        alg.debug_messages = []
+        alg.errors = []
+        alg.candidates = [{"symbol": "XYZ"}]
+        alg.events = {
+            "XYZ": {
+                "2026-02-01": {
+                    "symbol": "XYZ",
+                    "report_date": "2026-02-01",
+                    "report_time": "Before Market",
+                }
+            }
+        }
+        alg.exit_policy = "sell_before_earnings_no_hold_through"
+        alg.entry_min_days = 21
+        alg.entry_max_days = 28
+        alg.max_days_after_earnings = 7
+        alg.max_premium = 0.50
+        alg.max_spread = 0.25
+        alg.max_spread_pct = 0.60
+        alg.min_relative_spread = 0.25
+        alg.vol_spread_factor = 0.50
+        alg.expected_move_spread_fraction = 0.15
+        alg.min_bid = 0.05
+        alg.min_open_interest = 0
+        alg.min_volume = 0
+        alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
+        return alg
+
+    def quote(self, bid, ask=None):
+        ask = bid if ask is None else ask
+        return {
+            "symbol": "XYZ_CALL_110",
+            "strike": 110.0,
+            "expiry": "2026-02-05",
+            "bid": bid,
+            "ask": ask,
+            "mid": round((bid + ask) / 2.0, 4),
+            "volume": 100,
+            "open_interest": 100,
+            "iv": 0.40,
+            "delta": 0.30,
+        }
+
+    def set_multiyear_snapshots(self, alg, quotes_by_day):
+        alg.snapshots = {
+            "XYZ": {
+                day: {"underlying": 100.0, "contracts": [quote]}
+                for day, quote in quotes_by_day.items()
+            }
+        }
+
 
     def test_single_public_research_cli_uses_internal_libexec_stages(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
@@ -615,6 +717,127 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         }
         self.assertTrue(full.multiyear_result_passes(row))
         self.assertFalse(hasattr(multi, "result_passes"))
+
+    def test_multiyear_stop_loss_normalizes_positive_cli_value(self):
+        multi = load_script("earnings-qc-multiyear-backtest")
+        self.assertEqual(multi.hist_params({"stop_loss_max_loss_pct": 50})["stop_loss_max_loss_pct"], -50.0)
+        self.assertEqual(multi.hist_params({"stop_loss_max_loss_pct": -50})["stop_loss_max_loss_pct"], -50.0)
+
+    def test_multiyear_stop_loss_fill_variants_mid_window_breach(self):
+        alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-06": self.quote(0.22),
+            "2026-01-07": self.quote(0.18),
+            "2026-01-08": self.quote(0.14),
+        })
+        trade = {
+            "report_date": "2026-02-01",
+            "entry_ask": 0.40,
+            "contract": "XYZ_CALL_110",
+            "return_pct": 125.0,
+            "win": True,
+            "exit_bid": 0.90,
+        }
+        variants = alg.apply_stop_loss_variants(
+            "XYZ", trade, datetime.date(2026, 1, 5), datetime.date(2026, 1, 31)
+        )
+        self.assertEqual(variants["same_day"]["actual_exit_date"], "2026-01-07")
+        self.assertEqual(variants["same_day"]["exit_bid"], 0.18)
+        self.assertEqual(variants["same_day"]["return_pct"], -55.0)
+        self.assertEqual(variants["next_day"]["actual_exit_date"], "2026-01-08")
+        self.assertEqual(variants["next_day"]["exit_bid"], 0.14)
+        self.assertEqual(variants["next_day"]["return_pct"], -65.0)
+        self.assertEqual(variants["next_day"]["stop_loss_max_loss_pct"], -50.0)
+
+    def test_multiyear_stop_loss_next_day_final_day_fallback_keeps_unstopped_trade(self):
+        alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
+        self.set_multiyear_snapshots(alg, {"2026-01-31": self.quote(0.18)})
+        trade = {
+            "report_date": "2026-02-01",
+            "entry_ask": 0.40,
+            "contract": "XYZ_CALL_110",
+            "actual_exit_date": "2026-01-31",
+            "exit_date": "2026-01-31",
+            "exit_bid": 0.90,
+            "return_pct": 125.0,
+            "win": True,
+        }
+        variants = alg.apply_stop_loss_variants(
+            "XYZ", trade, datetime.date(2026, 1, 5), datetime.date(2026, 1, 31)
+        )
+        self.assertTrue(variants["same_day"]["stop_loss_triggered"])
+        self.assertFalse(variants["next_day"]["stop_loss_triggered"])
+        self.assertEqual(variants["next_day"]["actual_exit_date"], "2026-01-31")
+        self.assertEqual(variants["next_day"]["return_pct"], 125.0)
+
+    def test_multiyear_stop_loss_no_breach_matches_unstopped_trade(self):
+        alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-06": self.quote(0.25),
+            "2026-01-07": self.quote(0.24),
+        })
+        trade = {
+            "report_date": "2026-02-01",
+            "entry_ask": 0.40,
+            "contract": "XYZ_CALL_110",
+            "actual_exit_date": "2026-01-31",
+            "exit_date": "2026-01-31",
+            "exit_bid": 0.90,
+            "return_pct": 125.0,
+            "win": True,
+        }
+        variants = alg.apply_stop_loss_variants(
+            "XYZ", trade, datetime.date(2026, 1, 5), datetime.date(2026, 1, 31)
+        )
+        for name in ["same_day", "next_day"]:
+            self.assertFalse(variants[name]["stop_loss_triggered"])
+            self.assertEqual(variants[name]["return_pct"], trade["return_pct"])
+            self.assertEqual(variants[name]["exit_bid"], trade["exit_bid"])
+
+    def test_multiyear_stop_loss_absent_contract_defers_detection_to_next_observed_day(self):
+        alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
+        alg.snapshots = {"XYZ": {
+            "2026-01-06": {"underlying": 100.0, "contracts": [self.quote(0.01) | {"symbol": "OTHER"}]},
+            "2026-01-07": {"underlying": 100.0, "contracts": [self.quote(0.18)]},
+            "2026-01-08": {"underlying": 100.0, "contracts": [self.quote(0.16)]},
+        }}
+        trade = {
+            "report_date": "2026-02-01",
+            "entry_ask": 0.40,
+            "contract": "XYZ_CALL_110",
+            "return_pct": 125.0,
+            "win": True,
+            "exit_bid": 0.90,
+        }
+        variants = alg.apply_stop_loss_variants(
+            "XYZ", trade, datetime.date(2026, 1, 5), datetime.date(2026, 1, 31)
+        )
+        self.assertEqual(variants["same_day"]["stop_loss_trigger_date"], "2026-01-07")
+        self.assertEqual(variants["same_day"]["actual_exit_date"], "2026-01-07")
+        self.assertEqual(variants["next_day"]["actual_exit_date"], "2026-01-08")
+
+    def test_multiyear_stop_loss_next_day_series_drives_headline_gate(self):
+        alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-05": self.quote(0.39, 0.40),
+            "2026-01-06": self.quote(0.22),
+            "2026-01-07": self.quote(0.18),
+            "2026-01-08": self.quote(0.14),
+            "2026-01-31": self.quote(0.90),
+        })
+        alg.on_end_of_algorithm()
+        payload = json.loads("".join(
+            alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
+            if k.startswith("multiyear_json_")
+        ))
+        result = payload["results"][0]
+        self.assertEqual(result["per_trade_return_pct"], [-65.0])
+        self.assertEqual(result["trades"][0]["stop_loss_fill_model"], "next_day")
+        self.assertEqual(result["unstopped_comparison"]["per_trade_return_pct"], [125.0])
+        self.assertEqual(result["stop_loss_max_loss_pct"], -50.0)
+
+        full = load_script("earnings-qc-research")
+        self.assertFalse(full.multiyear_result_passes(result))
 
 
     def test_stage2_uses_volatility_aware_spread_policy(self):
