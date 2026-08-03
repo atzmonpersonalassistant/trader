@@ -1224,13 +1224,12 @@ VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(
     print(json.dumps({'ok': True, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'freed_bytes': freed, 'policy': policy}, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
-def add_stage_parameter_args(sp):
-    # Pipeline stage addressing: keep one CLI/pipeline, but allow resuming from any implemented stage.
+def add_qc_parameter_args(sp):
+    # QC option universe knobs shared by scan and historical-only validation.
     sp.add_argument('--as-of-date', help='Calendar/valuation date anchor, YYYY-MM-DD; defaults to today in the stage runner')
     sp.add_argument('--calendar-from-days', type=int, default=21)
     sp.add_argument('--calendar-to-days', type=int, default=28)
     sp.add_argument('--calendar-source', default='nasdaq', choices=['nasdaq'])
-    # QC option universe knobs, mirroring the major QuantConnect option subscription/filter dimensions.
     sp.add_argument('--qc-resolution', default='hour', choices=['tick','second','minute','hour','daily'])
     sp.add_argument('--option-resolution', choices=['tick','second','minute','hour','daily'], help='Override option subscription resolution; defaults to --qc-resolution')
     sp.add_argument('--min-expiry-after-earnings-days', type=int, default=1)
@@ -1250,6 +1249,10 @@ def add_stage_parameter_args(sp):
     sp.add_argument('--min-relative-spread', type=float, help='Vol-aware spread floor; default/env QC_MIN_RELATIVE_SPREAD is 0.25')
     sp.add_argument('--vol-spread-factor', type=float, help='Vol-aware spread factor; default/env QC_VOL_SPREAD_FACTOR is 0.50')
     sp.add_argument('--expected-move-spread-fraction', type=float, help='Expected option move spread fraction; default/env QC_EXPECTED_MOVE_SPREAD_FRACTION is 0.15')
+
+def add_stage_parameter_args(sp):
+    # Pipeline stage addressing: keep one CLI/pipeline, but allow resuming from any implemented stage.
+    add_qc_parameter_args(sp)
     add_historical_parameter_args(sp)
 
 def add_historical_parameter_args(sp):
@@ -1280,6 +1283,7 @@ def build_parser():
     h=sub.add_parser('history'); h.add_argument('--campaign', default=DEFAULT_CAMPAIGN); h.add_argument('--last', type=int, default=10); h.add_argument('--pretty', action='store_true')
     ins=sub.add_parser('insights'); ins.add_argument('--campaign', default=DEFAULT_CAMPAIGN); ins.add_argument('--last', type=int, default=20); ins.add_argument('--pretty', action='store_true')
     hist=sub.add_parser('historical'); common(hist); hist.add_argument('--years', type=int, required=True); hist.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=True); hist.add_argument('--no-end-to-end', dest='end_to_end', action='store_false')
+    add_qc_parameter_args(hist)
     add_historical_parameter_args(hist)
     dec=sub.add_parser('decision'); dec_sub=dec.add_subparsers(dest='decision_cmd'); da=dec_sub.add_parser('add'); da.add_argument('--campaign', default=DEFAULT_CAMPAIGN); da.add_argument('--previous-run-id'); da.add_argument('--next-run-id'); da.add_argument('--actor', default='llm'); da.add_argument('--type', dest='decision_type', required=True); da.add_argument('--rationale', required=True); da.add_argument('--parameter-changes-json', default='{}')
     cl=sub.add_parser('cleanup'); cl.add_argument('--older-than-days', type=int, default=14); cl.add_argument('--keep-last', type=int, default=20); cl.add_argument('--dry-run', action='store_true')
