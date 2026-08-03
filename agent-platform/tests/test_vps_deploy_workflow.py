@@ -1,11 +1,45 @@
 from pathlib import Path
+import os
+import subprocess
+from tempfile import TemporaryDirectory
+import textwrap
 import unittest
+
+
+WORKFLOW = Path('.github/workflows/vps-deploy.yml')
+
+
+def workflow_text():
+    return WORKFLOW.read_text()
+
+
+def deploy_run_script():
+    text = workflow_text()
+    marker = '      - name: Install tools and verify'
+    start = text.index(marker)
+    run_start = text.index('        run: |', start)
+    next_step = text.find('\n      - name:', run_start + 1)
+    block = text[run_start:].splitlines()[1:] if next_step == -1 else text[run_start:next_step].splitlines()[1:]
+    return '\n'.join(line[10:] if line.startswith('          ') else line for line in block)
+
+
+def extract_restart_guard(script):
+    lines = script.splitlines()
+    start = next(i for i, line in enumerate(lines) if 'command -v systemctl' in line and 'trading-research-agent.service' in line)
+    end = next(i for i in range(start, len(lines)) if lines[i] == 'fi')
+    return '\n'.join(lines[start:end + 1]) + '\n'
+
+
+def extract_deploy_ok_check(script):
+    lines = script.splitlines()
+    remote_end = lines.index('REMOTE')
+    return '\n'.join(lines[remote_end + 1:remote_end + 2]) + '\n'
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
 
     def test_earnings_research_has_single_public_cli(self):
-        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+        workflow = workflow_text()
 
         self.assertIn('/agents/research/bin/earnings-qc-research', workflow)
         self.assertIn('/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan', workflow)
@@ -55,7 +89,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('earnings-qc-options-scan run-now', workflow)
 
     def test_research_postgres_cache_db_is_provisioned(self):
-        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+        workflow = workflow_text()
 
         self.assertIn('postgresql postgresql-client', workflow)
         self.assertIn('systemctl enable --now postgresql', workflow)
@@ -66,7 +100,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('SELECT 1 AS research_postgres_ready', workflow)
 
     def test_llm_postrun_has_bounded_execution_wrapper(self):
-        workflow = Path('.github/workflows/vps-deploy.yml').read_text()
+        workflow = workflow_text()
         bootstrap = Path('agent-platform/scripts/bootstrap-new-vps.sh').read_text()
         wrapper = Path('agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc').read_text()
         postrun = Path('agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review').read_text()
@@ -105,6 +139,51 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('--run-id) safe_id', wrapper)
         self.assertIn('ordinary bounded experiments may change exactly one knob', wrapper)
         self.assertIn('symbols must be 1-5 uppercase tickers', wrapper)
+
+    def test_deploy_restart_guard_only_touches_active_enabled_service(self):
+        restart_guard = extract_restart_guard(deploy_run_script())
+
+        with TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp)
+            log_path = bin_dir / 'calls.log'
+            (bin_dir / 'systemctl').write_text(textwrap.dedent(f"""\
+                #!/usr/bin/env bash
+                echo "systemctl $*" >> {log_path}
+                case "$1" in
+                  is-enabled) exit "${{SYSTEMCTL_ENABLED_RC:-1}}" ;;
+                  is-active) exit "${{SYSTEMCTL_ACTIVE_RC:-1}}" ;;
+                  *) exit 0 ;;
+                esac
+            """))
+            (bin_dir / 'sudo').write_text(textwrap.dedent(f"""\
+                #!/usr/bin/env bash
+                echo "sudo $*" >> {log_path}
+            """))
+            os.chmod(bin_dir / 'systemctl', 0o755)
+            os.chmod(bin_dir / 'sudo', 0o755)
+
+            env = {**os.environ, 'PATH': f"{bin_dir}:{os.environ['PATH']}", 'SYSTEMCTL_ENABLED_RC': '0', 'SYSTEMCTL_ACTIVE_RC': '1'}
+            subprocess.run(['bash', '-euo', 'pipefail', '-c', restart_guard], env=env, check=True)
+            self.assertNotIn('sudo systemctl', log_path.read_text())
+
+            log_path.write_text('')
+            env['SYSTEMCTL_ACTIVE_RC'] = '0'
+            subprocess.run(['bash', '-euo', 'pipefail', '-c', restart_guard], env=env, check=True)
+            self.assertEqual(log_path.read_text().splitlines()[-1], 'sudo systemctl try-restart trading-research-agent.service')
+
+    def test_deploy_requires_remote_deploy_ok_sentinel(self):
+        deploy_ok_check = extract_deploy_ok_check(deploy_run_script())
+
+        with TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'deploy-output.log'
+            env = {**os.environ, 'deploy_output': str(output)}
+            output.write_text('partial output without sentinel\n')
+            missing = subprocess.run(['bash', '-euo', 'pipefail', '-c', deploy_ok_check], env=env)
+            self.assertNotEqual(missing.returncode, 0)
+
+            output.write_text('setup complete\nDEPLOY_OK\n')
+            present = subprocess.run(['bash', '-euo', 'pipefail', '-c', deploy_ok_check], env=env)
+            self.assertEqual(present.returncode, 0)
 
 
 if __name__ == '__main__':
