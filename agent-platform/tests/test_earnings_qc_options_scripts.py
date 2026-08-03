@@ -1474,6 +1474,32 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(params["min_open_interest"], 10)
         self.assertEqual(params["min_volume"], 5)
 
+    def test_research_cli_historical_does_not_forward_qc_defaults(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args([
+            "historical",
+            "--run-dir", "/tmp/example-run",
+            "--years", "10",
+            "--end-to-end",
+        ])
+        params = mod.current_parameters(args)
+        for key in [
+            "calendar_from_days",
+            "calendar_to_days",
+            "calendar_source",
+            "qc_resolution",
+            "min_expiry_after_earnings_days",
+            "max_expiry_after_earnings_days",
+            "min_expiration_days",
+            "max_expiration_days",
+            "strike_range",
+            "option_right",
+            "max_premium",
+            "max_spread",
+            "max_spread_pct",
+        ]:
+            self.assertNotIn(key, params)
+
     def test_stage2_generated_qc_algorithm_uses_rich_parameters(self):
         mod = load_script("earnings-qc-options-scan")
         project_dir = pathlib.Path(tempfile.mkdtemp())
