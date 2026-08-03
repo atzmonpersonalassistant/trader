@@ -752,7 +752,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(variants["next_day"]["return_pct"], -65.0)
         self.assertEqual(variants["next_day"]["stop_loss_max_loss_pct"], -50.0)
 
-    def test_multiyear_stop_loss_next_day_final_day_fallback_keeps_unstopped_trade(self):
+    def test_multiyear_stop_loss_next_day_final_day_fallback_uses_breach_day(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
         self.set_multiyear_snapshots(alg, {"2026-01-31": self.quote(0.18)})
         trade = {
@@ -769,9 +769,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "XYZ", trade, datetime.date(2026, 1, 5), datetime.date(2026, 1, 31)
         )
         self.assertTrue(variants["same_day"]["stop_loss_triggered"])
-        self.assertFalse(variants["next_day"]["stop_loss_triggered"])
+        self.assertTrue(variants["next_day"]["stop_loss_triggered"])
         self.assertEqual(variants["next_day"]["actual_exit_date"], "2026-01-31")
-        self.assertEqual(variants["next_day"]["return_pct"], 125.0)
+        self.assertEqual(variants["next_day"]["return_pct"], -55.0)
 
     def test_multiyear_stop_loss_no_breach_matches_unstopped_trade(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
