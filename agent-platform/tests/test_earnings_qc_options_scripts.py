@@ -720,8 +720,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_multiyear_stop_loss_normalizes_positive_cli_value(self):
         multi = load_script("earnings-qc-multiyear-backtest")
+        full = load_script("earnings-qc-research")
         self.assertEqual(multi.hist_params({"stop_loss_max_loss_pct": 50})["stop_loss_max_loss_pct"], -50.0)
         self.assertEqual(multi.hist_params({"stop_loss_max_loss_pct": -50})["stop_loss_max_loss_pct"], -50.0)
+        args = full.build_parser().parse_args(["run", "--stop-loss-max-loss-pct", "50"])
+        self.assertEqual(full.current_parameters(args)["stop_loss_max_loss_pct"], -50.0)
 
     def test_multiyear_stop_loss_fill_variants_mid_window_breach(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})

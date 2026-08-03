@@ -415,6 +415,9 @@ def add_if_value(cmd: list[str], flag: str, value) -> None:
     if value is not None:
         cmd.extend([flag, str(value)])
 
+def normalize_stop_loss_max_loss_pct(value):
+    return -abs(float(value)) if value is not None else None
+
 def stage_runtime_params(args) -> dict:
     names = [
         'from_stage','to_stage','as_of_date','calendar_from_days','calendar_to_days','calendar_source',
@@ -424,7 +427,10 @@ def stage_runtime_params(args) -> dict:
         'historical_resolution','quote_resolution','entry_time_policy','exit_time_policy','slippage_model',
         'max_contracts','path_metrics'
     ]
-    return {k: getattr(args, k) for k in names if hasattr(args, k) and getattr(args, k) is not None}
+    out = {k: getattr(args, k) for k in names if hasattr(args, k) and getattr(args, k) is not None}
+    if 'stop_loss_max_loss_pct' in out:
+        out['stop_loss_max_loss_pct'] = normalize_stop_loss_max_loss_pct(out['stop_loss_max_loss_pct'])
+    return out
 
 
 def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list[str] | None = None, args=None) -> dict:
