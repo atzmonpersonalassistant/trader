@@ -415,16 +415,22 @@ def add_if_value(cmd: list[str], flag: str, value) -> None:
     if value is not None:
         cmd.extend([flag, str(value)])
 
+def normalize_stop_loss_max_loss_pct(value):
+    return -abs(float(value)) if value is not None else None
+
 def stage_runtime_params(args) -> dict:
     names = [
         'from_stage','to_stage','as_of_date','calendar_from_days','calendar_to_days','calendar_source',
         'qc_resolution','option_resolution','min_expiry_after_earnings_days','max_expiry_after_earnings_days',
         'min_expiration_days','max_expiration_days','strike_range','option_right','delta_range','iv_range',
-        'min_open_interest','min_volume','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','entry_window','exit_days_before','exit_policy',
+        'min_open_interest','min_volume','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','entry_window','exit_days_before','exit_policy','stop_loss_max_loss_pct',
         'historical_resolution','quote_resolution','entry_time_policy','exit_time_policy','slippage_model',
         'max_contracts','path_metrics'
     ]
-    return {k: getattr(args, k) for k in names if hasattr(args, k) and getattr(args, k) is not None}
+    out = {k: getattr(args, k) for k in names if hasattr(args, k) and getattr(args, k) is not None}
+    if 'stop_loss_max_loss_pct' in out:
+        out['stop_loss_max_loss_pct'] = normalize_stop_loss_max_loss_pct(out['stop_loss_max_loss_pct'])
+    return out
 
 
 def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list[str] | None = None, args=None) -> dict:
@@ -547,6 +553,7 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
         ('min_expiration_days', '--min-expiration-days'),
         ('max_expiration_days', '--max-expiration-days'),
         ('max_expiry_after_earnings_days', '--max-expiry-after-earnings-days'),
+        ('stop_loss_max_loss_pct', '--stop-loss-max-loss-pct'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None) if args is not None else None)
     # The current multiyear runner uses one QC project name. Serialize this part to avoid project push/backtest collisions.
@@ -827,6 +834,7 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('min_expiration_days', '--min-expiration-days'),
         ('max_expiration_days', '--max-expiration-days'),
         ('max_expiry_after_earnings_days', '--max-expiry-after-earnings-days'),
+        ('stop_loss_max_loss_pct', '--stop-loss-max-loss-pct'),
     ]:
         add_if_value(cmd, flag, getattr(args, attr, None))
     timeout = int(os.environ.get('QC_MULTIYEAR_TIMEOUT_SECONDS','2400'))
@@ -1255,6 +1263,7 @@ def add_historical_parameter_args(sp):
     sp.add_argument('--exit-time-policy', choices=['close','before-close-30m','midday'])
     sp.add_argument('--slippage-model', default='bidask', choices=['bidask','mid','bidask-plus-spread-fraction'])
     sp.add_argument('--max-contracts', type=int)
+    sp.add_argument('--stop-loss-max-loss-pct', type=float, help='Optional historical long-option stop trigger as max loss percent; omit for no stop')
 
 
 def build_parser():
