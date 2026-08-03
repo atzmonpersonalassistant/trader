@@ -79,8 +79,9 @@ fi
 # Source of truth: DB row with finished_at. Prefer the canonical daily campaign.
 # Legacy/manual runs before this fix may have used the old default campaign, so
 # fall back by deterministic daily run_id + conservative daily parameters only.
+cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
 ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
-SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
 FROM earnings_cache.research_runs
 WHERE campaign_id = 'daily-earnings-otm'
   AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
@@ -100,7 +101,7 @@ LIMIT 1;
 
 if [[ -z "$ROW" ]]; then
   ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
-  SELECT run_id, status, COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
+  SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
   FROM earnings_cache.research_runs
   WHERE run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
     AND finished_at IS NOT NULL
@@ -126,7 +127,7 @@ if [[ -z "$ROW" ]]; then
   exit 0
 fi
 
-IFS=$'\t' read -r RUN_ID RUN_STATUS FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
+IFS=$'\t' read -r RUN_ID RUN_STATUS RESEARCH_VERDICT FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
 if [[ -z "${RUN_ID:-}" || -z "${RUN_DIR:-}" ]]; then
   echo "ERROR: malformed DB row for date=$DATE: $ROW" >&2
   exit 70
@@ -175,6 +176,7 @@ Context:
 - Deterministic daily scan has finished.
 - run_id: __RUN_ID__
 - status: __RUN_STATUS__
+- research_verdict: __RESEARCH_VERDICT__
 - finished_at: __FINISHED_AT__
 - run_dir: __RUN_DIR__
 - final_candidate_count: __FINAL_COUNT__
@@ -220,9 +222,9 @@ Task:
 6. Do not send any message yourself. Do not create cron jobs. Do not modify the daily cron.
 7. Record the exact bounded-wrapper command you ran, or `NO_ACTION`, in the artifact.
 TASK
-python3 - "$TASK_FILE" "$SKILL_FILE" "$RUN_ID" "$RUN_STATUS" "$FINISHED_AT" "$RUN_DIR" "$FINAL_COUNT" "$BOTTLENECK" "$RUN_ERROR" "$ACTION_DIR" "$BOUNDED_ACTION_ID" "$OUTPUT_DIR" <<'PY'
+python3 - "$TASK_FILE" "$SKILL_FILE" "$RUN_ID" "$RUN_STATUS" "$RESEARCH_VERDICT" "$FINISHED_AT" "$RUN_DIR" "$FINAL_COUNT" "$BOTTLENECK" "$RUN_ERROR" "$ACTION_DIR" "$BOUNDED_ACTION_ID" "$OUTPUT_DIR" <<'PY'
 import pathlib, sys
-(task_file, skill_file, run_id, run_status, finished_at, run_dir, final_count, bottleneck, run_error, action_dir, bounded_action_id, output_dir) = sys.argv[1:]
+(task_file, skill_file, run_id, run_status, research_verdict, finished_at, run_dir, final_count, bottleneck, run_error, action_dir, bounded_action_id, output_dir) = sys.argv[1:]
 text = pathlib.Path(task_file).read_text()
 skill = pathlib.Path(skill_file).read_text()
 replacements = {
@@ -230,6 +232,7 @@ replacements = {
     '__SKILL_CONTENT__': skill,
     '__RUN_ID__': run_id,
     '__RUN_STATUS__': run_status,
+    '__RESEARCH_VERDICT__': research_verdict,
     '__FINISHED_AT__': finished_at,
     '__RUN_DIR__': run_dir,
     '__FINAL_COUNT__': final_count,
@@ -408,12 +411,14 @@ FINISHED_REVIEW_AT="$(date -Is)"
 
 RUN_ID_JSON="$(printf '%s' "$RUN_ID" | json_escape)"
 RUN_STATUS_JSON="$(printf '%s' "$RUN_STATUS" | json_escape)"
+RESEARCH_VERDICT_JSON="$(printf '%s' "$RESEARCH_VERDICT" | json_escape)"
 FINISHED_AT_JSON="$(printf '%s' "$FINISHED_AT" | json_escape)"
 RUN_DIR_JSON="$(printf '%s' "$RUN_DIR" | json_escape)"
 cat > "$OUTPUT_DIR/run_metadata.json" <<META
 {
   "run_id": "$RUN_ID_JSON",
   "daily_run_status": "$RUN_STATUS_JSON",
+  "research_verdict": "$RESEARCH_VERDICT_JSON",
   "daily_finished_at": "$FINISHED_AT_JSON",
   "run_dir": "$RUN_DIR_JSON",
   "review_started_at": "$STARTED_AT",
