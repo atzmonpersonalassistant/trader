@@ -94,6 +94,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             }
         }
         alg.exit_policy = "sell_before_earnings_no_hold_through"
+        alg.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta")
+        alg.contract_field_index = {name: i for i, name in enumerate(alg.contract_fields)}
+        alg.snapshot_contract_count = 0
+        alg.snapshot_day_count = 0
+        alg.snapshot_peak_day_count = 0
         alg.entry_min_days = 21
         alg.entry_max_days = 28
         alg.max_days_after_earnings = 7
@@ -573,6 +578,24 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("if dte < 1 or dte > 60: continue", main)
         self.assertIn("self.max_spread = 0.250000", main)
 
+    def test_multiyear_generated_qc_algorithm_instruments_compact_snapshots(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+            8,
+            {},
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertIn("compact_contract", main)
+        self.assertIn('"snapshot_record_format":"tuple_v1"', main)
+        self.assertIn('"snapshot_contract_count"', main)
+        self.assertIn('"snapshot_peak_day_count"', main)
+        self.assertIn('"snapshot_strike_range":"-50:300"', main)
+        self.assertIn("multiyear_snapshot_memory", main)
+        self.assertIn("self.set_runtime_statistic('multiyear_'+k, str(v))", main)
+
     def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         project_dir = pathlib.Path(tempfile.mkdtemp())
@@ -833,6 +856,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
             if k.startswith("multiyear_json_")
         ))
+        self.assertEqual(payload["snapshot_memory"]["snapshot_contract_count"], 5)
+        self.assertEqual(payload["snapshot_memory"]["snapshot_day_count"], 5)
+        self.assertEqual(payload["snapshot_memory"]["snapshot_record_format"], "tuple_v1")
         result = payload["results"][0]
         self.assertEqual(result["per_trade_return_pct"], [-65.0])
         self.assertEqual(result["trades"][0]["stop_loss_fill_model"], "next_day")
@@ -841,6 +867,28 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
         full = load_script("earnings-qc-research")
         self.assertFalse(full.multiyear_result_passes(result))
+
+    def test_multiyear_snapshot_memory_can_be_recovered_from_partial_runtime_stats(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        stats = {
+            "multiyear_snapshot_contract_count": "321",
+            "multiyear_snapshot_day_count": "12",
+            "multiyear_snapshot_peak_day_count": "14",
+            "multiyear_snapshot_peak_contracts_per_symbol_day": "54",
+            "multiyear_snapshot_record_format": "tuple_v1",
+            "multiyear_snapshot_strike_range": "-50:300",
+        }
+        self.assertEqual(
+            mod.snapshot_memory_from_runtime_stats(stats),
+            {
+                "snapshot_contract_count": 321,
+                "snapshot_day_count": 12,
+                "snapshot_peak_day_count": 14,
+                "snapshot_peak_contracts_per_symbol_day": 54,
+                "snapshot_record_format": "tuple_v1",
+                "snapshot_strike_range": "-50:300",
+            },
+        )
 
 
     def test_stage2_uses_volatility_aware_spread_policy(self):
@@ -1542,7 +1590,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         main = (project_dir / "main.py").read_text()
         self.assertIn("self.add_equity(ticker, Resolution.DAILY)", main)
         self.assertIn("self.add_option(ticker, Resolution.HOUR)", main)
-        self.assertIn("strikes(-20, 100).expiration(0, 120)", main)
+        self.assertIn("strikes(-50, 300).expiration(0, 120)", main)
         self.assertIn("self.option_right = 'both'", main)
         self.assertIn("self.delta_min = 0.05", main)
         self.assertIn("failure_reasons.append(\"delta_out_of_range\")", main)
