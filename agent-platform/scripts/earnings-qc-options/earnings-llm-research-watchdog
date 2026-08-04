@@ -76,6 +76,11 @@ SKILL_FILE="${EARNINGS_WATCHDOG_SKILL_FILE:-/agents/research/skills/trader-resea
 LOCK="${STATE_DIR}/earnings-llm-research-watchdog.lock"
 STALE_RUNNING_SECONDS="${EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS:-10800}"
 MISSING_RUN_GRACE_SECONDS="${EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS:-10800}"
+DAILY_RUN_COMMAND="/agents/research/bin/earnings-otm-daily.sh"
+# Fallback for the managed cron entry in .github/workflows/vps-deploy.yml:
+# 0 6 * * * /agents/research/bin/earnings-otm-daily.sh
+DAILY_RUN_DEFAULT_MINUTE=0
+DAILY_RUN_DEFAULT_HOUR=6
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
 exec 9>"$LOCK"
@@ -83,6 +88,35 @@ if ! flock -n 9; then
   echo "WATCHDOG_ALREADY_RUNNING"
   exit 0
 fi
+
+daily_run_schedule_hm() {
+  local line schedule minute hour
+  if [[ -n "${EARNINGS_WATCHDOG_DAILY_CRON_LINE:-}" ]]; then
+    line="$EARNINGS_WATCHDOG_DAILY_CRON_LINE"
+  elif command -v crontab >/dev/null 2>&1; then
+    line="$(crontab -l 2>/dev/null | grep -F "$DAILY_RUN_COMMAND" | awk '
+      $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $1 "|" $2; exit}
+    ')"
+  else
+    line=""
+  fi
+
+  if [[ -n "$line" ]]; then
+    if [[ "$line" == *"|"* ]]; then
+      schedule="$line"
+    else
+      schedule="$(awk '{print $1 "|" $2}' <<< "$line")"
+    fi
+    minute="${schedule%%|*}"
+    hour="${schedule#*|}"
+    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
+      printf '%s|%s\n' "$minute" "$hour"
+      return
+    fi
+  fi
+
+  printf '%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR"
+}
 
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
 RUN_STATE="$(cd /tmp && psql -d trader_research -qAt -F '|' -v ON_ERROR_STOP=1 -v stale_seconds="$STALE_RUNNING_SECONDS" -c "
@@ -111,15 +145,18 @@ LIMIT 1;
 ")"
 
 if [[ -z "$RUN_STATE" ]]; then
-  MISSING_ROW_DEADLINE_PASSED="$(python3 - "$DATE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
+  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR <<< "$(daily_run_schedule_hm)"
+  DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE")"
+  MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
 import datetime as dt
 import sys
 from zoneinfo import ZoneInfo
 
-date_s, grace_s, now_s = sys.argv[1:4]
+date_s, hour_s, minute_s, grace_s, now_s = sys.argv[1:6]
 tz = ZoneInfo("Asia/Jerusalem")
 run_date = dt.date.fromisoformat(date_s)
-deadline = dt.datetime.combine(run_date, dt.time(6, 0), tzinfo=tz) + dt.timedelta(seconds=int(grace_s))
+due_at = dt.datetime.combine(run_date, dt.time(int(hour_s), int(minute_s)), tzinfo=tz)
+deadline = due_at + dt.timedelta(seconds=int(grace_s))
 if now_s:
     raw = now_s.replace("Z", "+00:00")
     now = dt.datetime.fromisoformat(raw)
@@ -129,14 +166,23 @@ if now_s:
         now = now.astimezone(tz)
 else:
     now = dt.datetime.now(tz)
-print("1" if now >= deadline else "0")
+if now < due_at:
+    print("not_due")
+elif now < deadline:
+    print("within_grace")
+else:
+    print("after_deadline")
 PY
 )"
-  if [[ "$MISSING_ROW_DEADLINE_PASSED" == "1" ]]; then
-    echo "ERROR: NO_DAILY_RUN_ROW date=$DATE threshold_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
+  if [[ "$MISSING_ROW_STATE" == "after_deadline" ]]; then
+    echo "ERROR: DAILY_RUN_MISSING_AFTER_DEADLINE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
     exit 75
   fi
-  echo "NO_DAILY_RUN_ROW_PENDING date=$DATE threshold_seconds=$MISSING_RUN_GRACE_SECONDS"
+  if [[ "$MISSING_ROW_STATE" == "not_due" ]]; then
+    echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS"
+  else
+    echo "DAILY_RUN_MISSING_WITHIN_GRACE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS"
+  fi
   exit 0
 fi
 
