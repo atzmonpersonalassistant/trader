@@ -936,7 +936,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("zero_open_interest", main)
         self.assertNotIn("diagnostic_zero_volume", main)
         self.assertNotIn("diagnostic_zero_open_interest", main)
-        self.assertIn('"liquidity_fail_reason_counts": {}, "liquidity_warning_counts": {"no_option_chain_slice_or_no_data": 1}', main)
+        self.assertIn('"liquidity_fail_reason_counts": {}, "liquidity_warning_counts": {"zero_option_chain_slices_observed": 1}', main)
+        self.assertIn("NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE", main)
 
 
     def test_full_scan_removed_last_year_debug_runup_metric(self):
@@ -966,10 +967,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("TRADER_VALUATION_ANCHOR_NO_SESSION_DATA", scan)
         self.assertIn("trader.valuation_date", scan)
 
-    def test_stage2_fails_before_later_day_chains_when_anchor_has_no_option_chain(self):
+    def test_stage2_records_no_chain_rows_when_anchor_has_equity_but_no_option_chains(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("self.valuation_option_chain_slice_count = 0", scan)
-        self.assertIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", scan)
+        self.assertNotIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", scan)
+        self.assertIn("zero_option_chain_slices_observed", scan)
+        self.assertIn("NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE", scan)
         self.assertIn("valuation_option_chain_slice_count", scan)
         self.assertIn("if current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", scan)
         self.assertIn("self.emit_and_quit()", scan)
@@ -977,23 +980,33 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("if current_date == self.valuation_date:", scan)
         self.assertIn("self.valuation_option_chain_slice_count += len(chains_by_symbol)", scan)
 
-    def test_stage2_fails_loudly_when_anchor_slice_has_no_option_chain_even_if_later_chain_arrives(self):
+    def test_stage2_emits_per_symbol_no_chain_rows_when_equity_session_exists(self):
         mod = load_script("earnings-qc-options-scan")
         project_dir = pathlib.Path(tempfile.mkdtemp())
         mod.write_qc_stage2_project(
             project_dir,
-            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            [
+                {"symbol": "GEG", "report_date": "2026-08-04"},
+                {"symbol": "CISS", "report_date": "2026-08-04"},
+            ],
             datetime.date(2026, 7, 14),
         )
         main = (project_dir / "main.py").read_text()
         self.assertIn("self.valuation_option_chain_slice_count = 0", main)
-        self.assertIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", main)
+        self.assertNotIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", main)
+        self.assertIn("zero_option_chain_slices_observed", main)
         self.assertIn("trader.valuation_option_chain_slice_count", main)
         self.assertIn("current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", main)
 
         fake_imports = types.ModuleType("AlgorithmImports")
 
         class QCAlgorithm:
+            def debug(self, message):
+                self.debug_messages.append(message)
+
+            def set_runtime_statistic(self, key, value):
+                self.runtime_statistics[key] = value
+
             def quit(self):
                 self.quit_called = True
 
@@ -1016,12 +1029,46 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.option_chain_slice_count = 0
         alg.max_option_chain_slice_count = 0
         alg.option_chain_symbols_sample = []
-        alg.option_by_underlying = {}
-        alg.done_by_symbol = {"OPEN": False}
+        alg.option_by_underlying = {"GEG": "GEG OPTION", "CISS": "CISS OPTION"}
+        alg.done_by_symbol = {"GEG": False, "CISS": False}
+        alg.earnings = {"GEG": "2026-08-04", "CISS": "2026-08-04"}
+        alg.rows = []
+        alg.candidate_details = []
+        alg.funnel = {
+            "symbols_input": 2,
+            "option_chain_available": 0,
+            "expiry_within_0_7d_after_earnings": 0,
+            "calls_under_max_premium": 0,
+            "liquidity_pass": 0,
+            "candidates": 0,
+        }
+        alg.securities = {
+            "GEG": types.SimpleNamespace(price=12.34),
+            "CISS": types.SimpleNamespace(price=2.5),
+        }
+        alg.debug_messages = []
+        alg.runtime_statistics = {}
+        alg.quit_called = False
+        alg.min_days_after_earnings = 1
+        alg.max_days_after_earnings = 7
+        alg.option_right = "call"
+        alg.delta_min = None
+        alg.delta_max = None
+        alg.iv_min = None
+        alg.iv_max = None
+        alg.max_premium = 0.5
+        alg.max_spread = None
+        alg.max_spread_pct = 0.6
+        alg.min_relative_spread = 0.25
+        alg.vol_spread_factor = 0.5
+        alg.expected_move_spread_fraction = 0.15
+        alg.min_bid = 0.05
+        alg.min_open_interest = 0
+        alg.min_volume = 0
 
         empty_slice = types.SimpleNamespace(option_chains={})
         later_chain_slice = types.SimpleNamespace(
-            option_chains={"OPEN": types.SimpleNamespace(symbol="OPEN OPTIONCHAIN")}
+            option_chains={"NVDA": types.SimpleNamespace(symbol="NVDA OPTIONCHAIN")}
         )
 
         alg.time = datetime.datetime(2026, 7, 13, 16)
@@ -1030,11 +1077,57 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(alg.valuation_option_chain_slice_count, 0)
 
         alg.time = datetime.datetime(2026, 7, 14, 9, 31)
-        with self.assertRaisesRegex(Exception, "TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA") as ctx:
-            alg.on_data(later_chain_slice)
-        self.assertIn("valuation_data_slice_count=1", str(ctx.exception))
-        self.assertIn("valuation_option_chain_slice_count=0", str(ctx.exception))
+        alg.on_data(later_chain_slice)
+        self.assertTrue(alg.quit_called)
+        self.assertEqual([row["symbol"] for row in alg.rows], ["GEG", "CISS"])
+        self.assertEqual({row["candidate_count"] for row in alg.rows}, {0})
+        self.assertEqual(
+            {row["multi_year_backtest_status"] for row in alg.rows},
+            {"NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE"},
+        )
+        self.assertEqual(
+            {tuple(row["liquidity_warning_counts"].items()) for row in alg.rows},
+            {(("zero_option_chain_slices_observed", 1),)},
+        )
+        parsed = json.loads(alg.runtime_statistics["trader.stage2_json_00"])
+        self.assertEqual(len(parsed["rows"]), 2)
         self.assertEqual(alg.option_chain_slice_count, 0)
+
+    def test_stage2_still_fails_loudly_when_anchor_has_zero_equity_slices(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
+            datetime.date(2026, 7, 14),
+        )
+        main = (project_dir / "main.py").read_text()
+
+        fake_imports = types.ModuleType("AlgorithmImports")
+
+        class QCAlgorithm:
+            pass
+
+        fake_imports.QCAlgorithm = QCAlgorithm
+        old_imports = sys.modules.get("AlgorithmImports")
+        sys.modules["AlgorithmImports"] = fake_imports
+        namespace = {}
+        try:
+            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+        finally:
+            if old_imports is None:
+                sys.modules.pop("AlgorithmImports", None)
+            else:
+                sys.modules["AlgorithmImports"] = old_imports
+
+        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
+        alg.valuation_date = datetime.date(2026, 7, 13)
+        alg.valuation_data_slice_count = 0
+        alg.valuation_option_chain_slice_count = 0
+        alg.option_chain_slice_count = 0
+        with self.assertRaisesRegex(Exception, "TRADER_VALUATION_ANCHOR_NO_SESSION_DATA") as ctx:
+            alg.emit_and_quit()
+        self.assertIn("valuation_data_slice_count=0", str(ctx.exception))
 
     def test_full_scan_throttles_discovery_and_sequential_chunks(self):
         full = (SCRIPTS / "earnings-qc-research").read_text()
