@@ -5,6 +5,7 @@ import io
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -1200,6 +1201,61 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(trade["iv_baseline_inputs"]["status"], "OK")
         self.assertGreater(trade["iv_baseline_inputs"]["ordinary_daily_variance_sample_size"], 0)
         self.assertEqual(trade["iv_baseline_inputs"]["earnings_jump_variance_sample_size"], 1)
+
+    def test_multiyear_iv_baseline_uses_calendar_day_annualization(self):
+        alg = self.build_multiyear_algorithm()
+        annual_vol = 0.30
+        daily_variance = annual_vol ** 2 / 365.0
+        observed_days = [
+            datetime.date(2026, 1, 2),
+            datetime.date(2026, 1, 5),
+            datetime.date(2026, 1, 6),
+            datetime.date(2026, 1, 7),
+            datetime.date(2026, 1, 8),
+            datetime.date(2026, 1, 9),
+            datetime.date(2026, 1, 12),
+            datetime.date(2026, 1, 13),
+            datetime.date(2026, 1, 14),
+        ]
+        prices = [100.0]
+        for previous, current in zip(observed_days, observed_days[1:]):
+            if current == datetime.date(2026, 1, 12):
+                prices.append(prices[-1])
+                continue
+            gap = (current - previous).days
+            prices.append(prices[-1] * math.exp(math.sqrt(daily_variance * gap)))
+        alg.snapshots = {
+            "XYZ": {
+                day.isoformat(): {"underlying": price, "contracts": []}
+                for day, price in zip(observed_days, prices)
+            }
+        }
+
+        iv_inputs = alg.symbol_iv_variance_inputs(
+            "XYZ",
+            [{"report_date": "2026-01-09", "report_time": "AfterMarket"}],
+        )
+
+        self.assertEqual(iv_inputs["status"], "OK")
+        self.assertAlmostEqual(iv_inputs["ordinary_daily_variance"], daily_variance, places=10)
+        self.assertEqual(iv_inputs["earnings_jump_variance"], 0.0)
+        self.assertGreater(iv_inputs["ordinary_daily_variance_sample_size"], 0)
+        self.assertEqual(iv_inputs["earnings_jump_variance_sample_size"], 1)
+
+        expiry = datetime.date(2026, 3, 1)
+        for dte_exit in [4, 7, 14, 31]:
+            exit_day = expiry - datetime.timedelta(days=dte_exit)
+            fields = alg.iv_trade_fields(
+                annual_vol,
+                annual_vol,
+                exit_day - datetime.timedelta(days=10),
+                exit_day,
+                expiry,
+                iv_inputs,
+            )
+            self.assertEqual(fields["iv_days_to_expiry_exit"], dte_exit)
+            self.assertAlmostEqual(fields["iv_baseline_exit"], annual_vol, delta=0.001)
+            self.assertAlmostEqual(fields["iv_excess_pct"], 0.0, delta=0.01)
 
     def test_multiyear_stop_loss_next_day_final_day_fallback_uses_breach_day(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
