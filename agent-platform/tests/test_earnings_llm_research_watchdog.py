@@ -1,6 +1,8 @@
+import os
 import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog"
@@ -72,6 +74,90 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn('if [[ "$RC" -eq 0 && "$ARTIFACTS_VALID" -eq 1 ]]; then', text)
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
+
+    def run_watchdog_with_fake_psql(self, psql_outputs):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            handoff_dir = root / "handoff"
+            report_root = root / "reports"
+            log_dir = root / "logs"
+            skill = root / "SKILL.md"
+            calls = root / "psql-calls"
+            skill.write_text("# skill\n")
+            happy_run_dir = report_root / "run"
+            happy_run_dir.mkdir(parents=True)
+            (happy_run_dir / "full_summary.json").write_text('{"status":"NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}')
+            resolved_outputs = [
+                output.replace("{report_root}", str(report_root))
+                for output in psql_outputs
+            ]
+            script = fake_bin / "psql"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"calls={calls!s}\n"
+                "n=0\n"
+                "[[ -f \"$calls\" ]] && n=$(cat \"$calls\")\n"
+                "n=$((n + 1))\n"
+                "printf '%s' \"$n\" > \"$calls\"\n"
+                "case \"$n\" in\n"
+                + "".join(
+                    f"  {idx}) printf '%b' {output!r} ;;\n"
+                    for idx, output in enumerate(resolved_outputs, start=1)
+                )
+                + "  *) printf '' ;;\n"
+                "esac\n"
+            )
+            script.chmod(0o755)
+            (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "flock").chmod(0o755)
+            result = subprocess.run(
+                [str(SCRIPT), "--date", "2026-08-04", "--dry-run"],
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                    "EARNINGS_WATCHDOG_PATH_PREFIX": str(fake_bin),
+                    "EARNINGS_WATCHDOG_STATE_DIR": str(state_dir),
+                    "EARNINGS_WATCHDOG_HANDOFF_DIR": str(handoff_dir),
+                    "EARNINGS_WATCHDOG_REPORT_ROOT": str(report_root),
+                    "EARNINGS_WATCHDOG_LOG_DIR": str(log_dir),
+                    "EARNINGS_WATCHDOG_SKILL_FILE": str(skill),
+                    "EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS": "3600",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            return result
+
+    def test_stale_running_daily_run_escalates(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|running|2026-08-04 06:00:00+03||7201|{report_root}/run\n",
+        ])
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("STALE_RUNNING_DAILY_RUN", result.stderr)
+        self.assertIn("threshold_seconds=3600", result.stderr)
+
+    def test_date_with_no_daily_run_row_escalates(self):
+        result = self.run_watchdog_with_fake_psql(["", ""])
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("NO_DAILY_RUN_ROW date=2026-08-04", result.stderr)
+
+    def test_finished_happy_path_still_reaches_dry_run_without_llm(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\t\t\n",
+        ])
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("WOULD_RUN_WATCHDOG run_id=earnings-qc-options-scan-full-20260804-060000", result.stdout)
 
 
 if __name__ == "__main__":

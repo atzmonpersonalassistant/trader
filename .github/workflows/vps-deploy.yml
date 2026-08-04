@@ -287,7 +287,14 @@ jobs:
           LOG_DIR=/agents/research/logs/earnings-qc-research
           mkdir -p /agents/research/state/earnings-qc-research "$LOG_DIR"
           (
-            flock -n 9 || exit 0
+            if ! flock -n 9; then
+              holder="$(fuser "$LOCK" 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//' || true)"
+              if [ -z "$holder" ]; then
+                holder="unknown"
+              fi
+              echo "$(date -u +%FT%TZ) DAILY_RUN_LOCK_CONTENDED lock=$LOCK holder=$holder"
+              exit 0
+            fi
             earnings-qc-research run             --campaign daily-earnings-otm             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end
           ) 9>"$LOCK" >> "$LOG_DIR/daily-$(date +%Y%m%d).log" 2>&1
           EOF_DAILY_EARNINGS

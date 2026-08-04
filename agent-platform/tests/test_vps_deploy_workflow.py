@@ -81,12 +81,67 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('*/15 * * * * /agents/research/bin/earnings-llm-research-watchdog', workflow)
         self.assertIn('llm-research-watchdog.log', workflow)
         self.assertNotIn('earnings-llm-postrun-review || true', workflow)
-        self.assertIn('flock -n 9 || exit 0', workflow)
+        self.assertIn('DAILY_RUN_LOCK_CONTENDED lock=$LOCK holder=$holder', workflow)
+        self.assertIn('holder="$(fuser "$LOCK"', workflow)
+        self.assertNotIn('flock -n 9 || exit 0', workflow)
         self.assertIn('earnings-qc-research run', workflow)
         self.assertIn('--campaign daily-earnings-otm', workflow)
         self.assertIn(r'/^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}', workflow)
         self.assertNotIn("'0 9 * * * /agents/research/bin/earnings-otm-daily.sh'", workflow)
         self.assertNotIn('earnings-qc-options-scan run-now', workflow)
+
+    def test_daily_wrapper_logs_contended_lock_before_exiting_successfully(self):
+        script = deploy_run_script()
+        start = script.index("sudo tee /agents/research/bin/earnings-otm-daily.sh")
+        heredoc_start = script.index("<<'EOF_DAILY_EARNINGS'", start)
+        body_start = script.index("\n", heredoc_start) + 1
+        body_end = script.index("\nEOF_DAILY_EARNINGS", body_start)
+        daily = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in script[body_start:body_end].splitlines()
+        )
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            state = root / "state"
+            logs = root / "logs"
+            fake_bin.mkdir()
+            state.mkdir()
+            logs.mkdir()
+            daily_path = root / "earnings-otm-daily.sh"
+            daily_path.write_text(
+                daily.replace("/agents/research/state/earnings-qc-research", str(state))
+                .replace("/agents/research/logs/earnings-qc-research", str(logs))
+                .replace("export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin", f"export PATH={fake_bin}:/usr/bin:/bin")
+            )
+            daily_path.chmod(0o755)
+            (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 1\n")
+            (fake_bin / "fuser").write_text("#!/usr/bin/env bash\nprintf ' 1234 5678\\n'\n")
+            for name in ("date", "tr", "sed", "mkdir"):
+                target = fake_bin / name
+                target.symlink_to(f"/bin/{name}")
+            for name in ("earnings-qc-research",):
+                (fake_bin / name).write_text("#!/usr/bin/env bash\nexit 99\n")
+            for path in fake_bin.iterdir():
+                if not path.is_symlink():
+                    path.chmod(0o755)
+
+            result = subprocess.run(
+                [str(daily_path)],
+                env={**os.environ, "PATH": f"{fake_bin}:/usr/bin:/bin"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            log_files = list(logs.glob("daily-*.log"))
+            self.assertEqual(len(log_files), 1)
+            log_text = log_files[0].read_text()
+            self.assertIn("DAILY_RUN_LOCK_CONTENDED", log_text)
+            self.assertIn("lock=", log_text)
+            self.assertIn("holder=1234 5678", log_text)
 
     def test_research_postgres_cache_db_is_provisioned(self):
         workflow = workflow_text()

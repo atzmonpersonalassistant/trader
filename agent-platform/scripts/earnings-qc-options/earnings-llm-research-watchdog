@@ -2,7 +2,11 @@
 set -euo pipefail
 
 export TZ=Asia/Jerusalem
-export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+if [[ -n "${EARNINGS_WATCHDOG_PATH_PREFIX:-}" ]]; then
+  export PATH="${EARNINGS_WATCHDOG_PATH_PREFIX}:/agents/research/bin:/usr/local/bin:/usr/bin:/bin"
+else
+  export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+fi
 export PYTHONDONTWRITEBYTECODE=1
 
 MODEL="gpt-5.4-mini"
@@ -63,13 +67,14 @@ case "$MODEL" in
 esac
 
 DATE_COMPACT="${DATE//-/}"
-STATE_DIR="/agents/research/state/earnings-qc-research/llm-research-watchdog"
-POSTRUN_STATE_DIR="/agents/research/state/earnings-qc-research/llm-postrun-review"
-HANDOFF_DIR="/agents/research/handoff"
-REPORT_ROOT="/agents/research/reports"
-LOG_DIR="/agents/research/logs/earnings-qc-research"
-SKILL_FILE="/agents/research/skills/trader-research-system/SKILL.md"
+STATE_DIR="${EARNINGS_WATCHDOG_STATE_DIR:-/agents/research/state/earnings-qc-research/llm-research-watchdog}"
+POSTRUN_STATE_DIR="${EARNINGS_POSTRUN_STATE_DIR:-/agents/research/state/earnings-qc-research/llm-postrun-review}"
+HANDOFF_DIR="${EARNINGS_WATCHDOG_HANDOFF_DIR:-/agents/research/handoff}"
+REPORT_ROOT="${EARNINGS_WATCHDOG_REPORT_ROOT:-/agents/research/reports}"
+LOG_DIR="${EARNINGS_WATCHDOG_LOG_DIR:-/agents/research/logs/earnings-qc-research}"
+SKILL_FILE="${EARNINGS_WATCHDOG_SKILL_FILE:-/agents/research/skills/trader-research-system/SKILL.md}"
 LOCK="${STATE_DIR}/earnings-llm-research-watchdog.lock"
+STALE_RUNNING_SECONDS="${EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS:-10800}"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
 exec 9>"$LOCK"
@@ -79,6 +84,42 @@ if ! flock -n 9; then
 fi
 
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
+RUN_STATE="$(cd /tmp && psql -d trader_research -qAt -F '|' -v ON_ERROR_STOP=1 -v stale_seconds="$STALE_RUNNING_SECONDS" -c "
+WITH daily AS (
+  SELECT 0 AS source_rank, run_id, status, COALESCE(started_at::text,'') AS started_at_text, COALESCE(finished_at::text,'') AS finished_at_text, COALESCE(EXTRACT(EPOCH FROM (now() - started_at))::bigint, 0)::text AS age_seconds, run_dir, started_at, finished_at
+  FROM earnings_cache.research_runs
+  WHERE campaign_id = 'daily-earnings-otm'
+    AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
+  UNION ALL
+  SELECT 1 AS source_rank, run_id, status, COALESCE(started_at::text,'') AS started_at_text, COALESCE(finished_at::text,'') AS finished_at_text, COALESCE(EXTRACT(EPOCH FROM (now() - started_at))::bigint, 0)::text AS age_seconds, run_dir, started_at, finished_at
+  FROM earnings_cache.research_runs
+  WHERE run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
+    AND COALESCE(parameters_json->>'from_stage','calendar') = 'calendar'
+    AND COALESCE(parameters_json->>'to_stage','historical_option_pnl') = 'historical_option_pnl'
+    AND COALESCE((parameters_json->>'years')::int, 1) = 1
+    AND COALESCE((parameters_json->>'parallel')::int, 1) = 1
+    AND COALESCE((parameters_json->>'end_to_end')::boolean, true) = true
+    AND COALESCE((parameters_json->>'chunk_size')::int, 25) = 25
+    AND COALESCE(parameters_json->>'symbols','') = ''
+    AND COALESCE(parameters_json->>'calendar_source','nasdaq') = 'nasdaq'
+)
+SELECT run_id, status, started_at_text, finished_at_text, age_seconds, run_dir
+FROM daily
+ORDER BY source_rank, COALESCE(finished_at, started_at) DESC NULLS LAST
+LIMIT 1;
+")"
+
+if [[ -z "$RUN_STATE" ]]; then
+  echo "ERROR: NO_DAILY_RUN_ROW date=$DATE" >&2
+  exit 75
+fi
+
+IFS='|' read -r STATE_RUN_ID STATE_STATUS STATE_STARTED_AT STATE_FINISHED_AT STATE_AGE_SECONDS STATE_RUN_DIR <<< "$RUN_STATE"
+if [[ "$STATE_STATUS" == "running" && -z "$STATE_FINISHED_AT" && "${STATE_AGE_SECONDS:-0}" =~ ^[0-9]+$ && "$STATE_AGE_SECONDS" -gt "$STALE_RUNNING_SECONDS" ]]; then
+  echo "ERROR: STALE_RUNNING_DAILY_RUN date=$DATE run_id=$STATE_RUN_ID started_at=$STATE_STARTED_AT age_seconds=$STATE_AGE_SECONDS threshold_seconds=$STALE_RUNNING_SECONDS" >&2
+  exit 75
+fi
+
 ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
 SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
 FROM earnings_cache.research_runs
