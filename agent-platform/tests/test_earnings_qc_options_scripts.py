@@ -964,6 +964,34 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("multiyear_snapshot_memory", main)
         self.assertIn("self.set_runtime_statistic('multiyear_'+k, str(v))", main)
 
+    def test_multiyear_generated_qc_algorithm_reports_full_error_count_when_details_truncated(self):
+        alg = self.build_multiyear_algorithm()
+        event_count = 12
+        alg.events = {
+            "XYZ": {
+                f"bad-{i:02d}": {
+                    "symbol": "XYZ",
+                    "report_date": f"bad-{i:02d}",
+                    "report_time": "Before Market",
+                }
+                for i in range(event_count)
+            }
+        }
+        alg.snapshots = {"XYZ": {}}
+
+        alg.on_end_of_algorithm()
+
+        payload_parts = [
+            alg.runtime_statistics[key]
+            for key in sorted(alg.runtime_statistics)
+            if key.startswith("multiyear_json_")
+        ]
+        payload = json.loads("".join(payload_parts))
+        self.assertEqual(payload["error_count"], event_count)
+        self.assertTrue(payload["errors_truncated"])
+        self.assertEqual(len(payload["errors"]), 10)
+        self.assertEqual(alg.runtime_statistics["multiyear_error_count"], str(event_count))
+
     def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
         mod = load_script("earnings-qc-multiyear-backtest")
         project_dir = pathlib.Path(tempfile.mkdtemp())
