@@ -439,6 +439,129 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("04_qc_calls_ask_under_50c", full)
 
 
+    def test_stage2_funnel_has_distinct_expiry_and_otm_stages(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-07-15"}],
+            datetime.date(2026, 7, 14),
+        )
+        main = (project_dir / "main.py").read_text()
+        self.assertNotIn(
+            '"expiry_within_0_7d_after_earnings": 0,\n            "expiry_within_0_7d_after_earnings": 0',
+            main,
+        )
+        self.assertIn('"otm_expiry_within_0_7d_after_earnings": 0', main)
+        self.assertIn(
+            "'035_qc_otm_expiry_within_0_7d_after_earnings': stat_int(stats, 'trader.otm_expiry_within_0_7d_after_earnings')",
+            (SCRIPTS / "earnings-qc-options-scan").read_text(),
+        )
+        self.assertIn(
+            "'035_qc_otm_expiry_within_0_7d_after_earnings'",
+            (SCRIPTS / "earnings-qc-research").read_text(),
+        )
+
+    def test_stage2_expiry_counter_can_diverge_from_otm_counter(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "OPEN", "report_date": "2026-07-15"}],
+            datetime.date(2026, 7, 14),
+        )
+        main = (project_dir / "main.py").read_text()
+
+        fake_imports = types.ModuleType("AlgorithmImports")
+
+        class QCAlgorithm:
+            def debug(self, message):
+                self.debug_messages.append(message)
+
+            def set_runtime_statistic(self, key, value):
+                self.runtime_statistics[key] = value
+
+            def quit(self):
+                self.quit_called = True
+
+        fake_imports.QCAlgorithm = QCAlgorithm
+        fake_imports.OptionRight = types.SimpleNamespace(CALL="call", PUT="put")
+        old_imports = sys.modules.get("AlgorithmImports")
+        sys.modules["AlgorithmImports"] = fake_imports
+        namespace = {}
+        try:
+            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+        finally:
+            if old_imports is None:
+                sys.modules.pop("AlgorithmImports", None)
+            else:
+                sys.modules["AlgorithmImports"] = old_imports
+
+        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
+        alg.valuation_date = datetime.date(2026, 7, 13)
+        alg.valuation_data_slice_count = 0
+        alg.valuation_option_chain_slice_count = 0
+        alg.option_chain_slice_count = 0
+        alg.max_option_chain_slice_count = 0
+        alg.option_chain_symbols_sample = []
+        alg.option_by_underlying = {"OPEN": "OPEN OPTION"}
+        alg.done_by_symbol = {"OPEN": False}
+        alg.earnings = {"OPEN": "2026-07-15"}
+        alg.rows = []
+        alg.candidate_details = []
+        alg.funnel = {
+            "symbols_input": 1,
+            "option_chain_available": 0,
+            "expiry_within_0_7d_after_earnings": 0,
+            "otm_expiry_within_0_7d_after_earnings": 0,
+            "calls_under_max_premium": 0,
+            "liquidity_pass": 0,
+            "candidates": 0,
+        }
+        alg.securities = {"OPEN": types.SimpleNamespace(price=10.0)}
+        alg.debug_messages = []
+        alg.runtime_statistics = {}
+        alg.quit_called = False
+        alg.min_days_after_earnings = 1
+        alg.max_days_after_earnings = 7
+        alg.option_right = "call"
+        alg.delta_min = None
+        alg.delta_max = None
+        alg.iv_min = None
+        alg.iv_max = None
+        alg.max_premium = 0.5
+        alg.max_spread = None
+        alg.max_spread_pct = 0.6
+        alg.min_relative_spread = 0.25
+        alg.vol_spread_factor = 0.5
+        alg.expected_move_spread_fraction = 0.15
+        alg.min_bid = 0.05
+        alg.min_open_interest = 0
+        alg.min_volume = 0
+
+        contract = types.SimpleNamespace(
+            symbol="OPEN 20260717 C9",
+            right="call",
+            expiry=datetime.datetime(2026, 7, 17),
+            strike=9.0,
+            bid_price=0.1,
+            ask_price=0.2,
+            last_price=0.2,
+            open_interest=10,
+            volume=5,
+            greeks=types.SimpleNamespace(delta=0.4),
+            implied_volatility=0.5,
+        )
+        chain = types.SimpleNamespace(symbol="OPEN OPTION", contracts={"c": contract})
+        alg.time = datetime.datetime(2026, 7, 13, 16)
+        alg.on_data(types.SimpleNamespace(option_chains={"OPEN OPTION": chain}))
+
+        self.assertEqual(alg.funnel["option_chain_available"], 1)
+        self.assertEqual(alg.funnel["expiry_within_0_7d_after_earnings"], 1)
+        self.assertEqual(alg.funnel["otm_expiry_within_0_7d_after_earnings"], 0)
+        self.assertEqual(alg.funnel["calls_under_max_premium"], 0)
+
+
     def test_stage2_dynamic_tuning_is_guardrailed(self):
         mod = load_script("earnings-qc-options-scan")
         import os
