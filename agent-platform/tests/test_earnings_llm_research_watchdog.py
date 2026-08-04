@@ -75,7 +75,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs):
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00"):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_bin = root / "bin"
@@ -126,6 +126,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                     "EARNINGS_WATCHDOG_LOG_DIR": str(log_dir),
                     "EARNINGS_WATCHDOG_SKILL_FILE": str(skill),
                     "EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS": "3600",
+                    "EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS": "3600",
+                    "EARNINGS_WATCHDOG_NOW": now,
                 },
                 text=True,
                 capture_output=True,
@@ -148,6 +150,12 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 75)
         self.assertIn("NO_DAILY_RUN_ROW date=2026-08-04", result.stderr)
+
+    def test_date_with_no_daily_run_row_before_deadline_is_pending(self):
+        result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T06:30:00+03:00")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("NO_DAILY_RUN_ROW_PENDING date=2026-08-04", result.stdout)
 
     def test_finished_happy_path_still_reaches_dry_run_without_llm(self):
         result = self.run_watchdog_with_fake_psql([
