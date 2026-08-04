@@ -185,7 +185,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         mod = load_script("earnings-qc-research")
         calls = []
         summary = {
-            "final_candidates": [{"symbol": "AAA", "earnings_date": "2026-08-01"}],
+            "final_candidates": [{
+                "symbol": "AAA",
+                "earnings_date": "2026-08-01",
+                "spot": 10.0,
+                "contract_count": 1,
+                "debug_full_candidate_only": "should_not_be_persisted",
+                "contracts": [{
+                    "contract": "AAA_CALL_11",
+                    "bid": 0.10,
+                    "ask": 0.20,
+                    "required_move_pct": 10.0,
+                    "iv": 0.55,
+                    "debug_contract_only": "stays_in_contract_json_only",
+                }],
+            }],
             "forward_candidates": [
                 {"symbol": "AAA", "earnings_date": "2026-08-01"},
                 {"symbol": "BBB", "earnings_date": "2026-08-02"},
@@ -200,6 +214,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("BBB", joined)
         self.assertIn("sample_size", joined)
         self.assertIn("historical_pnl_json=EXCLUDED.historical_pnl_json", joined)
+        self.assertIn("ON CONFLICT (candidate_id)", joined)
+        self.assertIn("contract_count", joined)
+        self.assertIn("required_move_pct", joined)
+        self.assertNotIn("debug_full_candidate_only", joined)
         self.assertEqual(len(calls), 2)
 
     def test_upsert_run_splits_lifecycle_verdict_and_bottleneck(self):
