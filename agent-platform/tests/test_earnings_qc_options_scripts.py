@@ -2601,6 +2601,8 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         }]
 
         args = types.SimpleNamespace(
+            campaign="camp-a",
+            run_id="run-a",
             run_dir=str(tmp),
             offset=None,
             validation_years=10,
@@ -2609,11 +2611,56 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             end_to_end=True,
             notify=False,
         )
-        with mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=lambda *a, **k: retried.append(a[1])), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}):
+        with mock.patch.object(mod, "require_research_db", return_value=True), mock.patch.object(mod, "latest_db_run", return_value={"run_id": "run-a", "run_dir": str(tmp)}), mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=lambda *a, **k: retried.append(a[1])), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}), mock.patch.object(mod, "persist_summary_to_db"):
             rc = mod.cmd_retry_failed(args)
 
         self.assertEqual(rc, 0)
         self.assertEqual(retried, [25])
+
+    def test_retry_failed_persists_rewritten_summary_to_db(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        summaries = [{
+            "failed_chunks": [{"offset": 10}],
+            "historical_failed_chunks": [],
+            "qc_capacity_blocked_chunks": [],
+        }]
+        rewritten = {
+            "ok": True,
+            "status": "OK_FULL_QC_SCAN",
+            "final_candidates": [{"symbol": "AAA"}],
+            "final_candidate_count": 1,
+        }
+        persisted = []
+        args = mod.build_parser().parse_args([
+            "retry-failed",
+            "--campaign", "camp-a",
+            "--run-dir", str(tmp),
+            "--run-id", "run-a",
+            "--chunk-size", "5",
+            "--years", "1",
+            "--validation-years", "10",
+        ])
+
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": "run-a", "run_dir": str(tmp)}), \
+             mock.patch.object(mod, "aggregate", side_effect=summaries), \
+             mock.patch.object(mod, "load_chunks", return_value=[]), \
+             mock.patch.object(mod, "run_chunk_end_to_end"), \
+             mock.patch.object(mod, "write_summary", return_value=rewritten.copy()), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: persisted.append(a)):
+            rc = mod.cmd_retry_failed(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(persisted), 1)
+        campaign_id, run_id, run_dir, summary, params = persisted[0]
+        self.assertEqual(campaign_id, "camp-a")
+        self.assertEqual(run_id, "run-a")
+        self.assertEqual(run_dir, tmp)
+        self.assertEqual(summary["run_id"], "run-a")
+        self.assertEqual(summary["campaign_id"], "camp-a")
+        self.assertEqual(summary["parameters"]["years"], 1)
+        self.assertEqual(params["years"], 1)
 
     def test_run_chunk_persists_capacity_status_for_bad_json_stdout(self):
         mod = load_script("earnings-qc-research")
