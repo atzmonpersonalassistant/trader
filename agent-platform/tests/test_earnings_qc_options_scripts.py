@@ -2,8 +2,6 @@ import contextlib
 import argparse
 import datetime
 import io
-import importlib.machinery
-import importlib.util
 import json
 import math
 import os
@@ -15,6 +13,8 @@ import types
 import unittest
 from unittest import mock
 
+sys.dont_write_bytecode = True
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "agent-platform" / "scripts" / "earnings-qc-options"
 PASSING_WINDOWS = [{"window": "1y", "status": "OK", "sample_size": 1}]
@@ -22,10 +22,12 @@ PASSING_WINDOWS = [{"window": "1y", "status": "OK", "sample_size": 1}]
 
 def load_script(name: str):
     path = SCRIPTS / name
-    loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
+    module_name = name.replace("-", "_")
+    mod = types.ModuleType(module_name)
+    mod.__file__ = str(path)
+    mod.__loader__ = None
+    mod.__package__ = ""
+    exec(compile(path.read_bytes(), str(path), "exec"), mod.__dict__)
     return mod
 
 
@@ -392,7 +394,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"ok": true', buf.getvalue())
 
     def test_deploy_verifies_research_runs_regclass_exactly(self):
-        workflow = pathlib.Path('.github/workflows/vps-deploy.yml').read_text()
+        workflow = (ROOT / ".github" / "workflows" / "vps-deploy.yml").read_text()
         self.assertIn("-qAt -c \"SELECT to_regclass('earnings_cache.research_runs') IS NOT NULL\" | grep -qx t", workflow)
 
     def test_stage2_generated_qc_algorithm_contains_finalizers(self):
