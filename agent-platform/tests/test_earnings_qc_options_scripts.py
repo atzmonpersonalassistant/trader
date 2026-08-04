@@ -130,12 +130,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         }
 
     def set_multiyear_snapshots(self, alg, quotes_by_day):
-        alg.snapshots = {
-            "XYZ": {
-                day: {"underlying": 100.0, "contracts": [quote]}
-                for day, quote in quotes_by_day.items()
-            }
-        }
+        rows = {}
+        for day, quote in quotes_by_day.items():
+            underlying = 100.0
+            if isinstance(quote, tuple):
+                underlying, quote = quote
+            rows[day] = {"underlying": underlying, "contracts": [quote]}
+        alg.snapshots = {"XYZ": rows}
 
 
     def test_single_public_research_cli_uses_internal_libexec_stages(self):
@@ -752,14 +753,17 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_multiyear_stop_loss_fill_variants_mid_window_breach(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
         self.set_multiyear_snapshots(alg, {
-            "2026-01-06": self.quote(0.22),
-            "2026-01-07": self.quote(0.18),
-            "2026-01-08": self.quote(0.14),
+            "2026-01-06": (102.0, self.quote(0.22)),
+            "2026-01-07": (108.0, self.quote(0.18)),
+            "2026-01-08": (112.0, self.quote(0.14)),
         })
         trade = {
             "report_date": "2026-02-01",
             "entry_ask": 0.40,
             "contract": "XYZ_CALL_110",
+            "entry_underlying": 100.0,
+            "exit_underlying": 125.0,
+            "realized_move_pct": 25.0,
             "return_pct": 125.0,
             "win": True,
             "exit_bid": 0.90,
@@ -769,11 +773,41 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
         self.assertEqual(variants["same_day"]["actual_exit_date"], "2026-01-07")
         self.assertEqual(variants["same_day"]["exit_bid"], 0.18)
+        self.assertEqual(variants["same_day"]["exit_underlying"], 108.0)
+        self.assertEqual(variants["same_day"]["realized_move_pct"], 8.0)
         self.assertEqual(variants["same_day"]["return_pct"], -55.0)
         self.assertEqual(variants["next_day"]["actual_exit_date"], "2026-01-08")
         self.assertEqual(variants["next_day"]["exit_bid"], 0.14)
+        self.assertEqual(variants["next_day"]["exit_underlying"], 112.0)
+        self.assertEqual(variants["next_day"]["realized_move_pct"], 12.0)
         self.assertEqual(variants["next_day"]["return_pct"], -65.0)
         self.assertEqual(variants["next_day"]["stop_loss_max_loss_pct"], -50.0)
+
+    def test_multiyear_trade_records_entry_exit_underlying_and_realized_move(self):
+        alg = self.build_multiyear_algorithm()
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-05": (100.0, self.quote(0.39, 0.40)),
+            "2026-01-31": (125.0, self.quote(0.90)),
+        })
+        alg.on_end_of_algorithm()
+        payload = json.loads("".join(
+            alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
+            if k.startswith("multiyear_json_")
+        ))
+
+        result = payload["results"][0]
+        self.assertEqual(result["sample_size"], 1)
+        self.assertEqual(result["median_return_pct"], 125.0)
+        self.assertEqual(result["win_rate"], 1.0)
+        trade = result["trades"][0]
+        self.assertEqual(trade["entry_underlying"], 100.0)
+        self.assertEqual(trade["exit_underlying"], 125.0)
+        self.assertEqual(trade["required_move_pct"], 10.0)
+        self.assertEqual(trade["realized_move_pct"], 25.0)
+        self.assertAlmostEqual(
+            trade["realized_move_pct"],
+            (trade["exit_underlying"] / trade["entry_underlying"] - 1.0) * 100.0,
+        )
 
     def test_multiyear_stop_loss_next_day_final_day_fallback_uses_breach_day(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
