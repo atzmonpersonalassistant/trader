@@ -209,8 +209,58 @@ def persist_candidates(campaign_id: str, run_id: str, summary: dict) -> None:
         sym = c.get('symbol') or 'UNKNOWN'; rd = c.get('earnings_date') or c.get('report_date'); cid = stable_id('candidate', run_id, sym, rd)
         verdict = 'final_candidate' if (sym, rd) in final_keys else 'forward_only_not_final'
         db_exec(f"""INSERT INTO {PG_SCHEMA}.candidate_dossiers(candidate_id,campaign_id,run_id,symbol,report_date,contract_json,liquidity_json,historical_pnl_json,metrics_json,verdict)
-VALUES ({sql_lit(cid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(sym)}, {sql_lit(rd)}, {sql_json(c.get('contracts') or [])}, {sql_json(c)}, {sql_json(hist_by_symbol.get(sym) or {})}, {sql_json(c)}, {sql_lit(verdict)})
-ON CONFLICT (run_id,symbol,report_date) DO UPDATE SET contract_json=EXCLUDED.contract_json, liquidity_json=EXCLUDED.liquidity_json, historical_pnl_json=EXCLUDED.historical_pnl_json, metrics_json=EXCLUDED.metrics_json, verdict=EXCLUDED.verdict;""")
+VALUES ({sql_lit(cid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(sym)}, {sql_lit(rd)}, {sql_json(c.get('contracts') or [])}, {sql_json(candidate_liquidity_projection(c))}, {sql_json(hist_by_symbol.get(sym) or {})}, {sql_json(candidate_metrics_projection(c))}, {sql_lit(verdict)})
+ON CONFLICT (candidate_id) DO UPDATE SET contract_json=EXCLUDED.contract_json, liquidity_json=EXCLUDED.liquidity_json, historical_pnl_json=EXCLUDED.historical_pnl_json, metrics_json=EXCLUDED.metrics_json, verdict=EXCLUDED.verdict;""")
+
+
+def pick_present(d: dict, keys: list[str]) -> dict:
+    return {k: d[k] for k in keys if k in d}
+
+
+def candidate_liquidity_projection(c: dict) -> dict:
+    contracts = c.get('contracts') or []
+    liquidity_fields = [
+        'contract',
+        'bid',
+        'ask',
+        'mid',
+        'spread',
+        'spread_mid_pct',
+        'allowed_spread',
+        'allowed_relative_spread_pct',
+        'volume',
+        'open_interest',
+        'zero_volume',
+        'zero_open_interest',
+        'liquidity_fail_reasons',
+        'liquidity_warnings',
+        'liquidity_diagnostic_only_low_oi',
+        'liquidity_diagnostic_only_low_volume',
+    ]
+    return {
+        **pick_present(c, ['contract_count', 'forward_candidate_status', 'historical_backtest_status']),
+        'contracts': [pick_present(contract, liquidity_fields) for contract in contracts if isinstance(contract, dict)],
+    }
+
+
+def candidate_metrics_projection(c: dict) -> dict:
+    contracts = c.get('contracts') or []
+    metric_fields = [
+        'contract',
+        'expiry',
+        'dte',
+        'days_after_earnings',
+        'strike',
+        'strike_spot_ratio',
+        'required_move_pct',
+        'expected_option_move',
+        'iv',
+        'delta',
+    ]
+    return {
+        **pick_present(c, ['spot', 'earnings_date', 'report_date']),
+        'contracts': [pick_present(contract, metric_fields) for contract in contracts if isinstance(contract, dict)],
+    }
 
 
 def persist_summary_to_db(campaign_id: str, run_id: str, run_dir: pathlib.Path, summary: dict, params: dict) -> None:
