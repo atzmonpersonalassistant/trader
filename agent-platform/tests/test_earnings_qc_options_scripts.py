@@ -114,7 +114,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
         return alg
 
-    def quote(self, bid, ask=None):
+    def quote(self, bid, ask=None, iv=0.40):
         ask = bid if ask is None else ask
         return {
             "symbol": "XYZ_CALL_110",
@@ -125,7 +125,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "mid": round((bid + ask) / 2.0, 4),
             "volume": 100,
             "open_interest": 100,
-            "iv": 0.40,
+            "iv": iv,
             "delta": 0.30,
         }
 
@@ -1172,6 +1172,34 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             trade["realized_move_pct"],
             (trade["exit_underlying"] / trade["entry_underlying"] - 1.0) * 100.0,
         )
+
+    def test_multiyear_trade_records_entry_exit_iv_and_baseline_excess(self):
+        alg = self.build_multiyear_algorithm()
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-02": (100.0, self.quote(0.20, 0.21, iv=0.30) | {"symbol": "OTHER"}),
+            "2026-01-05": (101.0, self.quote(0.39, 0.40, iv=0.40)),
+            "2026-01-06": (102.0, self.quote(0.38, 0.39, iv=0.41) | {"symbol": "OTHER"}),
+            "2026-01-07": (101.0, self.quote(0.37, 0.38, iv=0.42) | {"symbol": "OTHER"}),
+            "2026-01-31": (100.0, self.quote(0.20, 0.21, iv=0.70)),
+            "2026-02-02": (110.0, self.quote(0.18, 0.19, iv=0.72) | {"symbol": "OTHER"}),
+        })
+        alg.on_end_of_algorithm()
+        payload = json.loads("".join(
+            alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
+            if k.startswith("multiyear_json_")
+        ))
+
+        trade = payload["results"][0]["trades"][0]
+        self.assertEqual(trade["entry_iv"], 0.40)
+        self.assertEqual(trade["exit_iv"], 0.70)
+        self.assertEqual(trade["iv_change_pct"], 75.0)
+        self.assertEqual(trade["iv_days_to_expiry_entry"], 31)
+        self.assertEqual(trade["iv_days_to_expiry_exit"], 5)
+        self.assertIsNotNone(trade["iv_baseline_exit"])
+        self.assertIsNotNone(trade["iv_excess_pct"])
+        self.assertEqual(trade["iv_baseline_inputs"]["status"], "OK")
+        self.assertGreater(trade["iv_baseline_inputs"]["ordinary_daily_variance_sample_size"], 0)
+        self.assertEqual(trade["iv_baseline_inputs"]["earnings_jump_variance_sample_size"], 1)
 
     def test_multiyear_stop_loss_next_day_final_day_fallback_uses_breach_day(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
