@@ -75,7 +75,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00"):
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", cron_line=None):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_bin = root / "bin"
@@ -86,6 +86,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             log_dir = root / "logs"
             skill = root / "SKILL.md"
             calls = root / "psql-calls"
+            crontab_calls = root / "crontab-calls"
+            crontab_output = root / "crontab-output"
             skill.write_text("# skill\n")
             happy_run_dir = report_root / "run"
             happy_run_dir.mkdir(parents=True)
@@ -114,6 +116,17 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             script.chmod(0o755)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
+            if cron_line is not None:
+                (fake_bin / "crontab").write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"printf x >> {crontab_calls!s}\n"
+                    "if [[ \"${1:-}\" == \"-l\" ]]; then\n"
+                    f"  printf '%s\\n' {cron_line!r} | tee -a {crontab_output!s}\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "exit 64\n"
+                )
+                (fake_bin / "crontab").chmod(0o755)
             result = subprocess.run(
                 [str(SCRIPT), "--date", "2026-08-04", "--dry-run"],
                 env={
@@ -133,6 +146,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
+            result.crontab_call_count = crontab_calls.read_text().count("x") if crontab_calls.exists() else 0
+            result.crontab_output = crontab_output.read_text() if crontab_output.exists() else ""
             return result
 
     def test_stale_running_daily_run_escalates(self):
@@ -149,13 +164,35 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         result = self.run_watchdog_with_fake_psql(["", ""])
 
         self.assertEqual(result.returncode, 75)
-        self.assertIn("NO_DAILY_RUN_ROW date=2026-08-04", result.stderr)
+        self.assertIn("DAILY_RUN_MISSING_AFTER_DEADLINE date=2026-08-04", result.stderr)
+        self.assertIn("scheduled_at=06:00", result.stderr)
+        self.assertIn("grace_seconds=3600", result.stderr)
 
-    def test_date_with_no_daily_run_row_before_deadline_is_pending(self):
+    def test_date_with_no_daily_run_row_before_daily_is_due_is_not_due_yet(self):
+        result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T05:30:00+03:00")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+        self.assertNotIn("DAILY_RUN_MISSING_AFTER_DEADLINE", result.stderr)
+
+    def test_date_with_no_daily_run_row_after_due_within_grace_is_pending(self):
         result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T06:30:00+03:00")
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("NO_DAILY_RUN_ROW_PENDING date=2026-08-04", result.stdout)
+        self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
+
+    def test_missing_daily_row_uses_cron_schedule_override(self):
+        result = self.run_watchdog_with_fake_psql(
+            ["", ""],
+            now="2026-08-04T06:30:00+03:00",
+            cron_line="45 6 * * * /agents/research/bin/earnings-otm-daily.sh",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertGreater(result.crontab_call_count, 0)
+        self.assertIn("/agents/research/bin/earnings-otm-daily.sh", result.crontab_output)
+        self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+        self.assertIn("scheduled_at=06:45", result.stdout)
 
     def test_finished_happy_path_still_reaches_dry_run_without_llm(self):
         result = self.run_watchdog_with_fake_psql([
