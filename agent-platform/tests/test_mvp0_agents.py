@@ -1319,6 +1319,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("qc_research_execution_diagnostic.json", broker_text)
         self.assertIn("qc_option_history_probe.py", broker_text)
         self.assertIn("qc_option_history_extract.json", broker_text)
+        self.assertIn("export QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT=${QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT:-900}", broker_text)
         self.assertIn("QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS=$((QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT + QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS))", broker_text)
         self.assertIn('/usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract', broker_text)
         self.assertNotIn("/usr/bin/timeout 1200s /usr/local/bin/trading-research-qc-cloud-extract", broker_text)
