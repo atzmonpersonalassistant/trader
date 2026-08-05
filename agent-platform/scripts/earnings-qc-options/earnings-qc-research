@@ -314,6 +314,50 @@ def latest_run_dir() -> pathlib.Path | None:
     return dirs[-1] if dirs else None
 
 
+def qc_broker_execution_from_manifest(run_dir: pathlib.Path) -> dict | None:
+    manifest_path = run_dir / 'qc_research_artifact_manifest.json'
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as e:
+        return {'manifest_path': str(manifest_path), 'read_error': repr(e)}
+    fields = [
+        'auth_status',
+        'cloud_status',
+        'docker_status',
+        'execution_surface',
+        'execution_rc',
+        'surface_attempts',
+        'extraction_status',
+        'extraction_reason',
+        'capability_gap',
+    ]
+    out = {k: manifest.get(k) for k in fields if k in manifest}
+    out['manifest_path'] = str(manifest_path)
+    diag_rel = None
+    for artifact in manifest.get('artifacts') or []:
+        if isinstance(artifact, dict) and artifact.get('kind') == 'structured_execution_diagnostic':
+            diag_rel = artifact.get('path')
+            break
+    if diag_rel:
+        diag_path = run_dir / str(diag_rel)
+        if diag_path.exists():
+            try:
+                diag = json.loads(diag_path.read_text())
+                out['cloud_error'] = diag.get('stderr_redacted_excerpt') or diag.get('stdout_redacted_excerpt') or diag.get('reason')
+                if out.get('cloud_error'):
+                    out['cloud_error'] = str(out['cloud_error'])[:500]
+                out['diagnostic_status'] = diag.get('status')
+            except Exception as e:
+                out['diagnostic_read_error'] = repr(e)
+    elif manifest.get('cloud_status') == 'qc_cloud_execution_failed':
+        out['cloud_error'] = manifest.get('extraction_reason')
+        if out.get('cloud_error'):
+            out['cloud_error'] = str(out['cloud_error'])[:500]
+    return out
+
+
 def final_candidate_gate_thresholds() -> dict:
     return {
         'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
@@ -870,6 +914,15 @@ def hebrew_report(summary: dict, batch_size: int) -> str:
         f'- forward candidates לפני historical PnL: {summary.get("forward_candidate_count")}',
         f'- מועמדים סופיים אחרי historical PnL: {summary.get("candidate_count")}',
     ]
+    broker_execution = summary.get('qc_broker_execution')
+    if isinstance(broker_execution, dict):
+        lines.append(
+            '- QC broker execution: '
+            f'surface={broker_execution.get("execution_surface")}, '
+            f'cloud_status={broker_execution.get("cloud_status")}, '
+            f'execution_rc={broker_execution.get("execution_rc")}, '
+            f'cloud_error={broker_execution.get("cloud_error") or broker_execution.get("extraction_reason") or "none"}'
+        )
     if summary.get('failed_chunk_count'):
         lines.append(f'- chunks שנכשלו: {summary.get("failed_chunk_count")} — הרץ retry-failed')
     lines.append('- לא הופעל Yahoo/yfinance.')
@@ -880,6 +933,9 @@ def write_summary(run_dir: pathlib.Path, batch_size: int, notify: bool=False) ->
     chunks = load_chunks(run_dir)
     summary = aggregate(chunks)
     summary.update({'run_date': datetime.datetime.now(datetime.timezone.utc).date().isoformat(), 'run_dir': str(run_dir), 'chunk_size': batch_size})
+    broker_execution = qc_broker_execution_from_manifest(run_dir)
+    if broker_execution:
+        summary['qc_broker_execution'] = broker_execution
     msg = hebrew_report(summary, batch_size)
     (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     (run_dir/'hebrew_report.md').write_text(msg+'\n')
@@ -1224,6 +1280,9 @@ VALUES ({sql_lit(did)}, {sql_lit(campaign_id)}, {sql_lit(args.previous_run_id)},
 def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> dict:
     fs = run_dir / 'full_summary.json'
     summary = json.loads(fs.read_text()) if fs.exists() else {'ok': False, 'status': 'NO_FULL_SUMMARY'}
+    broker_execution = qc_broker_execution_from_manifest(run_dir)
+    if broker_execution:
+        summary['qc_broker_execution'] = broker_execution
     prior_status = summary.get('status')
     if not mb:
         src = summary.get('forward_candidates') or summary.get('candidates') or []
