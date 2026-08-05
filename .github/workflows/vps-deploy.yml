@@ -103,7 +103,7 @@ jobs:
             printf "QUANTCONNECT_API_TOKEN=%q\n" "$QUANTCONNECT_API_TOKEN"
           } > "$tmp_qc_env"
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
-            "rm -rf '$DEPLOY_DIR' && mkdir -p '$DEPLOY_DIR'"
+            "rm -rf '$DEPLOY_DIR' && install -d -m 700 '$DEPLOY_DIR'"
           scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             agent-platform/tools/trading-orchestrator \
             agent-platform/tools/trading-coding-agent \
@@ -137,7 +137,7 @@ jobs:
             agent-platform/tools/trading_coding_agent_stub.py \
             agent-platform/tools/trading_research_agent.py \
             "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/"
-          scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          scp -p -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
             "$tmp_qc_env" "$VPS_USER@$VPS_HOST:$DEPLOY_DIR/quantconnect.env"
 
       - name: Install tools and verify
@@ -153,6 +153,10 @@ jobs:
           trap 'rm -f "$deploy_output"' EXIT
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" "DEPLOY_DIR='$DEPLOY_DIR' DEPLOY_USER='$VPS_USER' bash -s" <<'REMOTE' | tee "$deploy_output"
           set -euo pipefail
+          cleanup_deploy_dir() {
+            rm -rf "$DEPLOY_DIR"
+          }
+          trap cleanup_deploy_dir EXIT
           configure_shared_collab_dir() {
             local path="$1"
             sudo install -d -o root -g agent-lean -m 2770 "$path"
@@ -432,6 +436,8 @@ jobs:
           sudo chown root:agent-research /etc/trading-agents/secrets/research/env
           sudo chmod 640 /etc/trading-agents/secrets/research/env
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
+          test "$(stat -c '%a' "$DEPLOY_DIR")" = "700"
+          test "$(stat -c '%a' "$DEPLOY_DIR/quantconnect.env")" = "600"
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
           if ! sudo test -s /etc/trading-agents/qc-lean-docker-image; then
             printf '%s\n' 'quantconnect/research:latest' | sudo tee /etc/trading-agents/qc-lean-docker-image >/dev/null
@@ -764,7 +770,6 @@ jobs:
           ! grep -q -- "--sandbox danger-full-access" /usr/local/bin/trading-research-agent-loop
           ! grep -q -- "/etc/trading-agents/secrets/quantconnect/env" /usr/local/bin/trading-research-agent-loop
           sudo -n -u agent-research rm -f /agents/research/state/deploy-smoke-queue.json
-          rm -rf "$DEPLOY_DIR"
           echo DEPLOY_OK
           REMOTE
           grep -q '^DEPLOY_OK$' "$deploy_output"
