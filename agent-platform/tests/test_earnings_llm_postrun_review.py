@@ -32,16 +32,18 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
 
-    def run_postrun_with_fake_psql(self, psql_outputs):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04"):
+        cleanup = tempfile.TemporaryDirectory() if root is None else None
+        try:
+            root = Path(cleanup.name) if cleanup is not None else Path(root)
             fake_bin = root / "bin"
-            fake_bin.mkdir()
+            fake_bin.mkdir(exist_ok=True)
             state_dir = root / "state"
             handoff_dir = root / "handoff"
             report_root = root / "reports"
             skill = root / "SKILL.md"
             calls = root / "psql-calls"
+            calls.unlink(missing_ok=True)
             skill.write_text("# skill\n")
             script = fake_bin / "psql"
             script.write_text(
@@ -64,7 +66,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
             result = subprocess.run(
-                [str(SCRIPT), "--date", "2026-08-04", "--dry-run"],
+                [str(SCRIPT), "--date", date, "--dry-run"],
                 env={
                     **os.environ,
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -85,6 +87,9 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
                 for path in handoff_dir.glob("*-task.txt")
             }
             return result
+        finally:
+            if cleanup is not None:
+                cleanup.cleanup()
 
     def test_no_finished_daily_run_writes_handoff_task(self):
         result = self.run_postrun_with_fake_psql(["", "", ""])
@@ -97,6 +102,28 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("date: 2026-08-04", task_text)
         self.assertIn("scheduled_at: 06:00", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
+
+    def test_no_finished_daily_run_handoff_is_deduped_by_date_and_condition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
+            second = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
+            third = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
+            next_day = self.run_postrun_with_fake_psql(["", "", ""], root=tmp, date="2026-08-05")
+
+            self.assertEqual(first.returncode, 0)
+            self.assertEqual(second.returncode, 0)
+            self.assertEqual(third.returncode, 0)
+            self.assertIn("HANDOFF_TASK_WRITTEN condition=NO_FINISHED_DAILY_RUN", first.stdout)
+            self.assertIn("HANDOFF_TASK_ALREADY_WRITTEN condition=NO_FINISHED_DAILY_RUN", second.stdout)
+            self.assertIn("HANDOFF_TASK_ALREADY_WRITTEN condition=NO_FINISHED_DAILY_RUN", third.stdout)
+            self.assertEqual(
+                len([name for name in third.handoff_tasks if "NO_FINISHED_DAILY_RUN" in name]),
+                1,
+            )
+            self.assertEqual(
+                len([name for name in next_day.handoff_tasks if "NO_FINISHED_DAILY_RUN" in name]),
+                2,
+            )
 
     def test_daily_selector_requires_explicit_daily_stage_parameters(self):
         text = SCRIPT.read_text()
@@ -172,6 +199,12 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertLess(text.index('POSTRUN_ALREADY_REVIEWED'), text.index('TASK_FILE="$HANDOFF_DIR/research-pass-postrun-'))
         self.assertIn('mkdir "$COMPLETED_MARKER_DIR"', text)
         self.assertIn('bounded_action_status.txt', text)
+
+    def test_failure_handoff_marker_prevents_repeated_no_run_artifacts(self):
+        text = SCRIPT.read_text()
+        self.assertIn('marker_dir="$STATE_DIR/failure-handoffs/${DATE_COMPACT}-${condition}"', text)
+        self.assertIn('HANDOFF_TASK_ALREADY_WRITTEN condition=$condition', text)
+        self.assertLess(text.index('HANDOFF_TASK_ALREADY_WRITTEN'), text.index('task_file="$HANDOFF_DIR/research-pass-postrun-'))
 
 
     def test_copy_back_conflicts_are_nonfatal_after_action_execution(self):

@@ -48,7 +48,13 @@ make_runner_inputs_usable() {
 
 write_no_finished_run_handoff_task() {
   local condition="NO_FINISHED_DAILY_RUN"
-  local ts task_file
+  local marker_dir ts task_file
+  marker_dir="$STATE_DIR/failure-handoffs/${DATE_COMPACT}-${condition}"
+  mkdir -p "$STATE_DIR/failure-handoffs"
+  if ! mkdir "$marker_dir" 2>/dev/null; then
+    echo "HANDOFF_TASK_ALREADY_WRITTEN condition=$condition marker=$marker_dir"
+    return
+  fi
   ts="$(date -u +%Y%m%d-%H%M%S)"
   task_file="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${ts}-${condition}-task.txt"
   cat > "$task_file" <<TASK
@@ -65,6 +71,8 @@ script no-op signal; investigate whether the daily run was skipped, is still
 running, or finished without a DB row that matches the postrun selector.
 TASK
   chmod 0640 "$task_file"
+  printf '%s\n' "$task_file" > "$marker_dir/task_file.txt"
+  printf '%s\n' "$(date -Is)" > "$marker_dir/written_at.txt"
   echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
 }
 

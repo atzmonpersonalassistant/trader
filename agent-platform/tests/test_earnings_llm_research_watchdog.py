@@ -75,11 +75,12 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", cron_line=None):
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", cron_line=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
+        cleanup = TemporaryDirectory() if root is None else None
+        try:
+            root = Path(cleanup.name) if cleanup is not None else Path(root)
             fake_bin = root / "bin"
-            fake_bin.mkdir()
+            fake_bin.mkdir(exist_ok=True)
             state_dir = root / "state"
             handoff_dir = root / "handoff"
             report_root = root / "reports"
@@ -88,9 +89,10 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             calls = root / "psql-calls"
             crontab_calls = root / "crontab-calls"
             crontab_output = root / "crontab-output"
+            calls.unlink(missing_ok=True)
             skill.write_text("# skill\n")
             happy_run_dir = report_root / "run"
-            happy_run_dir.mkdir(parents=True)
+            happy_run_dir.mkdir(parents=True, exist_ok=True)
             (happy_run_dir / "full_summary.json").write_text('{"status":"NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}')
             resolved_outputs = [
                 output.replace("{report_root}", str(report_root))
@@ -128,7 +130,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 )
                 (fake_bin / "crontab").chmod(0o755)
             result = subprocess.run(
-                [str(SCRIPT), "--date", "2026-08-04", "--dry-run"],
+                [str(SCRIPT), "--date", date, "--dry-run"],
                 env={
                     **os.environ,
                     "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -141,6 +143,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                     "EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS": "3600",
                     "EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS": "3600",
                     "EARNINGS_WATCHDOG_NOW": now,
+                    **({"EARNINGS_WATCHDOG_DAILY_SCHEDULE": schedule} if schedule is not None else {}),
+                    **({"EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE": schedule_zone} if schedule_zone is not None else {}),
                 },
                 text=True,
                 capture_output=True,
@@ -153,6 +157,9 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 for path in handoff_dir.glob("*-task.txt")
             }
             return result
+        finally:
+            if cleanup is not None:
+                cleanup.cleanup()
 
     def test_stale_running_daily_run_escalates(self):
         result = self.run_watchdog_with_fake_psql([
@@ -208,6 +215,54 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("/agents/research/bin/earnings-otm-daily.sh", result.crontab_output)
         self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
         self.assertIn("scheduled_at=06:45", result.stdout)
+
+    def test_missing_daily_row_uses_explicit_schedule_zone(self):
+        result = self.run_watchdog_with_fake_psql(
+            ["", ""],
+            now="2026-08-04T06:30:00+03:00",
+            schedule="06:00",
+            schedule_zone="UTC",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+        self.assertIn("scheduled_at=06:00", result.stdout)
+
+    def test_missing_daily_row_default_schedule_matches_managed_timer_zone(self):
+        result = self.run_watchdog_with_fake_psql(
+            ["", ""],
+            now="2026-08-04T06:30:00+03:00",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
+        text = SCRIPT.read_text()
+        self.assertIn('DAILY_RUN_DEFAULT_ZONE="Asia/Jerusalem"', text)
+        self.assertIn('tz = ZoneInfo(zone_s)', text)
+
+    def test_failure_handoffs_are_deduped_by_date_and_condition(self):
+        with TemporaryDirectory() as tmp:
+            first = self.run_watchdog_with_fake_psql(["", ""], root=tmp)
+            second = self.run_watchdog_with_fake_psql(["", ""], root=tmp)
+            next_day = self.run_watchdog_with_fake_psql(
+                ["", ""],
+                root=tmp,
+                date="2026-08-05",
+                now="2026-08-05T10:00:00+03:00",
+            )
+
+            self.assertEqual(first.returncode, 75)
+            self.assertEqual(second.returncode, 75)
+            self.assertIn("HANDOFF_TASK_WRITTEN condition=DAILY_RUN_MISSING_AFTER_DEADLINE", first.stdout)
+            self.assertIn("HANDOFF_TASK_ALREADY_WRITTEN condition=DAILY_RUN_MISSING_AFTER_DEADLINE", second.stdout)
+            self.assertEqual(
+                len([name for name in second.handoff_tasks if "DAILY_RUN_MISSING_AFTER_DEADLINE" in name]),
+                1,
+            )
+            self.assertEqual(
+                len([name for name in next_day.handoff_tasks if "DAILY_RUN_MISSING_AFTER_DEADLINE" in name]),
+                2,
+            )
 
     def test_finished_happy_path_still_reaches_dry_run_without_llm(self):
         result = self.run_watchdog_with_fake_psql([

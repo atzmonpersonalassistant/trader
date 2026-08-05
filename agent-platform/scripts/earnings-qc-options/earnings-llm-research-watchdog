@@ -49,7 +49,13 @@ make_runner_inputs_usable() {
 
 write_failure_handoff_task() {
   local condition="$1"
-  local task_file ts
+  local marker_dir task_file ts
+  marker_dir="$STATE_DIR/failure-handoffs/${DATE_COMPACT}-${condition}"
+  mkdir -p "$STATE_DIR/failure-handoffs"
+  if ! mkdir "$marker_dir" 2>/dev/null; then
+    echo "HANDOFF_TASK_ALREADY_WRITTEN condition=$condition marker=$marker_dir"
+    return
+  fi
   ts="$(date -u +%Y%m%d-%H%M%S)"
   task_file="$HANDOFF_DIR/research-watchdog-${DATE_COMPACT}-${ts}-${condition}-task.txt"
   cat > "$task_file" <<TASK
@@ -70,6 +76,8 @@ script exit/status signal; investigate why the deterministic daily run did not
 produce a usable finished run.
 TASK
   chmod 0640 "$task_file"
+  printf '%s\n' "$task_file" > "$marker_dir/task_file.txt"
+  printf '%s\n' "$(date -Is)" > "$marker_dir/written_at.txt"
   echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
 }
 
@@ -103,10 +111,11 @@ LOCK="${STATE_DIR}/earnings-llm-research-watchdog.lock"
 STALE_RUNNING_SECONDS="${EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS:-10800}"
 MISSING_RUN_GRACE_SECONDS="${EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS:-10800}"
 DAILY_RUN_COMMAND="/agents/research/bin/earnings-otm-daily.sh"
-# Fallback for the managed cron entry in .github/workflows/vps-deploy.yml:
-# 0 6 * * * /agents/research/bin/earnings-otm-daily.sh
+# Fallback for the managed systemd timer in .github/workflows/vps-deploy.yml:
+# OnCalendar=*-*-* 06:00:00 Asia/Jerusalem
 DAILY_RUN_DEFAULT_MINUTE=0
 DAILY_RUN_DEFAULT_HOUR=6
+DAILY_RUN_DEFAULT_ZONE="Asia/Jerusalem"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
 exec 9>"$LOCK"
@@ -115,8 +124,19 @@ if ! flock -n 9; then
   exit 0
 fi
 
-daily_run_schedule_hm() {
-  local line schedule minute hour
+daily_run_schedule() {
+  local line schedule minute hour zone
+  zone="${EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE:-$DAILY_RUN_DEFAULT_ZONE}"
+  if [[ -n "${EARNINGS_WATCHDOG_DAILY_SCHEDULE:-}" ]]; then
+    schedule="${EARNINGS_WATCHDOG_DAILY_SCHEDULE}"
+    minute="${schedule##*:}"
+    hour="${schedule%%:*}"
+    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
+      printf '%s|%s|%s\n' "$minute" "$hour" "$zone"
+      return
+    fi
+  fi
+
   if [[ -n "${EARNINGS_WATCHDOG_DAILY_CRON_LINE:-}" ]]; then
     line="$EARNINGS_WATCHDOG_DAILY_CRON_LINE"
   elif command -v crontab >/dev/null 2>&1; then
@@ -136,12 +156,12 @@ daily_run_schedule_hm() {
     minute="${schedule%%|*}"
     hour="${schedule#*|}"
     if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
-      printf '%s|%s\n' "$minute" "$hour"
+      printf '%s|%s|%s\n' "$minute" "$hour" "$zone"
       return
     fi
   fi
 
-  printf '%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR"
+  printf '%s|%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR" "$zone"
 }
 
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
@@ -171,15 +191,15 @@ LIMIT 1;
 ")"
 
 if [[ -z "$RUN_STATE" ]]; then
-  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR <<< "$(daily_run_schedule_hm)"
+  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR DAILY_RUN_ZONE <<< "$(daily_run_schedule)"
   DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE")"
-  MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
+  MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$DAILY_RUN_ZONE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
 import datetime as dt
 import sys
 from zoneinfo import ZoneInfo
 
-date_s, hour_s, minute_s, grace_s, now_s = sys.argv[1:6]
-tz = ZoneInfo("Asia/Jerusalem")
+date_s, hour_s, minute_s, zone_s, grace_s, now_s = sys.argv[1:7]
+tz = ZoneInfo(zone_s)
 run_date = dt.date.fromisoformat(date_s)
 due_at = dt.datetime.combine(run_date, dt.time(int(hour_s), int(minute_s)), tzinfo=tz)
 deadline = due_at + dt.timedelta(seconds=int(grace_s))
