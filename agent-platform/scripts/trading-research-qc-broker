@@ -11,6 +11,27 @@ LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspac
 QC_LEAN_DOCKER_WRAPPER=${TRADING_RESEARCH_QC_LEAN_DOCKER_WRAPPER:-/usr/local/sbin/trading-research-qc-docker-run}
 QC_LEAN_DOCKER_IMAGE_CONFIG=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE_CONFIG:-/etc/trading-agents/qc-lean-docker-image}
 QC_LEAN_DOCKER_IMAGE=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE:-}
+QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT=${QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT:-900}
+QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS=${QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS:-300}
+case "$QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT" in
+  ''|*[!0-9]*) echo "ERROR: QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT must be a positive integer" >&2; exit 64 ;;
+esac
+case "$QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS" in
+  ''|*[!0-9]*) echo "ERROR: QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS must be a positive integer" >&2; exit 64 ;;
+esac
+if (( QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT < 60 )); then
+  echo "ERROR: QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT must be >= 60" >&2
+  exit 64
+fi
+if (( QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS < 1 )); then
+  echo "ERROR: QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS must be >= 1" >&2
+  exit 64
+fi
+QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS=$((QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT + QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS))
+if (( QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS <= QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT )); then
+  echo "ERROR: QC cloud extract wrapper timeout must be greater than backtest timeout" >&2
+  exit 64
+fi
 if [[ -z "$QC_LEAN_DOCKER_IMAGE" && -r "$QC_LEAN_DOCKER_IMAGE_CONFIG" && ! -L "$QC_LEAN_DOCKER_IMAGE_CONFIG" ]]; then
   QC_LEAN_DOCKER_IMAGE="$(head -n 1 "$QC_LEAN_DOCKER_IMAGE_CONFIG" | tr -d '[:space:]')"
 fi
@@ -334,7 +355,7 @@ PY
     cloud_status="attempted_qc_cloud_backtest"
     execution_surface="qc_cloud_backtest"
     set +e
-    /usr/bin/timeout 1200s /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
+    /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
     execution_rc=$?
     set -e
     if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
@@ -414,7 +435,7 @@ PY
     cloud_status="attempted_qc_cloud_backtest"
     execution_surface="qc_cloud_backtest"
     set +e
-    /usr/bin/timeout 1200s /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
+    /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
     execution_rc=$?
     set -e
     if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
