@@ -589,6 +589,7 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
         ('exit_days_before', '--exit-days-before'),
         ('exit_policy', '--exit-policy'),
         ('historical_resolution', '--historical-resolution'),
+        ('option_right', '--option-right'),
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
         ('max_premium', '--max-premium'),
@@ -871,6 +872,7 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('exit_days_before', '--exit-days-before'),
         ('exit_policy', '--exit-policy'),
         ('historical_resolution', '--historical-resolution'),
+        ('option_right', '--option-right'),
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
         ('max_premium', '--max-premium'),
@@ -930,8 +932,6 @@ def cmd_run(args) -> int:
         print(json.dumps({'ok': False, 'status': 'INVALID_STAGE_RANGE', 'from_stage': args.from_stage, 'to_stage': args.to_stage}, ensure_ascii=False, indent=2)); return 2
     if args.to_stage == 'intraday_validation':
         print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_RUN_TARGET', 'to_stage': args.to_stage}, ensure_ascii=False, indent=2)); return 2
-    if stage_index(args.to_stage) >= stage_index('historical_option_pnl') and getattr(args, 'option_right', 'call') != 'call':
-        print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_HISTORICAL_OPTION_RIGHT', 'option_right': args.option_right, 'blocked_reason': 'historical option-PnL runner is currently call-only; use --to-stage candidate-scan for put/both exploration or implement matching historical validation first'}, ensure_ascii=False, indent=2)); return 2
     if args.from_stage == 'candidate_scan':
         print(json.dumps({'ok': False, 'status': 'STAGE_NOT_IMPLEMENTED_FOR_RUN_START', 'from_stage': args.from_stage, 'blocked_reason': 'candidate_scan start requires persisted QC chain artifacts; rerun from calendar/qc_chain_scan or historical_option_pnl'}, ensure_ascii=False, indent=2)); return 2
     if args.from_stage not in ('calendar', 'qc_chain_scan'):
@@ -1071,7 +1071,7 @@ def cmd_retry_failed(args) -> int:
     for item in failed:
         off = int(item['offset'])
         validation_years = int(getattr(args, 'validation_years', None) or args.years)
-        run_chunk_end_to_end(run_dir, off, args.chunk_size, validation_years, args.end_to_end)
+        run_chunk_end_to_end(run_dir, off, args.chunk_size, validation_years, args.end_to_end, args=args)
     summary = write_summary(run_dir, args.chunk_size, notify=args.notify)
     summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params
     persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
@@ -1357,6 +1357,8 @@ def build_parser():
     cl=sub.add_parser('cleanup'); cl.add_argument('--older-than-days', type=int, default=14); cl.add_argument('--keep-last', type=int, default=20); cl.add_argument('--dry-run', action='store_true')
     sm=sub.add_parser('summarize'); common(sm); sm.add_argument('--notify', action='store_true')
     rf=sub.add_parser('retry-failed'); common(rf); rf.add_argument('--offset', type=int); rf.add_argument('--notify', action='store_true'); rf.add_argument('--end-to-end', dest='end_to_end', action='store_true', default=os.environ.get('QC_FULL_END_TO_END','1') not in ('0','false','False')); rf.add_argument('--no-end-to-end', dest='end_to_end', action='store_false'); rf.add_argument('--years', type=int, default=int(os.environ.get('QC_SCAN_YEARS', os.environ.get('QC_MULTIYEAR_YEARS','1')))); rf.add_argument('--validation-years', type=int, default=int(os.environ.get('QC_VALIDATION_YEARS','10')))
+    add_qc_parameter_args(rf, default_stage_values=False)
+    add_historical_parameter_args(rf)
     return p
 
 

@@ -56,6 +56,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
         fake_imports.QCAlgorithm = QCAlgorithm
         fake_imports.Resolution = types.SimpleNamespace(DAILY="Daily")
+        fake_imports.OptionRight = types.SimpleNamespace(CALL="call", PUT="put")
         data_source = types.ModuleType("QuantConnect.DataSource")
         data_source.EODHDUpcomingEarnings = object
         quantconnect = types.ModuleType("QuantConnect")
@@ -86,6 +87,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.runtime_statistics = {}
         alg.debug_messages = []
         alg.errors = []
+        alg.snapshots = {}
         alg.candidates = [{"symbol": "XYZ"}]
         alg.events = {
             "XYZ": {
@@ -97,7 +99,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             }
         }
         alg.exit_policy = "sell_before_earnings_no_hold_through"
-        alg.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta")
+        alg.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta","right")
         alg.contract_field_index = {name: i for i, name in enumerate(alg.contract_fields)}
         alg.snapshot_contract_count = 0
         alg.snapshot_day_count = 0
@@ -114,14 +116,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.min_bid = 0.05
         alg.min_open_interest = 0
         alg.min_volume = 0
+        alg.option_right = mod.hist_params(params)["option_right"]
         alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
         return alg
 
-    def quote(self, bid, ask=None, iv=0.40):
+    def quote(self, bid, ask=None, iv=0.40, symbol="XYZ_CALL_110", strike=110.0, right="call", delta=0.30):
         ask = bid if ask is None else ask
         return {
-            "symbol": "XYZ_CALL_110",
-            "strike": 110.0,
+            "symbol": symbol,
+            "strike": strike,
             "expiry": "2026-02-05",
             "bid": bid,
             "ask": ask,
@@ -129,8 +132,24 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "volume": 100,
             "open_interest": 100,
             "iv": iv,
-            "delta": 0.30,
+            "delta": delta,
+            "right": right,
         }
+
+    def option_contract(self, symbol, right):
+        return types.SimpleNamespace(
+            symbol=symbol,
+            right=right,
+            strike=110.0,
+            expiry=datetime.datetime(2026, 1, 20),
+            bid_price=0.10,
+            ask_price=0.20,
+            last_price=0.15,
+            volume=100,
+            open_interest=100,
+            implied_volatility=0.40,
+            greeks=types.SimpleNamespace(delta=0.30),
+        )
 
     def set_multiyear_snapshots(self, alg, quotes_by_day):
         rows = {}
@@ -908,6 +927,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.min_bid = 0.010000", main)
         self.assertIn("self.max_spread = 0.350000", main)
         self.assertIn("self.max_spread_pct = 0.700000", main)
+        self.assertIn("self.option_right = 'call'", main)
+        self.assertIn("option_right_matches", main)
+        self.assertNotIn("if c.right != OptionRight.CALL: continue", main)
         self.assertIn("self.min_open_interest = 11", main)
         self.assertIn("self.min_volume = 4", main)
         self.assertIn("self.stop_loss_max_loss_pct = -50.0", main)
@@ -945,6 +967,67 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("strikes(-50, 300).expiration(timedelta(1), timedelta(60))", main)
         self.assertIn("if dte < 1 or dte > 60: continue", main)
         self.assertIn("self.max_spread = 0.250000", main)
+
+    def test_multiyear_generated_qc_algorithm_defaults_to_calls_only(self):
+        alg = self.build_multiyear_algorithm()
+        alg.option_by_underlying = {"XYZ": "XYZ_OPT"}
+        alg.securities = {"XYZ": types.SimpleNamespace(price=100.0)}
+        alg.time = datetime.datetime(2026, 1, 5)
+        data = types.SimpleNamespace(option_chains={
+            "XYZ_OPT": [
+                self.option_contract("XYZ_CALL_110", "call"),
+                self.option_contract("XYZ_PUT_90", "put"),
+            ]
+        })
+
+        alg.on_data(data)
+
+        contracts = alg.snapshots["XYZ"]["2026-01-05"]["contracts"]
+        self.assertEqual([c[0] for c in contracts], ["XYZ_CALL_110"])
+
+    def test_multiyear_generated_qc_algorithm_can_snapshot_puts(self):
+        alg = self.build_multiyear_algorithm({"option_right": "put"})
+        alg.option_by_underlying = {"XYZ": "XYZ_OPT"}
+        alg.securities = {"XYZ": types.SimpleNamespace(price=100.0)}
+        alg.time = datetime.datetime(2026, 1, 5)
+        data = types.SimpleNamespace(option_chains={
+            "XYZ_OPT": [
+                self.option_contract("XYZ_CALL_110", "call"),
+                self.option_contract("XYZ_PUT_90", "put"),
+            ]
+        })
+
+        alg.on_data(data)
+
+        contracts = alg.snapshots["XYZ"]["2026-01-05"]["contracts"]
+        self.assertEqual([c[0] for c in contracts], ["XYZ_PUT_90"])
+
+    def test_multiyear_generated_qc_algorithm_treats_puts_as_otm_below_spot(self):
+        alg = self.build_multiyear_algorithm({"option_right": "put"})
+        put_quote = self.quote(
+            0.17,
+            0.20,
+            symbol="XYZ_PUT_90",
+            strike=90.0,
+            right="put",
+            delta=-0.30,
+        )
+        exit_quote = dict(put_quote, bid=0.30, ask=0.35, mid=0.325)
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-05": put_quote,
+            "2026-01-30": exit_quote,
+        })
+
+        alg.on_end_of_algorithm()
+
+        payload = json.loads("".join(
+            alg.runtime_statistics[key]
+            for key in sorted(alg.runtime_statistics)
+            if key.startswith("multiyear_json_")
+        ))
+        trade = payload["results"][0]["trades"][0]
+        self.assertEqual(trade["contract"], "XYZ_PUT_90")
+        self.assertEqual(trade["required_move_pct"], 10.0)
 
     def test_multiyear_generated_qc_algorithm_instruments_compact_snapshots(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -1484,9 +1567,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_retry_failed_uses_end_to_end_runner(self):
         full = (SCRIPTS / "earnings-qc-research").read_text()
-        self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, validation_years, args.end_to_end)", full)
+        self.assertIn("run_chunk_end_to_end(run_dir, off, args.chunk_size, validation_years, args.end_to_end, args=args)", full)
         self.assertIn("rf.add_argument('--end-to-end'", full)
         self.assertIn("rf.add_argument('--validation-years'", full)
+        self.assertIn("add_qc_parameter_args(rf, default_stage_values=False)", full)
 
     def test_stage2_fails_loudly_when_valuation_anchor_has_no_data(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
@@ -2051,16 +2135,17 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual((tmp / "multiyear_runner.stderr.log").read_text(), "stderr text")
 
 
-    def test_cmd_run_rejects_put_or_both_for_historical_until_supported(self):
+    def test_cmd_run_allows_put_or_both_for_historical_after_option_right_forwarding(self):
         mod = load_script("earnings-qc-research")
-        mod.require_research_db = lambda: (_ for _ in ()).throw(AssertionError("db should not be touched"))
         for right in ["put", "both"]:
+            mod.require_research_db = mock.Mock(return_value=False)
             args = mod.build_parser().parse_args(["run", "--option-right", right, "--end-to-end"])
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = mod.cmd_run(args)
-            self.assertEqual(rc, 2)
-            self.assertIn("STAGE_NOT_IMPLEMENTED_FOR_HISTORICAL_OPTION_RIGHT", buf.getvalue())
+            self.assertEqual(rc, 1)
+            self.assertIn("DB_UNAVAILABLE", buf.getvalue())
+            mod.require_research_db.assert_called_once()
 
     def test_cmd_run_rejects_unimplemented_stage_ranges_before_db(self):
         mod = load_script("earnings-qc-research")
@@ -2086,13 +2171,15 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_right="put", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
         self.assertIn("14:28", argv)
         self.assertIn("--historical-resolution", argv)
         self.assertIn("minute", argv)
+        self.assertIn("--option-right", argv)
+        self.assertIn("put", argv)
         self.assertIn("--max-contracts", argv)
         self.assertIn("3", argv)
         self.assertIn("--max-premium", argv)
@@ -2723,6 +2810,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         mod = load_script("earnings-qc-research")
         tmp = pathlib.Path(tempfile.mkdtemp())
         retried = []
+        forwarded_args = []
         summaries = [{
             "failed_chunks": [],
             "historical_failed_chunks": [],
@@ -2739,12 +2827,18 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             chunk_size=5,
             end_to_end=True,
             notify=False,
+            option_right="put",
         )
-        with mock.patch.object(mod, "require_research_db", return_value=True), mock.patch.object(mod, "latest_db_run", return_value={"run_id": "run-a", "run_dir": str(tmp)}), mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=lambda *a, **k: retried.append(a[1])), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}), mock.patch.object(mod, "persist_summary_to_db"):
+        def fake_run_chunk_end_to_end(*a, **k):
+            retried.append(a[1])
+            forwarded_args.append(k.get("args"))
+
+        with mock.patch.object(mod, "require_research_db", return_value=True), mock.patch.object(mod, "latest_db_run", return_value={"run_id": "run-a", "run_dir": str(tmp)}), mock.patch.object(mod, "aggregate", side_effect=summaries), mock.patch.object(mod, "load_chunks", return_value=[]), mock.patch.object(mod, "run_chunk_end_to_end", side_effect=fake_run_chunk_end_to_end), mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}), mock.patch.object(mod, "persist_summary_to_db"):
             rc = mod.cmd_retry_failed(args)
 
         self.assertEqual(rc, 0)
         self.assertEqual(retried, [25])
+        self.assertEqual([a.option_right for a in forwarded_args], ["put"])
 
     def test_retry_failed_persists_rewritten_summary_to_db(self):
         mod = load_script("earnings-qc-research")

@@ -65,7 +65,11 @@ def hist_params(params:dict|None) -> dict:
     max_contracts = p.get('max_contracts')
     stop_loss = p.get('stop_loss_max_loss_pct')
     stop_loss_max_loss_pct = -abs(float(stop_loss)) if stop_loss is not None else None
+    option_right = str(p.get('option_right') or 'call').lower()
+    if option_right not in {'call', 'put', 'both'}:
+        raise SystemExit(f"invalid option_right {option_right!r}; expected call, put, or both")
     return {
+        'option_right': option_right,
         'max_premium': float(p.get('max_premium') if p.get('max_premium') is not None else 0.50),
         'max_days_after_earnings': int(p.get('max_expiry_after_earnings_days') if p.get('max_expiry_after_earnings_days') is not None else 7),
         'min_expiration_days': int(p.get('min_expiration_days') if p.get('min_expiration_days') is not None else 1),
@@ -106,6 +110,61 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         self.set_runtime_statistic('multiyear_exit_policy','sell_before_earnings_no_hold_through')\n        
         for i in range(0, len(txt), 3500):
             self.set_runtime_statistic('multiyear_json_%02d' % (i//3500), txt[i:i+3500])\n        self.debug('EARNINGS_QC_MULTIYEAR_JSON='+txt)\n'''
+    option_right_setting_marker = f"        self.max_spread_pct = {hp['max_spread_pct']:.6f}\n"
+    if option_right_setting_marker not in code:
+        raise RuntimeError('generated multiyear option-right setting marker not found')
+    code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n", 1)
+    contract_fields_marker = '        self.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta")'
+    if contract_fields_marker not in code:
+        raise RuntimeError('generated multiyear contract-fields marker not found')
+    code = code.replace(contract_fields_marker, '        self.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta","right")', 1)
+    compact_contract_marker = "        return (str(c.symbol), float(c.strike), exp.isoformat(), round(bid,4), round(ask,4), round(mid,4), round(last,4), int(c.volume) if c.volume is not None else 0, int(c.open_interest) if c.open_interest is not None else 0, round(float(c.implied_volatility),4) if c.implied_volatility is not None else None, round(float(c.greeks.delta),4) if c.greeks is not None and c.greeks.delta is not None else None)"
+    if compact_contract_marker not in code:
+        raise RuntimeError('generated multiyear compact-contract marker not found')
+    code = code.replace(compact_contract_marker, "        return (str(c.symbol), float(c.strike), exp.isoformat(), round(bid,4), round(ask,4), round(mid,4), round(last,4), int(c.volume) if c.volume is not None else 0, int(c.open_interest) if c.open_interest is not None else 0, round(float(c.implied_volatility),4) if c.implied_volatility is not None else None, round(float(c.greeks.delta),4) if c.greeks is not None and c.greeks.delta is not None else None, 'put' if c.right == OptionRight.PUT else 'call')", 1)
+    option_right_helper_marker = "    def selection(self, data):"
+    if option_right_helper_marker not in code:
+        raise RuntimeError('generated multiyear option-right helper marker not found')
+    code = code.replace(
+        option_right_helper_marker,
+        "    def option_right_matches(self, contract):\n"
+        "        if self.option_right == 'both':\n"
+        "            return contract.right in (OptionRight.CALL, OptionRight.PUT)\n"
+        "        if self.option_right == 'put':\n"
+        "            return contract.right == OptionRight.PUT\n"
+        "        return contract.right == OptionRight.CALL\n"
+        "    def quote_right(self, quote):\n"
+        "        return str(self.qget(quote, 'right') or 'call').lower()\n"
+        "    def option_contract_is_otm(self, quote, strike, spot):\n"
+        "        right = self.quote_right(quote)\n"
+        "        if right == 'put':\n"
+        "            return strike < spot\n"
+        "        return strike > spot\n"
+        "    def required_move_pct(self, quote, strike, spot):\n"
+        "        if spot <= 0:\n"
+        "            return None\n"
+        "        if self.quote_right(quote) == 'put':\n"
+        "            return (1.0 - strike / spot) * 100.0\n"
+        "        return (strike / spot - 1.0) * 100.0\n"
+        + option_right_helper_marker,
+        1,
+    )
+    call_only_marker = "                    if c.right != OptionRight.CALL: continue"
+    if call_only_marker not in code:
+        raise RuntimeError('generated multiyear call-only option filter marker not found')
+    code = code.replace(call_only_marker, "                    if not self.option_right_matches(c): continue", 1)
+    call_moneyness_marker = "                        if strike <= spot: continue"
+    if call_moneyness_marker not in code:
+        raise RuntimeError('generated multiyear call-only moneyness marker not found')
+    code = code.replace(call_moneyness_marker, "                        if not self.option_contract_is_otm(q, strike, spot): continue", 1)
+    call_required_move_marker = "                        req=(strike/spot-1.0)*100.0"
+    if call_required_move_marker not in code:
+        raise RuntimeError('generated multiyear call-only required-move marker not found')
+    code = code.replace(call_required_move_marker, "                        req=self.required_move_pct(q, strike, spot)", 1)
+    parameters_marker = f'"parameters":{{"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}'
+    if parameters_marker not in code:
+        raise RuntimeError('generated multiyear parameters marker not found')
+    code = code.replace(parameters_marker, f'"parameters":{{"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
     payload_marker = '\n        payload={"type":"earnings_qc_multiyear_backtest"'
     if payload_marker not in code:
         raise RuntimeError('generated multiyear payload marker not found')
@@ -245,8 +304,9 @@ def main(argv):
     ap.add_argument('--min-relative-spread', type=float); ap.add_argument('--vol-spread-factor', type=float); ap.add_argument('--expected-move-spread-fraction', type=float)
     ap.add_argument('--min-open-interest', type=int); ap.add_argument('--min-volume', type=int); ap.add_argument('--strike-range', default='-50:300')
     ap.add_argument('--min-expiration-days', type=int); ap.add_argument('--max-expiration-days', type=int); ap.add_argument('--max-expiry-after-earnings-days', type=int)
+    ap.add_argument('--option-right', default='call', choices=['call','put','both'])
     ap.add_argument('--stop-loss-max-loss-pct', type=float)
     args=ap.parse_args(argv); rd=pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
-    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','path_metrics','max_contracts','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
+    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','path_metrics','max_contracts','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','option_right','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
     summary=run_backtest(rd,args.years,params=params); print(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)); return 0 if summary.get('ok') else 2
 if __name__=='__main__': raise SystemExit(main(__import__('sys').argv[1:]))
