@@ -148,6 +148,10 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             )
             result.crontab_call_count = crontab_calls.read_text().count("x") if crontab_calls.exists() else 0
             result.crontab_output = crontab_output.read_text() if crontab_output.exists() else ""
+            result.handoff_tasks = {
+                path.name: path.read_text()
+                for path in handoff_dir.glob("*-task.txt")
+            }
             return result
 
     def test_stale_running_daily_run_escalates(self):
@@ -159,6 +163,11 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertEqual(result.returncode, 75)
         self.assertIn("STALE_RUNNING_DAILY_RUN", result.stderr)
         self.assertIn("threshold_seconds=3600", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: STALE_RUNNING_DAILY_RUN", task_text)
+        self.assertIn("date: 2026-08-04", task_text)
+        self.assertIn("threshold_seconds: 3600", task_text)
 
     def test_date_with_no_daily_run_row_escalates(self):
         result = self.run_watchdog_with_fake_psql(["", ""])
@@ -167,6 +176,12 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("DAILY_RUN_MISSING_AFTER_DEADLINE date=2026-08-04", result.stderr)
         self.assertIn("scheduled_at=06:00", result.stderr)
         self.assertIn("grace_seconds=3600", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: DAILY_RUN_MISSING_AFTER_DEADLINE", task_text)
+        self.assertIn("date: 2026-08-04", task_text)
+        self.assertIn("scheduled_at: 06:00", task_text)
+        self.assertIn("grace_seconds: 3600", task_text)
 
     def test_date_with_no_daily_run_row_before_daily_is_due_is_not_due_yet(self):
         result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T05:30:00+03:00")

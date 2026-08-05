@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -27,8 +28,75 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn("POSTRUN_REVIEW_ALREADY_RUNNING", text)
         self.assertIn("NO_FINISHED_DAILY_RUN", text)
+        self.assertIn("HANDOFF_TASK_WRITTEN condition=$condition", text)
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
+
+    def run_postrun_with_fake_psql(self, psql_outputs):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            handoff_dir = root / "handoff"
+            report_root = root / "reports"
+            skill = root / "SKILL.md"
+            calls = root / "psql-calls"
+            skill.write_text("# skill\n")
+            script = fake_bin / "psql"
+            script.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f"calls={calls!s}\n"
+                "n=0\n"
+                "[[ -f \"$calls\" ]] && n=$(cat \"$calls\")\n"
+                "n=$((n + 1))\n"
+                "printf '%s' \"$n\" > \"$calls\"\n"
+                "case \"$n\" in\n"
+                + "".join(
+                    f"  {idx}) printf '%b' {output!r} ;;\n"
+                    for idx, output in enumerate(psql_outputs, start=1)
+                )
+                + "  *) printf '' ;;\n"
+                "esac\n"
+            )
+            script.chmod(0o755)
+            (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "flock").chmod(0o755)
+            result = subprocess.run(
+                [str(SCRIPT), "--date", "2026-08-04", "--dry-run"],
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}:/usr/bin:/bin",
+                    "EARNINGS_POSTRUN_PATH_PREFIX": str(fake_bin),
+                    "EARNINGS_POSTRUN_STATE_DIR": str(state_dir),
+                    "EARNINGS_POSTRUN_HANDOFF_DIR": str(handoff_dir),
+                    "EARNINGS_POSTRUN_REPORT_ROOT": str(report_root),
+                    "EARNINGS_POSTRUN_SKILL_FILE": str(skill),
+                    "EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600",
+                    "EARNINGS_POSTRUN_STALE_RUNNING_SECONDS": "3600",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            result.handoff_tasks = {
+                path.name: path.read_text()
+                for path in handoff_dir.glob("*-task.txt")
+            }
+            return result
+
+    def test_no_finished_daily_run_writes_handoff_task(self):
+        result = self.run_postrun_with_fake_psql(["", "", ""])
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("NO_FINISHED_DAILY_RUN date=2026-08-04", result.stdout)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: NO_FINISHED_DAILY_RUN", task_text)
+        self.assertIn("date: 2026-08-04", task_text)
+        self.assertIn("scheduled_at: 06:00", task_text)
+        self.assertIn("grace_seconds: 3600", task_text)
 
     def test_daily_selector_requires_explicit_daily_stage_parameters(self):
         text = SCRIPT.read_text()

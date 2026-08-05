@@ -2,7 +2,11 @@
 set -euo pipefail
 
 export TZ=Asia/Jerusalem
-export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+if [[ -n "${EARNINGS_POSTRUN_PATH_PREFIX:-}" ]]; then
+  export PATH="${EARNINGS_POSTRUN_PATH_PREFIX}:/agents/research/bin:/usr/local/bin:/usr/bin:/bin"
+else
+  export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin
+fi
 export PYTHONDONTWRITEBYTECODE=1
 
 MODEL="gpt-5.4-mini"
@@ -42,6 +46,28 @@ make_runner_inputs_usable() {
   fi
 }
 
+write_no_finished_run_handoff_task() {
+  local condition="NO_FINISHED_DAILY_RUN"
+  local ts task_file
+  ts="$(date -u +%Y%m%d-%H%M%S)"
+  task_file="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${ts}-${condition}-task.txt"
+  cat > "$task_file" <<TASK
+Earnings postrun review could not find a finished deterministic daily run.
+
+condition: $condition
+date: $DATE
+scheduled_at: ${DAILY_RUN_SCHEDULED_AT:-unknown}
+grace_seconds: ${MISSING_RUN_GRACE_SECONDS:-unknown}
+threshold_seconds: ${STALE_RUNNING_SECONDS:-unknown}
+
+This is a durable handoff artifact for the LLM/operator loop. Keep the existing
+script no-op signal; investigate whether the daily run was skipped, is still
+running, or finished without a DB row that matches the postrun selector.
+TASK
+  chmod 0640 "$task_file"
+  echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
+}
+
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,10 +88,13 @@ case "$MODEL" in
 esac
 
 DATE_COMPACT="${DATE//-/}"
-STATE_DIR="/agents/research/state/earnings-qc-research/llm-postrun-review"
-HANDOFF_DIR="/agents/research/handoff"
-REPORT_ROOT="/agents/research/reports"
-SKILL_FILE="/agents/research/skills/trader-research-system/SKILL.md"
+STATE_DIR="${EARNINGS_POSTRUN_STATE_DIR:-/agents/research/state/earnings-qc-research/llm-postrun-review}"
+HANDOFF_DIR="${EARNINGS_POSTRUN_HANDOFF_DIR:-/agents/research/handoff}"
+REPORT_ROOT="${EARNINGS_POSTRUN_REPORT_ROOT:-/agents/research/reports}"
+SKILL_FILE="${EARNINGS_POSTRUN_SKILL_FILE:-/agents/research/skills/trader-research-system/SKILL.md}"
+DAILY_RUN_SCHEDULED_AT="${EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT:-06:00}"
+MISSING_RUN_GRACE_SECONDS="${EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS:-10800}"
+STALE_RUNNING_SECONDS="${EARNINGS_POSTRUN_STALE_RUNNING_SECONDS:-10800}"
 LOCK="${STATE_DIR}/earnings-llm-postrun-review.lock"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
@@ -123,6 +152,7 @@ if [[ -z "$ROW" ]]; then
 fi
 
 if [[ -z "$ROW" ]]; then
+  write_no_finished_run_handoff_task
   echo "NO_FINISHED_DAILY_RUN date=$DATE"
   exit 0
 fi
