@@ -231,6 +231,21 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("scheduled_at=06:00", result.stdout)
         self.assertIn("schedule_source=env", result.stdout)
 
+    def test_missing_daily_row_accepts_zero_padded_env_schedule(self):
+        result = self.run_watchdog_with_fake_psql(
+            ["", ""],
+            now="2026-08-04T08:00:00+00:00",
+            schedule="08:30",
+            schedule_zone="UTC",
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+        self.assertIn("scheduled_at=08:30", result.stdout)
+        self.assertIn("schedule_zone=UTC", result.stdout)
+        self.assertIn("schedule_source=env", result.stdout)
+        self.assertNotIn("value too great for base", result.stderr)
+
     def test_missing_daily_row_default_schedule_matches_managed_timer_zone(self):
         result = self.run_watchdog_with_fake_psql(
             ["", ""],
