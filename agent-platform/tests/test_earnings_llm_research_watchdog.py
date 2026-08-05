@@ -75,7 +75,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", cron_line=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", timer_calendar=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
         cleanup = TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -87,8 +87,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             log_dir = root / "logs"
             skill = root / "SKILL.md"
             calls = root / "psql-calls"
-            crontab_calls = root / "crontab-calls"
-            crontab_output = root / "crontab-output"
+            systemctl_calls = root / "systemctl-calls"
+            systemctl_output = root / "systemctl-output"
             calls.unlink(missing_ok=True)
             skill.write_text("# skill\n")
             happy_run_dir = report_root / "run"
@@ -118,17 +118,17 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             script.chmod(0o755)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
-            if cron_line is not None:
-                (fake_bin / "crontab").write_text(
+            if timer_calendar is not None:
+                (fake_bin / "systemctl").write_text(
                     "#!/usr/bin/env bash\n"
-                    f"printf x >> {crontab_calls!s}\n"
-                    "if [[ \"${1:-}\" == \"-l\" ]]; then\n"
-                    f"  printf '%s\\n' {cron_line!r} | tee -a {crontab_output!s}\n"
+                    f"printf x >> {systemctl_calls!s}\n"
+                    "if [[ \"${1:-}\" == \"show\" && \"${2:-}\" == \"trader-earnings-otm-daily.timer\" ]]; then\n"
+                    f"  printf '%s\\n' {timer_calendar!r} | tee -a {systemctl_output!s}\n"
                     "  exit 0\n"
                     "fi\n"
                     "exit 64\n"
                 )
-                (fake_bin / "crontab").chmod(0o755)
+                (fake_bin / "systemctl").chmod(0o755)
             result = subprocess.run(
                 [str(SCRIPT), "--date", date, "--dry-run"],
                 env={
@@ -150,8 +150,8 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
-            result.crontab_call_count = crontab_calls.read_text().count("x") if crontab_calls.exists() else 0
-            result.crontab_output = crontab_output.read_text() if crontab_output.exists() else ""
+            result.systemctl_call_count = systemctl_calls.read_text().count("x") if systemctl_calls.exists() else 0
+            result.systemctl_output = systemctl_output.read_text() if systemctl_output.exists() else ""
             result.handoff_tasks = {
                 path.name: path.read_text()
                 for path in handoff_dir.glob("*-task.txt")
@@ -203,18 +203,20 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
 
-    def test_missing_daily_row_uses_cron_schedule_override(self):
+    def test_missing_daily_row_uses_systemd_timer_schedule(self):
         result = self.run_watchdog_with_fake_psql(
             ["", ""],
             now="2026-08-04T06:30:00+03:00",
-            cron_line="45 6 * * * /agents/research/bin/earnings-otm-daily.sh",
+            timer_calendar="{ OnCalendar=*-*-* 07:30:00 Europe/London ; next_elapse=Tue 2026-08-04 06:30:00 UTC }",
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertGreater(result.crontab_call_count, 0)
-        self.assertIn("/agents/research/bin/earnings-otm-daily.sh", result.crontab_output)
+        self.assertGreater(result.systemctl_call_count, 0)
+        self.assertIn("OnCalendar=*-*-* 07:30:00 Europe/London", result.systemctl_output)
         self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
-        self.assertIn("scheduled_at=06:45", result.stdout)
+        self.assertIn("scheduled_at=07:30", result.stdout)
+        self.assertIn("schedule_zone=Europe/London", result.stdout)
+        self.assertIn("schedule_source=systemd", result.stdout)
 
     def test_missing_daily_row_uses_explicit_schedule_zone(self):
         result = self.run_watchdog_with_fake_psql(
@@ -227,6 +229,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
         self.assertIn("scheduled_at=06:00", result.stdout)
+        self.assertIn("schedule_source=env", result.stdout)
 
     def test_missing_daily_row_default_schedule_matches_managed_timer_zone(self):
         result = self.run_watchdog_with_fake_psql(
@@ -239,6 +242,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn('DAILY_RUN_DEFAULT_ZONE="Asia/Jerusalem"', text)
         self.assertIn('tz = ZoneInfo(zone_s)', text)
+        self.assertIn("schedule_source=fallback", result.stdout)
 
     def test_failure_handoffs_are_deduped_by_date_and_condition(self):
         with TemporaryDirectory() as tmp:

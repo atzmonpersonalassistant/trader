@@ -61,6 +61,8 @@ Earnings research watchdog detected a daily-run failure state.
 condition: $condition
 date: $DATE
 scheduled_at: ${DAILY_RUN_SCHEDULED_AT:-}
+schedule_zone: ${DAILY_RUN_ZONE:-}
+schedule_source: ${DAILY_RUN_SOURCE:-}
 grace_seconds: $MISSING_RUN_GRACE_SECONDS
 threshold_seconds: $STALE_RUNNING_SECONDS
 run_id: ${STATE_RUN_ID:-}
@@ -133,43 +135,43 @@ if ! flock -n 9; then
 fi
 
 daily_run_schedule() {
-  local line schedule minute hour zone
+  local schedule minute hour zone timer_calendar parsed
   zone="${EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE:-$DAILY_RUN_DEFAULT_ZONE}"
   if [[ -n "${EARNINGS_WATCHDOG_DAILY_SCHEDULE:-}" ]]; then
     schedule="${EARNINGS_WATCHDOG_DAILY_SCHEDULE}"
     minute="${schedule##*:}"
     hour="${schedule%%:*}"
     if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
-      printf '%s|%s|%s\n' "$minute" "$hour" "$zone"
+      printf '%s|%s|%s|%s\n' "$minute" "$hour" "$zone" "env"
       return
     fi
   fi
 
-  if [[ -n "${EARNINGS_WATCHDOG_DAILY_CRON_LINE:-}" ]]; then
-    line="$EARNINGS_WATCHDOG_DAILY_CRON_LINE"
-  elif command -v crontab >/dev/null 2>&1; then
-    line="$(crontab -l 2>/dev/null | grep -F "$DAILY_RUN_COMMAND" | awk '
-      $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $1 "|" $2; exit}
-    ')"
-  else
-    line=""
+  if command -v systemctl >/dev/null 2>&1; then
+    timer_calendar="$(systemctl show trader-earnings-otm-daily.timer -p TimersCalendar --value 2>/dev/null || true)"
+    if [[ -n "$timer_calendar" ]]; then
+      parsed="$(python3 - "$timer_calendar" <<'PY'
+import re
+import sys
+
+text = sys.argv[1]
+match = re.search(r'(?:OnCalendar=)?[^;\n]*?\b([0-9]{1,2}):([0-9]{2})(?::[0-9]{2})?\s+([A-Za-z_]+/[A-Za-z_]+)\b', text)
+if match:
+    hour, minute, zone = match.groups()
+    print(f"{int(minute)}|{int(hour)}|{zone}")
+PY
+)"
+      if [[ -n "$parsed" ]]; then
+        IFS='|' read -r minute hour zone <<< "$parsed"
+        if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 && -n "$zone" ]]; then
+          printf '%s|%s|%s|%s\n' "$minute" "$hour" "$zone" "systemd"
+          return
+        fi
+      fi
+    fi
   fi
 
-  if [[ -n "$line" ]]; then
-    if [[ "$line" == *"|"* ]]; then
-      schedule="$line"
-    else
-      schedule="$(awk '{print $1 "|" $2}' <<< "$line")"
-    fi
-    minute="${schedule%%|*}"
-    hour="${schedule#*|}"
-    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
-      printf '%s|%s|%s\n' "$minute" "$hour" "$zone"
-      return
-    fi
-  fi
-
-  printf '%s|%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR" "$zone"
+  printf '%s|%s|%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR" "$DAILY_RUN_DEFAULT_ZONE" "fallback"
 }
 
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
@@ -199,7 +201,7 @@ LIMIT 1;
 ")"
 
 if [[ -z "$RUN_STATE" ]]; then
-  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR DAILY_RUN_ZONE <<< "$(daily_run_schedule)"
+  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR DAILY_RUN_ZONE DAILY_RUN_SOURCE <<< "$(daily_run_schedule)"
   DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE")"
   MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$DAILY_RUN_ZONE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
 import datetime as dt
@@ -230,13 +232,13 @@ PY
 )"
   if [[ "$MISSING_ROW_STATE" == "after_deadline" ]]; then
     write_failure_handoff_task "DAILY_RUN_MISSING_AFTER_DEADLINE"
-    echo "ERROR: DAILY_RUN_MISSING_AFTER_DEADLINE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
+    echo "ERROR: DAILY_RUN_MISSING_AFTER_DEADLINE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
     exit 75
   fi
   if [[ "$MISSING_ROW_STATE" == "not_due" ]]; then
-    echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS"
+    echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS"
   else
-    echo "DAILY_RUN_MISSING_WITHIN_GRACE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS"
+    echo "DAILY_RUN_MISSING_WITHIN_GRACE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS"
   fi
   exit 0
 fi
