@@ -315,7 +315,6 @@ jobs:
             /^\*\/30 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/5 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/15 \* \* \* \* \/agents\/research\/bin\/earnings-llm-research-watchdog/ {next}
-            /^CRON_TZ=Asia\/Jerusalem$/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
