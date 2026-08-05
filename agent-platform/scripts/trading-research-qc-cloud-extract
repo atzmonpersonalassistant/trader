@@ -427,7 +427,7 @@ class TraderQcCloudOptionHistoryProbe(QCAlgorithm):
         s = json.dumps(artifact, sort_keys=True)
         chunk = 6000
         for i in range(0, len(s), chunk):
-            self.SetRuntimeStatistic("trader.qc_extract_json_%03d" % (i//chunk), s[i:i+chunk])
+            self.SetRuntimeStatistic("trader.qc_extract_json_%04d" % (i//chunk), s[i:i+chunk])
         self.SetRuntimeStatistic("trader.qc_extract_underlyings", ",".join(SPEC["underlyings"]))
         self.SetRuntimeStatistic("trader.qc_extract_contract_rows", str(len(self.rows)))
 '''

@@ -868,7 +868,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
         main = (project_dir / "main.py").read_text()
         self.assertIn("sell_before_earnings_no_hold_through", main)
-        self.assertIn("multiyear_json_%02d", main)
+        self.assertIn("multiyear_json_%04d", main)
         self.assertIn("exit_reason", main)
         self.assertIn("planned_exit_date", main)
         self.assertIn("actual_exit_date", main)
@@ -1108,6 +1108,31 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertTrue(payload["errors_truncated"])
         self.assertEqual(len(payload["errors"]), 10)
         self.assertEqual(alg.runtime_statistics["multiyear_error_count"], str(event_count))
+
+    def test_multiyear_chunked_json_reassembles_in_order_past_99_fragments(self):
+        alg = self.build_multiyear_algorithm()
+        fragment_count = 150
+        payload_text = json.dumps(
+            {
+                "type": "fragment_order_regression",
+                "items": [
+                    {"index": i, "value": f"{i:04d}-" + ("x" * 3475)}
+                    for i in range(fragment_count)
+                ],
+            },
+            sort_keys=True,
+        )
+
+        for i in range(0, len(payload_text), 3500):
+            alg.set_runtime_statistic("multiyear_json_%04d" % (i // 3500), payload_text[i:i + 3500])
+
+        parts = [
+            alg.runtime_statistics[key]
+            for key in sorted(alg.runtime_statistics)
+            if key.startswith("multiyear_json_")
+        ]
+        self.assertGreaterEqual(len(parts), fragment_count)
+        self.assertEqual(json.loads("".join(parts)), json.loads(payload_text))
 
     def test_multiyear_generated_qc_algorithm_embeds_json_safely(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -1808,7 +1833,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             {tuple(row["liquidity_warning_counts"].items()) for row in alg.rows},
             {(("zero_option_chain_slices_observed", 1),)},
         )
-        parsed = json.loads(alg.runtime_statistics["trader.stage2_json_00"])
+        parsed = json.loads(alg.runtime_statistics["trader.stage2_json_0000"])
         self.assertEqual(len(parsed["rows"]), 2)
         self.assertEqual(alg.option_chain_slice_count, 0)
 
@@ -1999,9 +2024,34 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
     def test_stage2_runner_parses_chunked_stage2_json(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        self.assertIn("trader.stage2_json_%02d", scan)
+        self.assertIn("trader.stage2_json_%04d", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
         self.assertIn('"candidate_details": self.candidate_details', scan)
+
+    def test_stage2_chunked_json_reassembles_in_order_past_99_fragments(self):
+        fragment_count = 150
+        payload = {
+            "type": "earnings_qc_stage2_batch_diagnostic",
+            "rows": [
+                {"symbol": f"S{i:04d}", "diagnostic": "x" * 3475}
+                for i in range(fragment_count)
+            ],
+        }
+        payload_text = json.dumps(payload, sort_keys=True)
+        stats = {
+            "trader.stage2_json_%04d" % (i // 3500): payload_text[i:i + 3500]
+            for i in range(0, len(payload_text), 3500)
+        }
+
+        parts = [stats[key] for key in sorted(stats) if key.startswith("trader.stage2_json_")]
+
+        self.assertGreaterEqual(len(parts), fragment_count)
+        self.assertEqual(json.loads("".join(parts)), payload)
+
+    def test_qc_cloud_extract_uses_four_digit_chunk_keys(self):
+        script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
+        self.assertIn("trader.qc_extract_json_%04d", script)
+        self.assertNotIn("trader.qc_extract_json_%03d", script)
 
     def test_run_now_uses_chunked_stage2_candidate_details_before_capped_stat(self):
         mod = load_script("earnings-qc-options-scan")
