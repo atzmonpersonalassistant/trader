@@ -118,6 +118,59 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if runtime_marker not in code:
         raise RuntimeError('generated multiyear candidate-count statistic marker not found')
     code = code.replace(runtime_marker, runtime_marker + "\n        self.set_runtime_statistic('multiyear_error_count', str(error_count))", 1)
+    iv_helper_marker = "    def iv_trade_fields(self, entry_iv_raw, exit_iv_raw, entry_day, exit_day, expiry, iv_inputs):"
+    if iv_helper_marker not in code:
+        raise RuntimeError('generated multiyear IV method marker not found')
+    iv_helpers = """    def iv_baseline_for_dte(self, dte, iv_inputs):
+        dv=(iv_inputs or {}).get('ordinary_daily_variance')
+        jv=(iv_inputs or {}).get('earnings_jump_variance')
+        if dv is None or jv is None or dte is None or dte <= 0:
+            return None
+        return math.sqrt((dte*float(dv)+float(jv))*365.0/dte)
+    def strike_spot_ratio(self, strike, underlying):
+        s=self.positive_float(strike); u=self.positive_float(underlying)
+        return round(s/u,4) if s is not None and u is not None else None
+    def rounded_float(self, value):
+        v=self.positive_float(value)
+        return round(v,4) if v is not None else None
+"""
+    code = code.replace(iv_helper_marker, iv_helpers + "    def iv_trade_fields(self, entry_iv_raw, exit_iv_raw, entry_day, exit_day, expiry, iv_inputs, strike_raw=None, entry_underlying_raw=None, exit_underlying_raw=None, entry_delta_raw=None, exit_delta_raw=None):", 1)
+    old_iv_body = """        dv=(iv_inputs or {}).get('ordinary_daily_variance')
+        jv=(iv_inputs or {}).get('earnings_jump_variance')
+        baseline=None
+        if dv is not None and jv is not None and dte_exit and dte_exit > 0:
+            baseline=math.sqrt((dte_exit*float(dv)+float(jv))*365.0/dte_exit)
+        return {"entry_iv":round(entry_iv,4) if entry_iv is not None else None,"exit_iv":round(exit_iv,4) if exit_iv is not None else None,"iv_change_pct":iv_change,"iv_baseline_exit":round(baseline,4) if baseline is not None else None,"iv_excess_pct":round((exit_iv/baseline-1.0)*100.0,2) if exit_iv is not None and baseline and baseline > 0 else None,"iv_days_to_expiry_entry":dte_entry,"iv_days_to_expiry_exit":dte_exit,"iv_baseline_inputs":iv_inputs}
+"""
+    new_iv_body = """        baseline_entry=self.iv_baseline_for_dte(dte_entry, iv_inputs)
+        baseline_exit=self.iv_baseline_for_dte(dte_exit, iv_inputs)
+        entry_excess=round((entry_iv/baseline_entry-1.0)*100.0,2) if entry_iv is not None and baseline_entry and baseline_entry > 0 else None
+        exit_excess=round((exit_iv/baseline_exit-1.0)*100.0,2) if exit_iv is not None and baseline_exit and baseline_exit > 0 else None
+        return {"entry_iv":round(entry_iv,4) if entry_iv is not None else None,"exit_iv":round(exit_iv,4) if exit_iv is not None else None,"iv_change_pct":iv_change,"iv_baseline_entry":round(baseline_entry,4) if baseline_entry is not None else None,"iv_excess_entry_pct":entry_excess,"iv_baseline_exit":round(baseline_exit,4) if baseline_exit is not None else None,"iv_excess_pct":exit_excess,"iv_excess_change_pct":round(exit_excess-entry_excess,2) if exit_excess is not None and entry_excess is not None else None,"iv_days_to_expiry_entry":dte_entry,"iv_days_to_expiry_exit":dte_exit,"entry_strike_spot_ratio":self.strike_spot_ratio(strike_raw, entry_underlying_raw),"exit_strike_spot_ratio":self.strike_spot_ratio(strike_raw, exit_underlying_raw),"entry_delta":self.rounded_float(entry_delta_raw),"exit_delta":self.rounded_float(exit_delta_raw),"iv_baseline_inputs":iv_inputs}
+"""
+    if old_iv_body not in code:
+        raise RuntimeError('generated multiyear IV body marker not found')
+    code = code.replace(old_iv_body, new_iv_body, 1)
+    stop_loss_iv_marker = "iv_fields=self.iv_trade_fields(trade.get('entry_iv'), self.qget(q,'iv'), entry_day, d, expiry, trade.get('iv_baseline_inputs'))"
+    if stop_loss_iv_marker not in code:
+        raise RuntimeError('generated stop-loss IV field marker not found')
+    code = code.replace(
+        stop_loss_iv_marker,
+        "iv_fields=self.iv_trade_fields(trade.get('entry_iv'), self.qget(q,'iv'), entry_day, d, expiry, trade.get('iv_baseline_inputs'), trade.get('strike'), trade.get('entry_underlying'), exit_underlying, trade.get('entry_delta'), self.qget(q,'delta'))",
+        1,
+    )
+    trade_strike_marker = '"contract":ent[\'symbol\'],"expiry":ent[\'expiry\'],"entry_ask"'
+    if trade_strike_marker not in code:
+        raise RuntimeError('generated trade strike insertion marker not found')
+    code = code.replace(trade_strike_marker, '"contract":ent[\'symbol\'],"expiry":ent[\'expiry\'],"strike":ent.get(\'strike\'),"entry_ask"', 1)
+    trade_iv_marker = "trade.update(self.iv_trade_fields(ent.get('iv'), self.qget(exq,'iv'), entry_day, exit_day, expiry, iv_inputs))"
+    if trade_iv_marker not in code:
+        raise RuntimeError('generated trade IV field marker not found')
+    code = code.replace(
+        trade_iv_marker,
+        "trade.update(self.iv_trade_fields(ent.get('iv'), self.qget(exq,'iv'), entry_day, exit_day, expiry, iv_inputs, ent.get('strike'), entry_underlying, exit_underlying, ent.get('delta'), self.qget(exq,'delta')))",
+        1,
+    )
     (project_dir/'main.py').write_text(code)
 
 def snapshot_memory_from_runtime_stats(stats: dict) -> dict | None:
