@@ -347,7 +347,7 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
                 delta_windows.append(metrics(rows, str(wy)+'y_delta_targeted', 1))
             delta_overall=metrics(delta_targeted_trades,'all_delta_targeted',{hp['final_min_sample_size']})
             delta_dropout_pct=round(max(0.0,(len(evs)-delta_overall['sample_size'])/len(evs)*100.0),2) if evs else None
-            delta_targeted_comparison=dict(delta_overall, historical_event_count=len(evs), dropout_pct=delta_dropout_pct, no_delta_eligible_contract_count=delta_targeted_blockers.get('no_delta_eligible_contract',0), per_trade_return_pct=[t['return_pct'] for t in delta_targeted_trades], trades=delta_targeted_trades, window_results=delta_windows, blockers=delta_targeted_blockers, delta_target=self.delta_target)""",
+            delta_targeted_comparison=dict(delta_overall, historical_event_count=len(evs), dropout_pct=delta_dropout_pct, untraded_event_no_delta_eligible_contract_count=delta_targeted_blockers.get('no_delta_eligible_contract',0), per_trade_return_pct=[t['return_pct'] for t in delta_targeted_trades], trades=delta_targeted_trades, window_results=delta_windows, blockers=delta_targeted_blockers, delta_target=self.delta_target)""",
         1,
     )
     delta_result_marker = '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"window_results":windows'
