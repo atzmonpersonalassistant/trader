@@ -204,7 +204,10 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertIn('marker_dir="$STATE_DIR/failure-handoffs/${DATE_COMPACT}-${condition}"', text)
         self.assertIn('HANDOFF_TASK_ALREADY_WRITTEN condition=$condition', text)
-        self.assertLess(text.index('HANDOFF_TASK_ALREADY_WRITTEN'), text.index('task_file="$HANDOFF_DIR/research-pass-postrun-'))
+        self.assertIn('tmp_task_file="$(mktemp "$HANDOFF_DIR/.research-pass-postrun-', text)
+        self.assertLess(text.index('cat > "$tmp_task_file"'), text.index('if ! mkdir "$marker_dir"'))
+        self.assertLess(text.index('if ! mkdir "$marker_dir"'), text.index('if ! mv "$tmp_task_file" "$task_file"'))
+        self.assertIn('rmdir "$marker_dir"', text)
 
 
     def test_copy_back_conflicts_are_nonfatal_after_action_execution(self):

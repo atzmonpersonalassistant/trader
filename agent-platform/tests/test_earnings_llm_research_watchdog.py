@@ -263,6 +263,11 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 len([name for name in next_day.handoff_tasks if "DAILY_RUN_MISSING_AFTER_DEADLINE" in name]),
                 2,
             )
+        text = SCRIPT.read_text()
+        self.assertIn('tmp_task_file="$(mktemp "$HANDOFF_DIR/.research-watchdog-', text)
+        self.assertLess(text.index('cat > "$tmp_task_file"'), text.index('if ! mkdir "$marker_dir"'))
+        self.assertLess(text.index('if ! mkdir "$marker_dir"'), text.index('if ! mv "$tmp_task_file" "$task_file"'))
+        self.assertIn('rmdir "$marker_dir"', text)
 
     def test_finished_happy_path_still_reaches_dry_run_without_llm(self):
         result = self.run_watchdog_with_fake_psql([
