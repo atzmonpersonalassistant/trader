@@ -725,7 +725,7 @@ jobs:
           grep -q -- '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m' /usr/local/sbin/trading-research-qc-docker-run
           grep -q -- 'docker run --rm' /usr/local/sbin/trading-research-qc-docker-run
           ! grep -q -- 'usermod -aG docker agent-research' /usr/local/sbin/trading-research-qc-docker-run
-          grep -q "cost_credit_guardrail_required" /usr/local/bin/trading-research-qc-broker
+          grep -q "qc_cloud_execution_surface_unavailable" /usr/local/bin/trading-research-qc-broker
           grep -q "mkdir -p /agents/research/tmp" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-runner-codex" /usr/local/bin/trading-research-agent-loop
           grep -q -- "trading-research-bounded-earnings-qc" /agents/research/bin/earnings-llm-postrun-review
