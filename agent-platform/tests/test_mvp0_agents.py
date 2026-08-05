@@ -1544,6 +1544,8 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(cleanup["deleted"], True)
             self.assertEqual(cleanup["backtest_id"], "abcdef1234")
             self.assertIn("Backtest id: abcdef1234", (run_dir / "qc_cloud_backtest_stdout.txt").read_text())
+            self.assertEqual(mod.extract_backtest_id("Backtest ID: ABC123"), "ABC123")
+            self.assertEqual(mod.extract_backtest_id("https://www.quantconnect.com/project/123/ABC_123-def"), "ABC_123-def")
 
     def test_research_loop_dry_run_writes_final_report(self):
         text = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
@@ -1615,6 +1617,8 @@ class MVP0AgentTests(unittest.TestCase):
         spec.loader.exec_module(module)
         self.assertEqual(module.parse_backtest_ids("Project ID: 123\nBacktest ID: ABC123"), (123, "ABC123"))
         self.assertEqual(module.parse_backtest_ids("Project Id: 456\nBacktest Id: xyz789"), (456, "xyz789"))
+        self.assertEqual(module._extract_backtest_id("Backtest ID: ABC_123-def"), "ABC_123-def")
+        self.assertEqual(module._extract_backtest_id("https://www.quantconnect.com/project/123/ABC_123-def"), "ABC_123-def")
         self.assertLessEqual(len(module.sanitize_run_id("qc-run-" + "x" * 200)), 120)
         self.assertEqual(module.normalize_qc_run_id("experiment1"), "qc-run-experiment1")
         self.assertEqual(module.normalize_qc_run_id("research-pass-manual"), "research-pass-manual")
@@ -1632,7 +1636,6 @@ class MVP0AgentTests(unittest.TestCase):
             (project_dir / "main.py").write_text("# prepared\n")
             (run_dir / "qc_cloud_run_manifest.json").write_text(json.dumps({
                 "project_dir": str(project_dir),
-                "project_id": 456,
                 "project_ref": "prepared-project",
             }) + "\n")
             env_path = tmp / "qc.env"
@@ -1668,6 +1671,8 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(delete_calls, [("POST", "backtests/delete", {"projectId": 456, "backtestId": "feedface1234"})])
             updated = json.loads((run_dir / "qc_cloud_run_manifest.json").read_text())
             self.assertEqual(updated["backtest_returncode"], 124)
+            self.assertEqual(updated["project_id"], 456)
+            self.assertEqual(updated["backtest_id"], "feedface1234")
             self.assertEqual(updated["timeout_cleanup"]["deleted"], True)
             self.assertIn("lean cloud backtest timed out after 60 seconds", (run_dir / "qc_cloud_backtest_stderr.log").read_text())
         long_sweep = "s" * 90

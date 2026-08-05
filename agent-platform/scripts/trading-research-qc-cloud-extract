@@ -38,7 +38,10 @@ def timeout_text(value):
     return value or ""
 
 def extract_backtest_id(text):
-    m = re.search(r"Backtest id:\s*([0-9a-f]+)", text)
+    u = re.search(r"quantconnect\.com/project/\d+/([A-Za-z0-9_-]+)", text)
+    if u:
+        return u.group(1)
+    m = re.search(r"Backtest\s+(?:id|ID|Id):\s*([A-Za-z0-9_-]+)", text, re.IGNORECASE)
     return m.group(1) if m else None
 
 def delete_backtest_if_known(project_id, backtest_id, run_dir):
@@ -438,7 +441,14 @@ def main():
     project_dir = LEAN_WORKSPACE / PROJECT_NAME
     project_id, _ = ensure_project(project_dir)
     write_project(project_dir, spec)
-    push = subprocess.run(["lean", "cloud", "push", "--project", str(project_dir), "--force"], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
+    try:
+        push = subprocess.run(["lean", "cloud", "push", "--project", str(project_dir), "--force"], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=180)
+    except subprocess.TimeoutExpired as exc:
+        stdout = timeout_text(exc.stdout)
+        stderr = timeout_text(exc.stderr)
+        (run_dir / "qc_cloud_push_stdout.txt").write_text(stdout)
+        (run_dir / "qc_cloud_push_stderr.txt").write_text(stderr)
+        fail("qc_cloud_push_timeout", "lean cloud push timed out", 124, timeout_seconds=180, stdout=stdout[-1000:], stderr=stderr[-1000:])
     (run_dir / "qc_cloud_push_stdout.txt").write_text(push.stdout); (run_dir / "qc_cloud_push_stderr.txt").write_text(push.stderr)
     if push.returncode != 0: fail("qc_cloud_push_failed", "lean cloud push failed", 70, stdout=push.stdout[-1000:], stderr=push.stderr[-1000:])
     name = "trader-qc-cloud-extract-v2-" + dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
