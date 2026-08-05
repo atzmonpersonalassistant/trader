@@ -157,6 +157,23 @@ jobs:
             rm -rf "$DEPLOY_DIR"
           }
           trap cleanup_deploy_dir EXIT
+          sweep_stale_deploy_dirs() {
+            local dir
+            shopt -s nullglob
+            for dir in /tmp/trader-agent-tools-*; do
+              if [[ "$dir" != "$DEPLOY_DIR" ]]; then
+                rm -rf -- "$dir"
+              fi
+            done
+            for dir in /tmp/trader-agent-tools-*; do
+              if [[ "$dir" != "$DEPLOY_DIR" ]]; then
+                echo "stale deploy dir remains after cleanup: $dir" >&2
+                return 1
+              fi
+            done
+            shopt -u nullglob
+          }
+          sweep_stale_deploy_dirs
           configure_shared_collab_dir() {
             local path="$1"
             sudo install -d -o root -g agent-lean -m 2770 "$path"
