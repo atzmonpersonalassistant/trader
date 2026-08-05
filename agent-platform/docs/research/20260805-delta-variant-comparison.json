@@ -397,7 +397,7 @@
                     "max_loss_pct": -98.0,
                     "mean_return_pct": 296.79,
                     "median_return_pct": -88.0,
-                    "no_delta_eligible_contract_count": 8,
+                    "untraded_event_no_delta_eligible_contract_count": 8,
                     "per_trade_return_pct": [
                         -97.62,
                         -88.0,
@@ -2886,7 +2886,7 @@
                     "max_loss_pct": -97.87,
                     "mean_return_pct": 28.16,
                     "median_return_pct": -34.78,
-                    "no_delta_eligible_contract_count": 21,
+                    "untraded_event_no_delta_eligible_contract_count": 21,
                     "per_trade_return_pct": [
                         -84.38,
                         161.9,
@@ -4174,7 +4174,7 @@
                     "max_loss_pct": -97.78,
                     "mean_return_pct": -49.95,
                     "median_return_pct": -87.34,
-                    "no_delta_eligible_contract_count": 11,
+                    "untraded_event_no_delta_eligible_contract_count": 11,
                     "per_trade_return_pct": [
                         -66.67,
                         -87.18,
@@ -5563,7 +5563,7 @@
                     "max_loss_pct": -88.89,
                     "mean_return_pct": -75.31,
                     "median_return_pct": -88.89,
-                    "no_delta_eligible_contract_count": 16,
+                    "untraded_event_no_delta_eligible_contract_count": 16,
                     "per_trade_return_pct": [
                         -88.89,
                         -48.15,
@@ -6052,7 +6052,7 @@
                     "max_loss_pct": -97.96,
                     "mean_return_pct": -65.11,
                     "median_return_pct": -75.52,
-                    "no_delta_eligible_contract_count": 16,
+                    "untraded_event_no_delta_eligible_contract_count": 16,
                     "per_trade_return_pct": [
                         -74.36,
                         -76.67,
@@ -7236,7 +7236,7 @@
                     "max_loss_pct": -97.83,
                     "mean_return_pct": -93.95,
                     "median_return_pct": -93.55,
-                    "no_delta_eligible_contract_count": 0,
+                    "untraded_event_no_delta_eligible_contract_count": 0,
                     "per_trade_return_pct": [
                         -97.83,
                         -90.48,
@@ -7720,7 +7720,7 @@
                     "max_loss_pct": -95.0,
                     "mean_return_pct": 73.47,
                     "median_return_pct": -68.88,
-                    "no_delta_eligible_contract_count": 0,
+                    "untraded_event_no_delta_eligible_contract_count": 0,
                     "per_trade_return_pct": [
                         -93.33,
                         526.67,
