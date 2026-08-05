@@ -277,6 +277,13 @@ jobs:
           sudo rm -f /usr/local/bin/earnings-qc-daily-run.sh /usr/local/bin/earnings-otm-daily-root.sh
           sudo rm -f /agents/research/bin/earnings-qc-options-full-scan /agents/research/bin/earnings-qc-options-scan /agents/research/bin/earnings-qc-multiyear-backtest
           sudo install -d -o agent-research -g agent-research -m 750 /agents/research/state/earnings-qc-research /agents/research/logs/earnings-qc-research
+          sudo tee /agents/research/state/earnings-qc-research/daily-schedule.env >/dev/null <<'EOF_DAILY_SCHEDULE'
+          DAILY_RUN_SCHEDULE_TZ=Asia/Jerusalem
+          DAILY_RUN_SCHEDULE_HOUR=6
+          DAILY_RUN_SCHEDULE_MINUTE=0
+          EOF_DAILY_SCHEDULE
+          sudo chown agent-research:agent-research /agents/research/state/earnings-qc-research/daily-schedule.env
+          sudo chmod 640 /agents/research/state/earnings-qc-research/daily-schedule.env
           sudo tee /agents/research/bin/earnings-otm-daily.sh >/dev/null <<'EOF_DAILY_EARNINGS'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -311,16 +318,13 @@ jobs:
             /# BEGIN trader managed LLM research watchdog/ {skip=1; next}
             /# END trader managed LLM research watchdog/ {skip=0; next}
             /^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
+            /^0 6 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
             /^\*\/30 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/5 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/15 \* \* \* \* \/agents\/research\/bin\/earnings-llm-research-watchdog/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
-          # BEGIN trader managed daily earnings research
-          CRON_TZ=Asia/Jerusalem
-          0 6 * * * /agents/research/bin/earnings-otm-daily.sh
-          # END trader managed daily earnings research
           # BEGIN trader managed LLM postrun review
           CRON_TZ=Asia/Jerusalem
           */5 * * * * /agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1
@@ -332,6 +336,32 @@ jobs:
           EOF_RESEARCH_CRON
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
           rm -f "$tmp_research_cron" "$tmp_research_cron_new"
+          sudo tee /etc/systemd/system/earnings-otm-daily.service >/dev/null <<'EOF_DAILY_SERVICE'
+          [Unit]
+          Description=Daily earnings OTM research scan
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          User=agent-research
+          Group=agent-research
+          ExecStart=/agents/research/bin/earnings-otm-daily.sh
+          EOF_DAILY_SERVICE
+          sudo tee /etc/systemd/system/earnings-otm-daily.timer >/dev/null <<'EOF_DAILY_TIMER'
+          [Unit]
+          Description=Run daily earnings OTM research scan at 06:00 Asia/Jerusalem
+
+          [Timer]
+          OnCalendar=*-*-* 06:00:00
+          Timezone=Asia/Jerusalem
+          Unit=earnings-otm-daily.service
+
+          [Install]
+          WantedBy=timers.target
+          EOF_DAILY_TIMER
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now earnings-otm-daily.timer
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
@@ -615,9 +645,19 @@ jobs:
           bash -n /usr/local/bin/trading-orchestrator-tick
           test ! -e /usr/local/bin/earnings-qc-daily-run.sh
           test ! -e /usr/local/bin/earnings-otm-daily-root.sh
+          systemctl is-enabled --quiet earnings-otm-daily.timer
+          systemctl is-active --quiet earnings-otm-daily.timer
+          systemctl cat earnings-otm-daily.timer | grep -q '^Timezone=Asia/Jerusalem$'
+          systemctl cat earnings-otm-daily.timer | grep -q '^OnCalendar=\*-\*-\* 06:00:00$'
+          grep -q '^DAILY_RUN_SCHEDULE_TZ=Asia/Jerusalem$' /agents/research/state/earnings-qc-research/daily-schedule.env
+          grep -q '^DAILY_RUN_SCHEDULE_HOUR=6$' /agents/research/state/earnings-qc-research/daily-schedule.env
+          grep -q '^DAILY_RUN_SCHEDULE_MINUTE=0$' /agents/research/state/earnings-qc-research/daily-schedule.env
           if sudo crontab -l >/tmp/trader-root-crontab.txt 2>/dev/null; then
             ! grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
             ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
+          fi
+          if sudo -n -u agent-research crontab -l >/tmp/trader-research-crontab.txt 2>/dev/null; then
+            ! grep -q '/agents/research/bin/earnings-otm-daily.sh' /tmp/trader-research-crontab.txt
           fi
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/bin/qc_cloud_capacity.py /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan

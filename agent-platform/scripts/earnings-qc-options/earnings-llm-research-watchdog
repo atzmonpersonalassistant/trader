@@ -103,8 +103,10 @@ LOCK="${STATE_DIR}/earnings-llm-research-watchdog.lock"
 STALE_RUNNING_SECONDS="${EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS:-10800}"
 MISSING_RUN_GRACE_SECONDS="${EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS:-10800}"
 DAILY_RUN_COMMAND="/agents/research/bin/earnings-otm-daily.sh"
-# Fallback for the managed cron entry in .github/workflows/vps-deploy.yml:
-# 0 6 * * * /agents/research/bin/earnings-otm-daily.sh
+# Fallback for the managed systemd timer in .github/workflows/vps-deploy.yml:
+# OnCalendar=*-*-* 06:00:00, Timezone=Asia/Jerusalem
+DAILY_RUN_SCHEDULE_FILE="${EARNINGS_WATCHDOG_DAILY_SCHEDULE_FILE:-/agents/research/state/earnings-qc-research/daily-schedule.env}"
+DAILY_RUN_DEFAULT_TZ=Asia/Jerusalem
 DAILY_RUN_DEFAULT_MINUTE=0
 DAILY_RUN_DEFAULT_HOUR=6
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
@@ -115,8 +117,23 @@ if ! flock -n 9; then
   exit 0
 fi
 
-daily_run_schedule_hm() {
-  local line schedule minute hour
+daily_run_schedule() {
+  local line schedule minute hour tz
+  minute=""
+  hour=""
+  tz=""
+  if [[ -r "$DAILY_RUN_SCHEDULE_FILE" ]]; then
+    # shellcheck disable=SC1090
+    . "$DAILY_RUN_SCHEDULE_FILE"
+    minute="${DAILY_RUN_SCHEDULE_MINUTE:-}"
+    hour="${DAILY_RUN_SCHEDULE_HOUR:-}"
+    tz="${DAILY_RUN_SCHEDULE_TZ:-}"
+  fi
+  if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 && "$tz" =~ ^[A-Za-z0-9_./+-]+$ ]]; then
+    printf '%s|%s|%s\n' "$minute" "$hour" "$tz"
+    return
+  fi
+
   if [[ -n "${EARNINGS_WATCHDOG_DAILY_CRON_LINE:-}" ]]; then
     line="$EARNINGS_WATCHDOG_DAILY_CRON_LINE"
   elif command -v crontab >/dev/null 2>&1; then
@@ -136,12 +153,12 @@ daily_run_schedule_hm() {
     minute="${schedule%%|*}"
     hour="${schedule#*|}"
     if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
-      printf '%s|%s\n' "$minute" "$hour"
+      printf '%s|%s|%s\n' "$minute" "$hour" "$DAILY_RUN_DEFAULT_TZ"
       return
     fi
   fi
 
-  printf '%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR"
+  printf '%s|%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR" "$DAILY_RUN_DEFAULT_TZ"
 }
 
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
@@ -171,15 +188,15 @@ LIMIT 1;
 ")"
 
 if [[ -z "$RUN_STATE" ]]; then
-  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR <<< "$(daily_run_schedule_hm)"
-  DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE")"
-  MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
+  IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR DAILY_RUN_TZ <<< "$(daily_run_schedule)"
+  DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d %s' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$DAILY_RUN_TZ")"
+  MISSING_ROW_STATE="$(python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$DAILY_RUN_TZ" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_WATCHDOG_NOW:-}" <<'PY'
 import datetime as dt
 import sys
 from zoneinfo import ZoneInfo
 
-date_s, hour_s, minute_s, grace_s, now_s = sys.argv[1:6]
-tz = ZoneInfo("Asia/Jerusalem")
+date_s, hour_s, minute_s, tz_s, grace_s, now_s = sys.argv[1:7]
+tz = ZoneInfo(tz_s)
 run_date = dt.date.fromisoformat(date_s)
 due_at = dt.datetime.combine(run_date, dt.time(int(hour_s), int(minute_s)), tzinfo=tz)
 deadline = due_at + dt.timedelta(seconds=int(grace_s))
