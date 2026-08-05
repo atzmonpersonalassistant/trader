@@ -1226,8 +1226,20 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(trade["iv_change_pct"], 75.0)
         self.assertEqual(trade["iv_days_to_expiry_entry"], 31)
         self.assertEqual(trade["iv_days_to_expiry_exit"], 5)
+        self.assertEqual(trade["strike"], 110.0)
+        self.assertEqual(trade["entry_strike_spot_ratio"], round(110.0 / 101.0, 4))
+        self.assertEqual(trade["exit_strike_spot_ratio"], 1.1)
+        self.assertEqual(trade["entry_delta"], 0.30)
+        self.assertEqual(trade["exit_delta"], 0.30)
+        self.assertIsNotNone(trade["iv_baseline_entry"])
+        self.assertIsNotNone(trade["iv_excess_entry_pct"])
         self.assertIsNotNone(trade["iv_baseline_exit"])
         self.assertIsNotNone(trade["iv_excess_pct"])
+        self.assertAlmostEqual(
+            trade["iv_excess_change_pct"],
+            trade["iv_excess_pct"] - trade["iv_excess_entry_pct"],
+            places=2,
+        )
         self.assertEqual(trade["iv_baseline_inputs"]["status"], "OK")
         self.assertGreater(trade["iv_baseline_inputs"]["ordinary_daily_variance_sample_size"], 0)
         self.assertEqual(trade["iv_baseline_inputs"]["earnings_jump_variance_sample_size"], 1)
@@ -1284,8 +1296,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 iv_inputs,
             )
             self.assertEqual(fields["iv_days_to_expiry_exit"], dte_exit)
+            self.assertAlmostEqual(fields["iv_baseline_entry"], annual_vol, delta=0.001)
             self.assertAlmostEqual(fields["iv_baseline_exit"], annual_vol, delta=0.001)
+            self.assertAlmostEqual(fields["iv_excess_entry_pct"], 0.0, delta=0.01)
             self.assertAlmostEqual(fields["iv_excess_pct"], 0.0, delta=0.01)
+            self.assertAlmostEqual(fields["iv_excess_change_pct"], 0.0, delta=0.01)
 
     def test_multiyear_stop_loss_next_day_final_day_fallback_uses_breach_day(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
