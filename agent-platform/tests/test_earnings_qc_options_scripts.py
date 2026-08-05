@@ -169,6 +169,19 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("SCANNER = pathlib.Path('/agents/research/bin/earnings-qc-options-scan')", cli)
         self.assertNotIn("MULTIYEAR = pathlib.Path('/agents/research/bin/earnings-qc-multiyear-backtest')", cli)
 
+    def test_research_db_exec_sends_large_sql_on_stdin(self):
+        mod = load_script("earnings-qc-research")
+        large_sql = "SELECT '" + ("x" * 200000) + "';"
+        completed = types.SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+        with mock.patch.object(mod.shutil, "which", return_value="/usr/bin/psql"), \
+             mock.patch.object(mod.subprocess, "run", return_value=completed) as run:
+            out = mod.db_exec(large_sql, fetch=True)
+
+        self.assertEqual(out, "ok\n")
+        args, kwargs = run.call_args
+        self.assertNotIn("-c", args[0])
+        self.assertEqual(kwargs["input"], large_sql)
+
     def test_research_cli_exposes_llm_research_commands(self):
         mod = load_script("earnings-qc-research")
         parser = mod.build_parser()
