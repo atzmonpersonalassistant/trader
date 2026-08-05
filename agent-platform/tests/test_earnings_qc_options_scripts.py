@@ -943,6 +943,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("stop_loss_next_day_trades", main)
         self.assertIn("stop_loss_mean_slippage_pct", main)
         self.assertIn("stop_loss_worst_slippage_pct", main)
+        self.assertIn("stop_loss_fill_model_limitation", main)
+        self.assertIn("Daily-bar stop-loss variants observe and fill from daily snapshots", main)
         self.assertIn("stop_loss_report_metrics=next_overall", main)
         self.assertIn("'same_day': dict(same_overall", main)
         self.assertIn("'next_day': dict(next_overall", main)
@@ -1607,6 +1609,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(result["trades"][0]["stop_loss_fill_model"], "next_day")
         self.assertEqual(result["unstopped_comparison"]["per_trade_return_pct"], [125.0])
         self.assertEqual(result["stop_loss_max_loss_pct"], -50.0)
+        self.assertEqual(
+            result["stop_loss_fill_model_limitation"],
+            "Daily-bar stop-loss variants observe and fill from daily snapshots, not true intraday stop prices, which can flatter stopped variants.",
+        )
 
         full = load_script("earnings-qc-research")
         self.assertFalse(full.multiyear_result_passes(result))
