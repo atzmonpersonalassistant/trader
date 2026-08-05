@@ -102,6 +102,7 @@ def hist_params(params:dict|None) -> dict:
         'max_contracts': int(max_contracts) if max_contracts is not None else 3,
         'stop_loss_max_loss_pct': stop_loss_max_loss_pct,
         'option_resolution': qc_resolution_expr(p.get('option_resolution') or p.get('historical_resolution'), 'daily'),
+        'delta_target': float(p.get('delta_target') if p.get('delta_target') is not None else 0.25),
         # No public --final-* CLI flags exist today; keep scanner and generated QC defaults tied to the same env values.
         'final_min_sample_size': int(p.get('final_min_sample_size') if p.get('final_min_sample_size') is not None else os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
         'final_max_dropout_pct': float(p.get('final_max_dropout_pct') if p.get('final_max_dropout_pct') is not None else os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')),
@@ -127,7 +128,7 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     option_right_setting_marker = f"        self.max_spread_pct = {hp['max_spread_pct']:.6f}\n"
     if option_right_setting_marker not in code:
         raise RuntimeError('generated multiyear option-right setting marker not found')
-    code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n", 1)
+    code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n        self.delta_target = {hp['delta_target']:.6f}\n", 1)
     contract_fields_marker = '        self.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta")'
     if contract_fields_marker not in code:
         raise RuntimeError('generated multiyear contract-fields marker not found')
@@ -178,7 +179,7 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     parameters_marker = f'"parameters":{{"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}'
     if parameters_marker not in code:
         raise RuntimeError('generated multiyear parameters marker not found')
-    code = code.replace(parameters_marker, f'"parameters":{{"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
+    code = code.replace(parameters_marker, f'"parameters":{{"delta_target":{hp["delta_target"]:.6f},"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
     payload_marker = '\n        payload={"type":"earnings_qc_multiyear_backtest"'
     if payload_marker not in code:
         raise RuntimeError('generated multiyear payload marker not found')
@@ -206,6 +207,12 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     def rounded_float(self, value):
         v=self.positive_float(value)
         return round(v,4) if v is not None else None
+    def delta_distance(self, quote):
+        try:
+            delta=self.qget(quote,'delta')
+            return abs(float(delta)-float(self.delta_target)) if delta is not None else None
+        except Exception:
+            return None
 """
     code = code.replace(iv_helper_marker, iv_helpers + "    def iv_trade_fields(self, entry_iv_raw, exit_iv_raw, entry_day, exit_day, expiry, iv_inputs, strike_raw=None, entry_underlying_raw=None, exit_underlying_raw=None, entry_delta_raw=None, exit_delta_raw=None):", 1)
     old_iv_body = """        dv=(iv_inputs or {}).get('ordinary_daily_variance')
@@ -266,6 +273,89 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     code = code.replace(
         stop_loss_result_marker,
         '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"window_results":windows',
+        1,
+    )
+    delta_lists_marker = "trades=[]; stop_loss_same_day_trades=[]; stop_loss_next_day_trades=[]; blockers={}"
+    if delta_lists_marker not in code:
+        raise RuntimeError('generated delta-targeted list marker not found')
+    code = code.replace(
+        delta_lists_marker,
+        "trades=[]; delta_targeted_trades=[]; stop_loss_same_day_trades=[]; stop_loss_next_day_trades=[]; blockers={}; delta_targeted_blockers={}",
+        1,
+    )
+    delta_no_eligible_marker = "                    if not eligible:\n                        blockers['no_eligible_entry_contract']=blockers.get('no_eligible_entry_contract',0)+1; continue"
+    if delta_no_eligible_marker not in code:
+        raise RuntimeError('generated delta-targeted no-eligible marker not found')
+    code = code.replace(
+        delta_no_eligible_marker,
+        "                    if not eligible:\n                        blockers['no_eligible_entry_contract']=blockers.get('no_eligible_entry_contract',0)+1\n                        delta_targeted_blockers['no_delta_eligible_contract']=delta_targeted_blockers.get('no_delta_eligible_contract',0)+1\n                        continue",
+        1,
+    )
+    delta_select_marker = "                    ent=eligible[0]\n                    report_time=str(ev.get('report_time'))"
+    if delta_select_marker not in code:
+        raise RuntimeError('generated delta-targeted selection marker not found')
+    code = code.replace(
+        delta_select_marker,
+        "                    ent=eligible[0]\n                    delta_eligible=[q for q in eligible if self.delta_distance(q) is not None]\n                    if delta_eligible:\n                        delta_ent=sorted(delta_eligible, key=lambda q:(self.delta_distance(q), q['ask']))[0]\n                    else:\n                        delta_ent=None\n                        delta_targeted_blockers['no_delta_eligible_contract']=delta_targeted_blockers.get('no_delta_eligible_contract',0)+1\n                    report_time=str(ev.get('report_time'))",
+        1,
+    )
+    baseline_variant_marker = "trade.update(self.iv_trade_fields(ent.get('iv'), self.qget(exq,'iv'), entry_day, exit_day, expiry, iv_inputs, ent.get('strike'), entry_underlying, exit_underlying, ent.get('delta'), self.qget(exq,'delta')))"
+    if baseline_variant_marker not in code:
+        raise RuntimeError('generated baseline selection-variant marker not found')
+    code = code.replace(
+        baseline_variant_marker,
+        baseline_variant_marker + "\n                    trade['selection_variant']='baseline_ask_required_move'",
+        1,
+    )
+    delta_trade_marker = "                    trades.append(trade)\n                except Exception as e:"
+    if delta_trade_marker not in code:
+        raise RuntimeError('generated delta-targeted trade insertion marker not found')
+    code = code.replace(
+        delta_trade_marker,
+        """                    trades.append(trade)
+                    if delta_ent is not None:
+                        delta_exit_day, delta_exq, delta_und = self.quote_on_or_before(sym, delta_ent['symbol'], planned_exit_date)
+                        if delta_exq is None:
+                            delta_targeted_blockers['missing_exit_quote']=delta_targeted_blockers.get('missing_exit_quote',0)+1
+                        else:
+                            delta_entry_price=float(delta_ent['ask'])
+                            delta_exit_price=float(self.qget(delta_exq,'bid') or self.qget(delta_exq,'mid') or 0)
+                            if delta_entry_price <= 0 or delta_exit_price < 0:
+                                delta_targeted_blockers['bad_prices']=delta_targeted_blockers.get('bad_prices',0)+1
+                            else:
+                                delta_ret=(delta_exit_price/delta_entry_price-1.0)*100.0
+                                delta_exit_underlying=round(float(delta_und),4) if delta_und is not None else None
+                                delta_realized_move_pct=self.underlying_move_pct(entry_underlying, delta_exit_underlying)
+                                delta_expiry=datetime.strptime(delta_ent['expiry'],'%Y-%m-%d').date()
+                                delta_trade={"report_date":ev['report_date'],"entry_date":entry_day.isoformat(),"planned_exit_date":planned_exit_date.isoformat(),"actual_exit_date":delta_exit_day.isoformat(),"exit_date":delta_exit_day.isoformat(),"exit_days_shifted":(planned_exit_date-delta_exit_day).days,"contract":delta_ent['symbol'],"expiry":delta_ent['expiry'],"strike":delta_ent.get('strike'),"entry_ask":round(delta_entry_price,4),"exit_bid":round(delta_exit_price,4),"return_pct":round(delta_ret,2),"win":delta_ret>0,"required_move_pct":delta_ent['required_move_pct'],"entry_underlying":entry_underlying,"exit_underlying":delta_exit_underlying,"realized_move_pct":delta_realized_move_pct,"allowed_spread":delta_ent.get('allowed_spread'),"spread_mid_pct":delta_ent.get('spread_mid_pct'),"expected_option_move":delta_ent.get('expected_option_move'),"exit_policy":self.exit_policy,"exit_reason":exit_reason,"report_time":report_time,"stop_loss_triggered":False,"selection_variant":"delta_targeted","delta_target":self.delta_target,"delta_distance_to_target":round(self.delta_distance(delta_ent),4)}
+                                delta_trade.update(self.iv_trade_fields(delta_ent.get('iv'), self.qget(delta_exq,'iv'), entry_day, delta_exit_day, delta_expiry, iv_inputs, delta_ent.get('strike'), entry_underlying, delta_exit_underlying, delta_ent.get('delta'), self.qget(delta_exq,'delta')))
+                                delta_targeted_trades.append(delta_trade)
+                except Exception as e:""",
+        1,
+    )
+    delta_metrics_marker = f"            overall=metrics(trades,'all',{hp['final_min_sample_size']})\n            dropout_pct=round(max(0.0,(len(evs)-overall['sample_size'])/len(evs)*100.0),2) if evs else None"
+    if delta_metrics_marker not in code:
+        raise RuntimeError('generated delta-targeted metrics marker not found')
+    code = code.replace(
+        delta_metrics_marker,
+        f"""            overall=metrics(trades,'all',{hp['final_min_sample_size']})
+            dropout_pct=round(max(0.0,(len(evs)-overall['sample_size'])/len(evs)*100.0),2) if evs else None
+            delta_windows=[]
+            for wy in sorted(set([1,3,5,{years}])):
+                cutoff=datetime({end.year},{end.month},{end.day}).date()-timedelta(days=365*wy)
+                rows=[t for t in delta_targeted_trades if datetime.strptime(t['report_date'],'%Y-%m-%d').date() >= cutoff]
+                delta_windows.append(metrics(rows, str(wy)+'y_delta_targeted', 1))
+            delta_overall=metrics(delta_targeted_trades,'all_delta_targeted',{hp['final_min_sample_size']})
+            delta_dropout_pct=round(max(0.0,(len(evs)-delta_overall['sample_size'])/len(evs)*100.0),2) if evs else None
+            delta_targeted_comparison=dict(delta_overall, historical_event_count=len(evs), dropout_pct=delta_dropout_pct, no_delta_eligible_contract_count=delta_targeted_blockers.get('no_delta_eligible_contract',0), per_trade_return_pct=[t['return_pct'] for t in delta_targeted_trades], trades=delta_targeted_trades, window_results=delta_windows, blockers=delta_targeted_blockers, delta_target=self.delta_target)""",
+        1,
+    )
+    delta_result_marker = '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"window_results":windows'
+    if delta_result_marker not in code:
+        raise RuntimeError('generated delta-targeted result marker not found')
+    code = code.replace(
+        delta_result_marker,
+        '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"delta_targeted_comparison":delta_targeted_comparison,"window_results":windows',
         1,
     )
     (project_dir/'main.py').write_text(code)
@@ -344,8 +434,9 @@ def main(argv):
     ap.add_argument('--min-open-interest', type=int); ap.add_argument('--min-volume', type=int); ap.add_argument('--strike-range', default='-50:300')
     ap.add_argument('--min-expiration-days', type=int); ap.add_argument('--max-expiration-days', type=int); ap.add_argument('--max-expiry-after-earnings-days', type=int)
     ap.add_argument('--option-right', default='call', choices=['call','put','both'])
+    ap.add_argument('--delta-target', type=float)
     ap.add_argument('--stop-loss-max-loss-pct', type=float)
     args=ap.parse_args(argv); rd=pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
-    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','option_resolution','path_metrics','max_contracts','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','option_right','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
+    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','option_resolution','path_metrics','max_contracts','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','option_right','delta_target','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
     summary=run_backtest(rd,args.years,params=params); print(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)); return 0 if summary.get('ok') else 2
 if __name__=='__main__': raise SystemExit(main(__import__('sys').argv[1:]))

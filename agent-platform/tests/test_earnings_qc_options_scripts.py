@@ -117,6 +117,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.min_open_interest = 0
         alg.min_volume = 0
         alg.option_right = mod.hist_params(params)["option_right"]
+        alg.delta_target = mod.hist_params(params)["delta_target"]
         alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
         return alg
 
@@ -932,6 +933,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread = 0.350000", main)
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.option_right = 'call'", main)
+        self.assertIn("self.delta_target = 0.250000", main)
         self.assertIn("option_right_matches", main)
         self.assertNotIn("if c.right != OptionRight.CALL: continue", main)
         self.assertIn("self.min_open_interest = 11", main)
@@ -951,6 +953,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("overall=metrics(trades,'all',8)", main)
         self.assertIn("dropout_pct<=55.000000", main)
         self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
+        self.assertIn('"parameters":{"delta_target":0.250000,"option_right":', main)
+        self.assertIn("delta_targeted_comparison", main)
+        self.assertIn("no_delta_eligible_contract_count", main)
+        self.assertIn("delta_eligible=[q for q in eligible if self.delta_distance(q) is not None]", main)
         self.assertIn("windows.append(metrics(rows, str(wy)+'y', 1))", main)
         self.assertNotIn("overall['sample_size']>=12", main)
         self.assertNotIn("dropout_pct<=40", main)
@@ -1421,6 +1427,76 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             trade["realized_move_pct"],
             (trade["exit_underlying"] / trade["entry_underlying"] - 1.0) * 100.0,
         )
+
+    def test_multiyear_delta_targeted_comparison_keeps_baseline_trade_unchanged(self):
+        alg = self.build_multiyear_algorithm({"delta_target": 0.25})
+        baseline_entry = self.quote(
+            0.12,
+            0.13,
+            symbol="XYZ_CALL_105",
+            strike=105.0,
+            delta=0.02,
+        )
+        delta_entry = self.quote(
+            0.14,
+            0.15,
+            symbol="XYZ_CALL_115",
+            strike=115.0,
+            delta=0.25,
+        )
+        baseline_exit = dict(baseline_entry, bid=0.20, ask=0.21, mid=0.205)
+        delta_exit = dict(delta_entry, bid=0.45, ask=0.46, mid=0.455)
+        alg.snapshots = {
+            "XYZ": {
+                "2026-01-05": {"underlying": 100.0, "contracts": [baseline_entry, delta_entry]},
+                "2026-01-31": {"underlying": 110.0, "contracts": [baseline_exit, delta_exit]},
+            }
+        }
+
+        alg.on_end_of_algorithm()
+
+        payload = json.loads("".join(
+            alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
+            if k.startswith("multiyear_json_")
+        ))
+        result = payload["results"][0]
+        baseline_trade = result["trades"][0]
+        delta_comparison = result["delta_targeted_comparison"]
+        delta_trade = delta_comparison["trades"][0]
+
+        self.assertEqual(baseline_trade["contract"], "XYZ_CALL_105")
+        self.assertEqual(baseline_trade["selection_variant"], "baseline_ask_required_move")
+        self.assertEqual(result["per_trade_return_pct"], [53.85])
+        self.assertEqual(delta_trade["contract"], "XYZ_CALL_115")
+        self.assertEqual(delta_trade["selection_variant"], "delta_targeted")
+        self.assertEqual(delta_trade["delta_target"], 0.25)
+        self.assertEqual(delta_trade["delta_distance_to_target"], 0.0)
+        self.assertEqual(delta_comparison["per_trade_return_pct"], [200.0])
+        self.assertEqual(delta_comparison["sample_size"], 1)
+        self.assertEqual(delta_comparison["dropout_pct"], 0.0)
+        self.assertEqual(delta_comparison["no_delta_eligible_contract_count"], 0)
+
+    def test_multiyear_delta_targeted_comparison_reports_no_delta_eligible_dropouts(self):
+        alg = self.build_multiyear_algorithm()
+        alg.snapshots = {
+            "XYZ": {
+                "2026-01-05": {
+                    "underlying": 100.0,
+                    "contracts": [self.quote(0.01, 0.02, symbol="XYZ_CALL_110")],
+                }
+            }
+        }
+
+        alg.on_end_of_algorithm()
+
+        payload = json.loads("".join(
+            alg.runtime_statistics[k] for k in sorted(alg.runtime_statistics)
+            if k.startswith("multiyear_json_")
+        ))
+        delta_comparison = payload["results"][0]["delta_targeted_comparison"]
+        self.assertEqual(delta_comparison["sample_size"], 0)
+        self.assertEqual(delta_comparison["dropout_pct"], 100.0)
+        self.assertEqual(delta_comparison["no_delta_eligible_contract_count"], 1)
 
     def test_multiyear_trade_records_entry_exit_iv_and_baseline_excess(self):
         alg = self.build_multiyear_algorithm()
@@ -2335,7 +2411,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_resolution="hour", option_right="put", max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_resolution="hour", option_right="put", delta_target=0.25, max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
@@ -2346,6 +2422,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("hour", argv)
         self.assertIn("--option-right", argv)
         self.assertIn("put", argv)
+        self.assertIn("--delta-target", argv)
+        self.assertIn("0.25", argv)
         self.assertIn("--max-contracts", argv)
         self.assertIn("3", argv)
         self.assertIn("--max-premium", argv)
