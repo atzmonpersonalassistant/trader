@@ -139,6 +139,12 @@ manifest = {
     "ok": True,
     "status": "generated_probe_pending_execution",
     "extraction_status": "execution_attempt_pending",
+    "auth_status": "not_checked",
+    "cloud_status": "not_checked",
+    "docker_status": "not_checked",
+    "execution_surface": None,
+    "execution_rc": None,
+    "surface_attempts": [],
     "extraction_reason": "The broker generated a bounded QC/QuantBook extraction artifact and will attempt the available non-interactive local execution surfaces before handing work to the offline runner.",
     "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "candidate": {
@@ -350,6 +356,10 @@ PY
   execution_surface="local_python_quantbook_script"
   execution_rc=127
   local_python_runtime_status="not_checked"
+  cloud_execution_rc=""
+  local_execution_rc=""
+  docker_execution_rc=""
+  docker_command_attempted=false
   cloud_status="not_checked"
   if [[ "${TRADING_RESEARCH_FORCE_QC_CLOUD_EXTRACT:-1}" == "1" && "$auth_status" == "authenticated" && -x /usr/local/bin/trading-research-qc-cloud-extract ]]; then
     cloud_status="attempted_qc_cloud_backtest"
@@ -357,6 +367,7 @@ PY
     set +e
     /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
     execution_rc=$?
+    cloud_execution_rc=$execution_rc
     set -e
     if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
       python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PYVALIDATE'
@@ -390,22 +401,25 @@ PYVALIDATE
       cloud_status="qc_cloud_execution_failed"
     fi
   fi
-  if [[ "$execution_status" != "extract_written" ]] && command -v python3 >/dev/null 2>&1; then
-    if /usr/bin/timeout 20s python3 - <<'PY' 2>"$PY_IMPORT_STDERR"
+  if [[ "$execution_status" != "extract_written" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      execution_surface="local_python_quantbook_script"
+      if /usr/bin/timeout 20s python3 - <<'PY' 2>"$PY_IMPORT_STDERR"
 import clr  # noqa: F401
 import QuantConnect  # noqa: F401
 PY
-    then
-      local_python_runtime_status="quantconnect_python_runtime_present"
-    else
-      local_python_runtime_status="quantconnect_python_runtime_missing"
-    fi
-    set +e
-    (cd "$EXEC_DIR" && /usr/bin/timeout 120s python3 qc_option_history_probe.py >"$EXEC_STDOUT" 2>"$EXEC_STDERR")
-    execution_rc=$?
-    set -e
-    if [[ "$execution_rc" == "0" && -s "$EXEC_DIR/qc_option_history_extract.json" ]]; then
-      python3 - "$EXEC_DIR/qc_option_history_extract.json" "$TMP_EXTRACT" <<'PY'
+      then
+        local_python_runtime_status="quantconnect_python_runtime_present"
+      else
+        local_python_runtime_status="quantconnect_python_runtime_missing"
+      fi
+      set +e
+      (cd "$EXEC_DIR" && /usr/bin/timeout 120s python3 qc_option_history_probe.py >"$EXEC_STDOUT" 2>"$EXEC_STDERR")
+      execution_rc=$?
+      local_execution_rc=$execution_rc
+      set -e
+      if [[ "$execution_rc" == "0" && -s "$EXEC_DIR/qc_option_history_extract.json" ]]; then
+        python3 - "$EXEC_DIR/qc_option_history_extract.json" "$TMP_EXTRACT" <<'PY'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 payload = json.load(open(src, encoding="utf-8"))
@@ -424,11 +438,12 @@ if len(rows) > max(1, len(underlyings)) * 200:
     raise SystemExit("extract exceeds contract row limit")
 open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 PY
-      mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-      execution_status="extract_written"
+        mv "$TMP_EXTRACT" "$OUT_EXTRACT"
+        execution_status="extract_written"
+      fi
+    else
+      local_python_runtime_status="python_missing"
     fi
-  else
-    local_python_runtime_status="python_missing"
   fi
 
   if [[ "$cloud_status" == "not_checked" && "$execution_status" != "extract_written" && "$auth_status" == "authenticated" && -x /usr/local/bin/trading-research-qc-cloud-extract ]]; then
@@ -437,6 +452,7 @@ PY
     set +e
     /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
     execution_rc=$?
+    cloud_execution_rc=$execution_rc
     set -e
     if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
       python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PY'
@@ -476,9 +492,11 @@ PY
     else
       docker_status="attempted_configured_quantconnect_lean_image"
       execution_surface="lean_docker_quantconnect_python_runtime"
+      docker_command_attempted=true
       set +e
       sudo -n "$QC_LEAN_DOCKER_WRAPPER" "$RUN_REAL" "$docker_image" >"$EXEC_STDOUT" 2>"$DOCKER_WRAPPER_LOG"
       execution_rc=$?
+      docker_execution_rc=$execution_rc
       set -e
       cat "$DOCKER_WRAPPER_LOG" >>"$EXEC_STDERR"
       wrapper_status="$(python3 - "$EXEC_STDOUT" "$DOCKER_WRAPPER_LOG" <<'PY'
@@ -645,12 +663,44 @@ PY
     mv "$TMP_EXEC_DIAG" "$OUT_EXEC_DIAG"
   fi
 
-  python3 - "$OUT_JSON" "$OUT_MD" "$execution_status" "${OUT_EXEC_DIAG#$RUN_REAL/}" "${OUT_EXTRACT#$RUN_REAL/}" <<'PY'
+  python3 - "$OUT_JSON" "$OUT_MD" "$execution_status" "${OUT_EXEC_DIAG#$RUN_REAL/}" "${OUT_EXTRACT#$RUN_REAL/}" "$auth_status" "$cloud_status" "$docker_status" "$execution_surface" "$execution_rc" "$cloud_execution_rc" "$local_python_runtime_status" "$local_execution_rc" "$docker_execution_rc" "$docker_command_attempted" <<'PY'
 import json, sys
 from pathlib import Path
-manifest_path, summary_path, execution_status, diag_rel, extract_rel = sys.argv[1:]
+(
+    manifest_path,
+    summary_path,
+    execution_status,
+    diag_rel,
+    extract_rel,
+    auth_status,
+    cloud_status,
+    docker_status,
+    execution_surface,
+    execution_rc,
+    cloud_execution_rc,
+    local_python_runtime_status,
+    local_execution_rc,
+    docker_execution_rc,
+    docker_command_attempted,
+) = sys.argv[1:]
 manifest = json.load(open(manifest_path, encoding="utf-8"))
 summary = Path(summary_path).read_text(encoding="utf-8").splitlines()
+def maybe_int(value):
+    return int(value) if value != "" else None
+
+manifest["auth_status"] = auth_status
+manifest["cloud_status"] = cloud_status
+manifest["docker_status"] = docker_status
+manifest["execution_surface"] = execution_surface
+manifest["execution_rc"] = int(execution_rc)
+surface_attempts = []
+if cloud_status != "not_checked":
+    surface_attempts.append({"surface": "qc_cloud_backtest", "status": cloud_status, "exit_code": maybe_int(cloud_execution_rc)})
+if local_execution_rc != "":
+    surface_attempts.append({"surface": "local_python_quantbook_script", "status": local_python_runtime_status, "exit_code": maybe_int(local_execution_rc)})
+if docker_command_attempted == "true":
+    surface_attempts.append({"surface": "lean_docker_quantconnect_python_runtime", "status": docker_status, "exit_code": maybe_int(docker_execution_rc)})
+manifest["surface_attempts"] = surface_attempts
 if execution_status == "extract_written":
     manifest["status"] = "executed_extract_available"
     manifest["extraction_status"] = "extract_written"
