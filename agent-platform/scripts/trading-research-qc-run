@@ -9,6 +9,8 @@ and writes auditable evidence/verdict artifacts.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
 import os
@@ -21,11 +23,14 @@ import time
 import copy
 import tarfile
 import fcntl
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
+QC_API_BASE = "https://www.quantconnect.com/api/v2/"
 REPORTS_ROOT = Path(os.environ.get("TRADING_RESEARCH_REPORTS_DIR", "/agents/research/reports"))
 LEAN_WORKSPACE = Path(os.environ.get("TRADING_RESEARCH_LEAN_WORKSPACE", "/agents/research/lean-workspace"))
 QC_CLOUD_RUN = os.environ.get("TRADING_QC_CLOUD_RUN", "/usr/local/bin/trading-research-qc-cloud-run")
@@ -1238,6 +1243,53 @@ def _sanitize_text(text: str, env: dict[str, str] | None = None) -> str:
     return text[:12000]
 
 
+def _timeout_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return value or ""
+
+
+def _extract_backtest_id(text: str) -> str | None:
+    return parse_backtest_ids(text)[1]
+
+
+def _delete_qc_backtest_if_known(project_id: int | None, backtest_id: str | None, env: dict[str, str]) -> dict[str, Any]:
+    if not project_id:
+        return {"attempted": False, "reason": "project_id_missing"}
+    if not backtest_id:
+        return {"attempted": False, "reason": "backtest_id_missing"}
+    result: dict[str, Any] = {"attempted": True, "project_id": project_id, "backtest_id": backtest_id}
+    try:
+        _qc_api_with_env(env, "POST", "backtests/delete", {"projectId": project_id, "backtestId": backtest_id})
+        result["deleted"] = True
+    except Exception as exc:
+        result["deleted"] = False
+        result["error"] = _sanitize_text(str(exc), env)
+    return result
+
+
+def _qc_api_with_env(env: dict[str, str], method: str, endpoint: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    user_id = env["QUANTCONNECT_USER_ID"]
+    token = env["QUANTCONNECT_API_TOKEN"]
+    timestamp = str(int(time.time()))
+    password = hashlib.sha256(f"{token}:{timestamp}".encode()).hexdigest()
+    headers = {"Timestamp": timestamp, "User-Agent": "trader-qc-run"}
+    url = urllib.parse.urljoin(QC_API_BASE, endpoint)
+    data = None
+    if method.upper() == "GET" and payload:
+        url += "?" + urllib.parse.urlencode(payload)
+    elif payload:
+        data = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    request.add_header("Authorization", "Basic " + base64.b64encode(f"{user_id}:{password}".encode()).decode())
+    with urllib.request.urlopen(request, timeout=90) as response:
+        out = json.loads(response.read().decode("utf-8", "replace"))
+    if not out.get("success"):
+        raise RuntimeError(json.dumps({k: out.get(k) for k in ["errors", "messages", "Message"]}, ensure_ascii=False))
+    return out
+
+
 def qc_backtest_timeout_seconds() -> int:
     raw = os.environ.get("TRADING_QC_BACKTEST_TIMEOUT_SECONDS", "900")
     try:
@@ -1254,6 +1306,7 @@ def _run_prepared_qc_project(run_dir: Path) -> int:
     lean_root = LEAN_WORKSPACE.resolve(strict=False)
     require(lean_root == project_dir or lean_root in project_dir.parents, "prepared QC project must be under Lean workspace")
     project_ref = str(cloud_manifest.get("project_ref") or cloud_manifest.get("project_name") or project_dir.name)
+    project_id = int(cloud_manifest["project_id"]) if str(cloud_manifest.get("project_id") or "").strip() else None
     require(project_dir.exists() and (project_dir / "main.py").exists(), "prepared QC project missing main.py")
     env = _load_qc_env()
     timeout_seconds = qc_backtest_timeout_seconds()
@@ -1281,8 +1334,19 @@ def _run_prepared_qc_project(run_dir: Path) -> int:
             err_text += "\n" + (bt.stderr or "")
             backtest_rc = bt.returncode
         except subprocess.TimeoutExpired as exc:
-            out_text += "\n" + ((exc.stdout or "") if isinstance(exc.stdout, str) else "")
+            timed_out_stdout = _timeout_text(exc.stdout)
+            timed_out_stderr = _timeout_text(exc.stderr)
+            out_text += "\n" + timed_out_stdout
+            err_text += "\n" + timed_out_stderr
             err_text += "\nlean cloud backtest timed out after " + str(timeout_seconds) + " seconds"
+            timed_out_text = timed_out_stdout + "\n" + timed_out_stderr
+            parsed_project_id, backtest_id = parse_backtest_ids(timed_out_text)
+            project_id = project_id or parsed_project_id
+            if project_id:
+                cloud_manifest["project_id"] = project_id
+            if backtest_id:
+                cloud_manifest["backtest_id"] = backtest_id
+            cloud_manifest["timeout_cleanup"] = _delete_qc_backtest_if_known(project_id, backtest_id, env)
             backtest_rc = 124
     stdout_path.write_text(_sanitize_text(out_text, env), encoding="utf-8")
     stderr_path.write_text(_sanitize_text(err_text, env), encoding="utf-8")
