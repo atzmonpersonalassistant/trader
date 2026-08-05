@@ -197,6 +197,11 @@ def persist_candidates(campaign_id: str, run_id: str, summary: dict) -> None:
     final = summary.get('final_candidates') or summary.get('candidates') or []
     forward = summary.get('forward_candidates') or []
     hist_by_symbol = {r.get('symbol'): r for r in ((summary.get('multiyear_backtest') or {}).get('results') or []) if r.get('symbol')}
+    gate_by_symbol = {
+        item.get('symbol'): item
+        for item in (summary.get('final_candidate_gate_evaluations') or [])
+        if isinstance(item, dict) and item.get('symbol')
+    }
     final_keys = {(c.get('symbol'), c.get('earnings_date') or c.get('report_date')) for c in final}
     seen = set()
     combined = []
@@ -208,8 +213,11 @@ def persist_candidates(campaign_id: str, run_id: str, summary: dict) -> None:
     for c in combined:
         sym = c.get('symbol') or 'UNKNOWN'; rd = c.get('earnings_date') or c.get('report_date'); cid = stable_id('candidate', run_id, sym, rd)
         verdict = 'final_candidate' if (sym, rd) in final_keys else 'forward_only_not_final'
+        metrics = candidate_metrics_projection(c)
+        if sym in gate_by_symbol:
+            metrics['final_candidate_gate_evaluation'] = gate_by_symbol[sym]
         db_exec(f"""INSERT INTO {PG_SCHEMA}.candidate_dossiers(candidate_id,campaign_id,run_id,symbol,report_date,contract_json,liquidity_json,historical_pnl_json,metrics_json,verdict)
-VALUES ({sql_lit(cid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(sym)}, {sql_lit(rd)}, {sql_json(c.get('contracts') or [])}, {sql_json(candidate_liquidity_projection(c))}, {sql_json(hist_by_symbol.get(sym) or {})}, {sql_json(candidate_metrics_projection(c))}, {sql_lit(verdict)})
+VALUES ({sql_lit(cid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(sym)}, {sql_lit(rd)}, {sql_json(c.get('contracts') or [])}, {sql_json(candidate_liquidity_projection(c))}, {sql_json(hist_by_symbol.get(sym) or {})}, {sql_json(metrics)}, {sql_lit(verdict)})
 ON CONFLICT (candidate_id) DO UPDATE SET contract_json=EXCLUDED.contract_json, liquidity_json=EXCLUDED.liquidity_json, historical_pnl_json=EXCLUDED.historical_pnl_json, metrics_json=EXCLUDED.metrics_json, verdict=EXCLUDED.verdict;""")
 
 
@@ -265,7 +273,7 @@ def candidate_metrics_projection(c: dict) -> dict:
 
 def persist_summary_to_db(campaign_id: str, run_id: str, run_dir: pathlib.Path, summary: dict, params: dict) -> None:
     upsert_campaign(campaign_id, params=params); upsert_run(run_id, campaign_id, 'blocked' if is_run_blocked(summary) else 'completed', run_dir, params, summary, finished=True)
-    f = summary.get('aggregate_funnel') or {}; years = params.get('years') or 'unknown'
+    f = summary.get('aggregate_funnel') or {}; years = params.get('validation_years') or params.get('years') or 'unknown'
     upsert_stage(campaign_id, run_id, 'calendar', 'completed', output_json={'row_count': summary.get('calendar_row_count'), 'universe_count': summary.get('calendar_universe_count')}, artifact_path=str(run_dir/'calendar_snapshot.json'), params=params, passed=summary.get('calendar_universe_count'))
     upsert_stage(campaign_id, run_id, 'qc_chain_scan', 'completed', output_json={'available': f.get('02_qc_option_chain_available'), 'scanned': summary.get('qc_symbols_scanned')}, params=params, passed=f.get('02_qc_option_chain_available'))
     upsert_stage(campaign_id, run_id, 'liquidity_greeks', 'completed', output_json={'pass': f.get('05_qc_liquidity_greeks_quality_pass'), 'cheap_calls': f.get('04_qc_calls_ask_under_max_premium')}, params=params, passed=f.get('05_qc_liquidity_greeks_quality_pass'))
@@ -306,11 +314,48 @@ def latest_run_dir() -> pathlib.Path | None:
     return dirs[-1] if dirs else None
 
 
+def final_candidate_gate_thresholds() -> dict:
+    return {
+        'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
+        'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
+        'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
+        'min_leave_one_out_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_LEAVE_ONE_OUT_MEAN_RETURN_PCT', '0')),
+        'max_dropout_pct': float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')),
+        'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
+        'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
+    }
 
-def multiyear_result_passes(r: dict) -> bool:
-    """Deterministic final-candidate gate for historical option-PnL evidence."""
-    if r.get('status') != 'OK':
-        return False
+
+def final_candidate_gate_warnings(years: int | None, gate: dict | None = None) -> list[dict]:
+    if years is None:
+        return []
+    gate = gate or final_candidate_gate_thresholds()
+    min_sample_size = int(gate.get('min_sample_size') or 0)
+    max_possible_events = int(years) * 4
+    if min_sample_size > max_possible_events:
+        return [{
+            'code': 'FINAL_SAMPLE_SIZE_UNSATISFIABLE_FOR_YEARS',
+            'min_sample_size': min_sample_size,
+            'years': int(years),
+            'max_possible_quarterly_events': max_possible_events,
+        }]
+    return []
+
+
+def annotate_final_candidate_gate(summary: dict, years: int | None) -> dict:
+    gate = final_candidate_gate_thresholds()
+    summary['final_candidate_gate'] = gate
+    warnings = final_candidate_gate_warnings(years, gate)
+    if warnings:
+        summary['final_candidate_gate_warnings'] = warnings
+    else:
+        summary.pop('final_candidate_gate_warnings', None)
+    return summary
+
+
+def final_candidate_gate_evaluation(r: dict, gate: dict | None = None) -> dict:
+    gate = gate or final_candidate_gate_thresholds()
+    status_ok = r.get('status') == 'OK'
     sample_size = int(r.get('sample_size') if r.get('sample_size') is not None else 0)
     win_rate = float(r.get('win_rate') if r.get('win_rate') is not None else 0.0)
     mean_return = float(r.get('mean_return_pct') if r.get('mean_return_pct') is not None else -999.0)
@@ -321,20 +366,45 @@ def multiyear_result_passes(r: dict) -> bool:
     dropout_pct = float(r.get('dropout_pct') if r.get('dropout_pct') is not None else 100.0)
     if historical_events > 0 and r.get('dropout_pct') is None:
         dropout_pct = round(max(0.0, (historical_events - sample_size) / historical_events * 100.0), 2)
-    base_ok = (
-        sample_size >= int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12'))
-        and win_rate >= float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35'))
-        and mean_return > float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0'))
-        and loo_mean_return > float(os.environ.get('QC_FINAL_MIN_LEAVE_ONE_OUT_MEAN_RETURN_PCT', '0'))
-        and dropout_pct <= float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40'))
-        and max_drawdown < float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80'))
-        and max_loss > float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95'))
-    )
     windows = r.get('window_results') or []
-    return base_ok and bool(windows) and all(
+    window_evidence_ok = bool(windows) and all(
         w.get('status') == 'OK' and int(w.get('sample_size') if w.get('sample_size') is not None else 0) >= 1
         for w in windows
     )
+    checks = {
+        'status_ok': status_ok,
+        'sample_size_ok': sample_size >= int(gate['min_sample_size']),
+        'win_rate_ok': win_rate >= float(gate['min_win_rate']),
+        'mean_return_ok': mean_return > float(gate['min_mean_return_pct']),
+        'leave_one_out_mean_return_ok': loo_mean_return > float(gate['min_leave_one_out_mean_return_pct']),
+        'dropout_ok': dropout_pct <= float(gate['max_dropout_pct']),
+        'max_drawdown_ok': max_drawdown < float(gate['max_drawdown_pct_lt']),
+        'max_loss_ok': max_loss > float(gate['max_loss_pct_gt']),
+        'window_evidence_ok': window_evidence_ok,
+    }
+    return {
+        'symbol': r.get('symbol'),
+        'status': r.get('status'),
+        'checks': checks,
+        'failed_checks': [name for name, ok in checks.items() if not ok],
+        'passed': all(checks.values()),
+        'observed': {
+            'sample_size': sample_size,
+            'historical_event_count': historical_events,
+            'win_rate': win_rate,
+            'mean_return_pct': mean_return,
+            'leave_one_out_mean_return_pct': loo_mean_return,
+            'dropout_pct': dropout_pct,
+            'max_drawdown_pct': max_drawdown,
+            'max_loss_pct': max_loss,
+        },
+        'thresholds': gate,
+    }
+
+
+def multiyear_result_passes(r: dict) -> bool:
+    """Deterministic final-candidate gate for historical option-PnL evidence."""
+    return bool(final_candidate_gate_evaluation(r).get('passed'))
 
 def multiyear_result_has_window_evidence(r: dict) -> bool:
     return bool((r or {}).get('window_results'))
@@ -736,6 +806,12 @@ def aggregate(chunks: list[dict]) -> dict:
             agg['07_multi_year_backtest_status'] = 'PARTIAL_CHUNKED_MULTIYEAR_OPTION_PNL_BACKTEST'
     ok = base_scan_complete and not historical_gate_blocked and not multiyear_failed and not qc_capacity_blocked and not historical_gate_no_pass
     status = 'OK_FULL_QC_SCAN' if ok else ('NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL' if historical_gate_no_pass else (qc_capacity_status if qc_capacity_blocked else ('BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE' if missing_window_evidence else ('BLOCKED_HISTORICAL_OPTION_PNL_GATE' if historical_gate_blocked else ('PARTIAL_FULL_QC_SCAN' if chunks else 'BLOCKED_FULL_SCAN_NOT_RUN')))))
+    gate = final_candidate_gate_thresholds()
+    final_candidate_gate_evaluations = [
+        final_candidate_gate_evaluation(r, gate)
+        for rows in historical_results_by_symbol.values()
+        for r in rows
+    ]
     return {
         'ok': ok,
         'status': status,
@@ -764,15 +840,8 @@ def aggregate(chunks: list[dict]) -> dict:
         'historical_gate_blocked': historical_gate_blocked,
         'historical_gate_no_pass': historical_gate_no_pass,
         'multiyear_failed': multiyear_failed,
-        'final_candidate_gate': {
-            'min_sample_size': int(os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
-            'min_win_rate': float(os.environ.get('QC_FINAL_MIN_WIN_RATE', '0.35')),
-            'min_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_MEAN_RETURN_PCT', '0')),
-            'min_leave_one_out_mean_return_pct': float(os.environ.get('QC_FINAL_MIN_LEAVE_ONE_OUT_MEAN_RETURN_PCT', '0')),
-            'max_dropout_pct': float(os.environ.get('QC_FINAL_MAX_DROPOUT_PCT', '40')),
-            'max_drawdown_pct_lt': float(os.environ.get('QC_FINAL_MAX_DRAWDOWN_PCT', '80')),
-            'max_loss_pct_gt': float(os.environ.get('QC_FINAL_MAX_LOSS_PCT', '-95')),
-        },
+        'final_candidate_gate': gate,
+        'final_candidate_gate_evaluations': final_candidate_gate_evaluations,
         'guardrails': {
             'no_yahoo_yfinance': True,
             'nasdaq_calendar_stage_only': True,
@@ -1005,6 +1074,9 @@ def cmd_run(args) -> int:
             fp=run_dir/'full_summary.json'
             fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params; summary['stage_range'] = {'from_stage': args.from_stage, 'to_stage': args.to_stage}
+        annotate_final_candidate_gate(summary, args.validation_years)
+        fp=run_dir/'full_summary.json'
+        fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
         persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
         db_after = latest_db_run(campaign_id)
         if not db_after or db_after.get('run_id') != run_id:
@@ -1170,6 +1242,13 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
     for r in mb.get('results', []):
         if r.get('symbol'):
             results_by_symbol.setdefault(r.get('symbol'), []).append(r)
+    gate = final_candidate_gate_thresholds()
+    summary['final_candidate_gate'] = gate
+    summary['final_candidate_gate_evaluations'] = [
+        final_candidate_gate_evaluation(r, gate)
+        for r in mb.get('results', [])
+        if r.get('symbol')
+    ]
     passing_results = {r.get('symbol'): r for r in mb.get('results', []) if mb.get('ok') and multiyear_result_passes(r)}
     src = summary.get('forward_candidates') or summary.get('candidates') or []
     summary['final_candidates'] = [
@@ -1259,6 +1338,8 @@ def cmd_historical(args) -> int:
     mb = run_multiyear_if_requested(run_dir, args)
     summary = refresh_summary_after_historical(run_dir, mb)
     summary['campaign_id'] = campaign_id; summary['run_id'] = run_id; summary['parameters'] = params
+    annotate_final_candidate_gate(summary, args.years)
+    (run_dir/'full_summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+'\n')
     persist_summary_to_db(campaign_id, run_id, run_dir, summary, params)
     db_after = latest_db_run(campaign_id)
     if not db_after or db_after.get('run_id') != run_id:

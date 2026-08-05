@@ -1130,6 +1130,43 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             )
         )
 
+    def test_research_result_gate_reports_failed_conditions(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.final_candidate_gate_evaluation(
+            {
+                "symbol": "NVDA",
+                "status": "OK",
+                "sample_size": 23,
+                "win_rate": 0.2174,
+                "mean_return_pct": 273.4,
+                "leave_one_out_mean_return_pct": -39.17,
+                "historical_event_count": 32,
+                "dropout_pct": 28.12,
+                "max_drawdown_pct": 100.0,
+                "max_loss_pct": -96.15,
+                "window_results": PASSING_WINDOWS,
+            }
+        )
+
+        self.assertFalse(out["passed"])
+        self.assertTrue(out["checks"]["sample_size_ok"])
+        self.assertTrue(out["checks"]["mean_return_ok"])
+        self.assertFalse(out["checks"]["win_rate_ok"])
+        self.assertFalse(out["checks"]["leave_one_out_mean_return_ok"])
+        self.assertFalse(out["checks"]["max_drawdown_ok"])
+        self.assertFalse(out["checks"]["max_loss_ok"])
+        self.assertEqual(
+            out["failed_checks"],
+            ["win_rate_ok", "leave_one_out_mean_return_ok", "max_drawdown_ok", "max_loss_ok"],
+        )
+
+    def test_final_gate_warns_when_sample_size_unreachable_for_years(self):
+        mod = load_script("earnings-qc-research")
+        warnings = mod.final_candidate_gate_warnings(1, {"min_sample_size": 12})
+
+        self.assertEqual(warnings[0]["code"], "FINAL_SAMPLE_SIZE_UNSATISFIABLE_FOR_YEARS")
+        self.assertEqual(warnings[0]["max_possible_quarterly_events"], 4)
+
     def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
         mod = load_script("earnings-qc-research")
         summary = mod.aggregate(
@@ -1164,6 +1201,43 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertTrue(summary["historical_gate_no_pass"])
         self.assertEqual(summary["status"], "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL")
         self.assertEqual(summary["final_candidate_count"], 0)
+
+    def test_full_scan_aggregation_includes_final_gate_evaluations(self):
+        mod = load_script("earnings-qc-research")
+        summary = mod.aggregate(
+            [
+                {
+                    "ok": True,
+                    "qc_processed_row_count": 1,
+                    "calendar_row_count": 1,
+                    "candidate_details": [{"symbol": "IREN", "earnings_date": "2026-08-04"}],
+                    "chunk_multiyear_backtest": {
+                        "ok": False,
+                        "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS",
+                        "results": [
+                            {
+                                "symbol": "IREN",
+                                "status": "OK",
+                                "sample_size": 5,
+                                "win_rate": 0.6,
+                                "mean_return_pct": 112.45,
+                                "leave_one_out_mean_return_pct": 58.06,
+                                "historical_event_count": 17,
+                                "dropout_pct": 70.59,
+                                "max_drawdown_pct": 80.0,
+                                "max_loss_pct": -80.0,
+                                "window_results": PASSING_WINDOWS,
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        evaluation = summary["final_candidate_gate_evaluations"][0]
+        self.assertEqual(evaluation["symbol"], "IREN")
+        self.assertEqual(evaluation["failed_checks"], ["sample_size_ok", "dropout_ok", "max_drawdown_ok"])
+        self.assertEqual(evaluation["observed"]["historical_event_count"], 17)
 
     def test_full_scan_load_chunks_uses_latest_retry_for_same_offset(self):
         mod = load_script("earnings-qc-research")
