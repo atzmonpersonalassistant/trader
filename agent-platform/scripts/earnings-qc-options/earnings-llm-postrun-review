@@ -48,10 +48,13 @@ make_runner_inputs_usable() {
 
 write_no_finished_run_handoff_task() {
   local condition="NO_FINISHED_DAILY_RUN"
-  local ts task_file
+  local marker_dir ts task_file tmp_task_file
+  marker_dir="$STATE_DIR/failure-handoffs/${DATE_COMPACT}-${condition}"
+  mkdir -p "$STATE_DIR/failure-handoffs"
+  tmp_task_file="$(mktemp "$HANDOFF_DIR/.research-pass-postrun-${DATE_COMPACT}-${condition}.XXXXXX")"
   ts="$(date -u +%Y%m%d-%H%M%S)"
-  task_file="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${ts}-${condition}-task.txt"
-  cat > "$task_file" <<TASK
+  task_file="$HANDOFF_DIR/research-pass-postrun-${DATE_COMPACT}-${ts}-$$-${condition}-task.txt"
+  cat > "$tmp_task_file" <<TASK
 Earnings postrun review could not find a finished deterministic daily run.
 
 condition: $condition
@@ -64,7 +67,20 @@ This is a durable handoff artifact for the LLM/operator loop. Keep the existing
 script no-op signal; investigate whether the daily run was skipped, is still
 running, or finished without a DB row that matches the postrun selector.
 TASK
-  chmod 0640 "$task_file"
+  chmod 0640 "$tmp_task_file"
+  if ! mkdir "$marker_dir" 2>/dev/null; then
+    rm -f "$tmp_task_file"
+    echo "HANDOFF_TASK_ALREADY_WRITTEN condition=$condition marker=$marker_dir"
+    return
+  fi
+  if ! mv "$tmp_task_file" "$task_file"; then
+    rmdir "$marker_dir" 2>/dev/null || true
+    rm -f "$tmp_task_file"
+    echo "ERROR: failed to persist handoff task condition=$condition task=$task_file" >&2
+    return 73
+  fi
+  printf '%s\n' "$task_file" > "$marker_dir/task_file.txt"
+  printf '%s\n' "$(date -Is)" > "$marker_dir/written_at.txt"
   echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
 }
 

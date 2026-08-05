@@ -311,27 +311,88 @@ jobs:
             /# BEGIN trader managed LLM research watchdog/ {skip=1; next}
             /# END trader managed LLM research watchdog/ {skip=0; next}
             /^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
+            /^0 6 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}
             /^\*\/30 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/5 \* \* \* \* \/agents\/research\/bin\/earnings-llm-postrun-review/ {next}
             /^\*\/15 \* \* \* \* \/agents\/research\/bin\/earnings-llm-research-watchdog/ {next}
             !skip {print}
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
-          cat >>"$tmp_research_cron_new" <<'EOF_RESEARCH_CRON'
-          # BEGIN trader managed daily earnings research
-          CRON_TZ=Asia/Jerusalem
-          0 6 * * * /agents/research/bin/earnings-otm-daily.sh
-          # END trader managed daily earnings research
-          # BEGIN trader managed LLM postrun review
-          CRON_TZ=Asia/Jerusalem
-          */5 * * * * /agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1
-          # END trader managed LLM postrun review
-          # BEGIN trader managed LLM research watchdog
-          CRON_TZ=Asia/Jerusalem
-          */15 * * * * /agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1
-          # END trader managed LLM research watchdog
-          EOF_RESEARCH_CRON
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
           rm -f "$tmp_research_cron" "$tmp_research_cron_new"
+          sudo tee /etc/systemd/system/trader-earnings-otm-daily.service >/dev/null <<'EOF_DAILY_SERVICE'
+          [Unit]
+          Description=Trader earnings OTM deterministic daily scan
+
+          [Service]
+          Type=oneshot
+          User=agent-research
+          Group=agent-research
+          Environment=TZ=Asia/Jerusalem
+          Environment=HOME=/home/agent-research
+          ExecStart=/agents/research/bin/earnings-otm-daily.sh
+          EOF_DAILY_SERVICE
+          sudo tee /etc/systemd/system/trader-earnings-otm-daily.timer >/dev/null <<'EOF_DAILY_TIMER'
+          [Unit]
+          Description=Run trader earnings OTM deterministic daily scan at 06:00 Asia/Jerusalem
+
+          [Timer]
+          OnCalendar=*-*-* 06:00:00 Asia/Jerusalem
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+          EOF_DAILY_TIMER
+          sudo tee /etc/systemd/system/trader-earnings-llm-postrun.service >/dev/null <<'EOF_POSTRUN_SERVICE'
+          [Unit]
+          Description=Trader earnings LLM postrun review
+
+          [Service]
+          Type=oneshot
+          User=agent-research
+          Group=agent-research
+          Environment=TZ=Asia/Jerusalem
+          Environment=HOME=/home/agent-research
+          ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1'
+          EOF_POSTRUN_SERVICE
+          sudo tee /etc/systemd/system/trader-earnings-llm-postrun.timer >/dev/null <<'EOF_POSTRUN_TIMER'
+          [Unit]
+          Description=Run trader earnings LLM postrun review every five minutes in Asia/Jerusalem time
+
+          [Timer]
+          OnCalendar=*-*-* *:0/5:00 Asia/Jerusalem
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+          EOF_POSTRUN_TIMER
+          sudo tee /etc/systemd/system/trader-earnings-llm-watchdog.service >/dev/null <<'EOF_WATCHDOG_SERVICE'
+          [Unit]
+          Description=Trader earnings LLM research watchdog
+
+          [Service]
+          Type=oneshot
+          User=agent-research
+          Group=agent-research
+          Environment=TZ=Asia/Jerusalem
+          Environment=HOME=/home/agent-research
+          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE=06:00
+          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem
+          ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1'
+          EOF_WATCHDOG_SERVICE
+          sudo tee /etc/systemd/system/trader-earnings-llm-watchdog.timer >/dev/null <<'EOF_WATCHDOG_TIMER'
+          [Unit]
+          Description=Run trader earnings LLM research watchdog every fifteen minutes in Asia/Jerusalem time
+
+          [Timer]
+          OnCalendar=*-*-* *:0/15:00 Asia/Jerusalem
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+          EOF_WATCHDOG_TIMER
+          command -v systemctl >/dev/null 2>&1
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
@@ -619,6 +680,12 @@ jobs:
             ! grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
             ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
           fi
+          systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 06:00:00 Asia/Jerusalem'
+          systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
+          systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
+          systemctl is-enabled --quiet trader-earnings-otm-daily.timer
+          systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
+          systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/bin/qc_cloud_capacity.py /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
