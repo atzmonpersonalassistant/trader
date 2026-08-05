@@ -397,6 +397,8 @@ jobs:
           [Service]
           Type=oneshot
           Environment=TZ=Asia/Jerusalem
+          # Deliberately no User=: docker image prune requires root-owned Docker socket access.
+          # The prune is constrained to dangling images older than 168h; research cleanup runs as agent-research.
           ExecStart=/bin/bash -lc 'set -euo pipefail; sudo -n -u agent-research /agents/research/bin/earnings-qc-research cleanup --older-than-days 14 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1; docker image prune -f --filter until=168h >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'
           EOF_RETENTION_SERVICE
           sudo tee /etc/systemd/system/trader-research-retention.timer >/dev/null <<'EOF_RETENTION_TIMER'

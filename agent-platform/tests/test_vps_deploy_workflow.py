@@ -120,6 +120,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('OnCalendar=*-*-* 04:15:00 Asia/Jerusalem', workflow)
         self.assertIn('earnings-qc-research cleanup --older-than-days 14 --keep-last 20', workflow)
         self.assertIn('docker image prune -f --filter until=168h', workflow)
+        self.assertIn('docker image prune requires root-owned Docker socket access', workflow)
         self.assertIn("systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\\*-\\*-\\* 04:15:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 14 --keep-last 20'", workflow)
         self.assertIn("systemctl cat trader-research-retention.service | grep -q 'docker image prune -f --filter until=168h'", workflow)
