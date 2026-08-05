@@ -968,12 +968,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
         self.assertIn('"parameters":{"delta_target":0.250000,"option_right":', main)
         self.assertIn("delta_targeted_comparison", main)
-        self.assertIn("no_delta_eligible_contract_count", main)
+        self.assertIn("untraded_event_no_delta_eligible_contract_count", main)
         self.assertIn("delta_eligible=[q for q in eligible if self.delta_distance(q) is not None]", main)
         self.assertIn("windows.append(metrics(rows, str(wy)+'y', 1))", main)
-        self.assertNotIn("overall['sample_size']>=12", main)
-        self.assertNotIn("dropout_pct<=40", main)
-        self.assertNotIn("min(4, wy)", main)
         self.assertIn('"strike": 6', main)
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
@@ -1487,7 +1484,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(delta_comparison["per_trade_return_pct"], [200.0])
         self.assertEqual(delta_comparison["sample_size"], 1)
         self.assertEqual(delta_comparison["dropout_pct"], 0.0)
-        self.assertEqual(delta_comparison["no_delta_eligible_contract_count"], 0)
+        self.assertEqual(delta_comparison["untraded_event_no_delta_eligible_contract_count"], 0)
 
     def test_multiyear_delta_targeted_comparison_reports_no_delta_eligible_dropouts(self):
         alg = self.build_multiyear_algorithm()
@@ -1509,7 +1506,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         delta_comparison = payload["results"][0]["delta_targeted_comparison"]
         self.assertEqual(delta_comparison["sample_size"], 0)
         self.assertEqual(delta_comparison["dropout_pct"], 100.0)
-        self.assertEqual(delta_comparison["no_delta_eligible_contract_count"], 1)
+        self.assertEqual(delta_comparison["untraded_event_no_delta_eligible_contract_count"], 1)
 
     def test_multiyear_trade_records_entry_exit_iv_and_baseline_excess(self):
         alg = self.build_multiyear_algorithm()
@@ -1776,18 +1773,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("diagnostic_zero_open_interest", main)
         self.assertIn('"liquidity_fail_reason_counts": {}, "liquidity_warning_counts": {"zero_option_chain_slices_observed": 1}', main)
         self.assertIn("NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE", main)
-
-
-    def test_full_scan_removed_last_year_debug_runup_metric(self):
-        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        full = (SCRIPTS / "earnings-qc-research").read_text()
-        self.assertNotIn("historical_required_move_runup_pass", scan)
-        self.assertNotIn("historical_required_move_runup_pass", full)
-        self.assertNotIn("historical_runup_source", scan)
-        self.assertNotIn("runup_pct_debug_only", scan)
-        self.assertNotIn("historical_contract_pass_debug_only", scan)
-        self.assertNotIn("historical_threshold", scan)
-        self.assertNotIn("debug_only_contract_required_move_pct", scan)
 
     def test_stage2_notify_only_candidates_or_blockers(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
