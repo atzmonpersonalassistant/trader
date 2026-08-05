@@ -244,6 +244,30 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         "trade.update(self.iv_trade_fields(ent.get('iv'), self.qget(exq,'iv'), entry_day, exit_day, expiry, iv_inputs, ent.get('strike'), entry_underlying, exit_underlying, ent.get('delta'), self.qget(exq,'delta')))",
         1,
     )
+    stop_loss_variants_marker = "stop_loss_fill_variants={}"
+    if stop_loss_variants_marker not in code:
+        raise RuntimeError('generated stop-loss variants marker not found')
+    code = code.replace(
+        stop_loss_variants_marker,
+        "stop_loss_fill_variants={}\n            stop_loss_fill_model_limitation=None",
+        1,
+    )
+    stop_loss_caveat_marker = "stop_loss_report_metrics=next_overall"
+    if stop_loss_caveat_marker not in code:
+        raise RuntimeError('generated stop-loss caveat marker not found')
+    code = code.replace(
+        stop_loss_caveat_marker,
+        "stop_loss_fill_model_limitation='Daily-bar stop-loss variants observe and fill from daily snapshots, not true intraday stop prices, which can flatter stopped variants.'\n                stop_loss_report_metrics=next_overall",
+        1,
+    )
+    stop_loss_result_marker = '"stop_loss_fill_variants":stop_loss_fill_variants,"window_results":windows'
+    if stop_loss_result_marker not in code:
+        raise RuntimeError('generated stop-loss result marker not found')
+    code = code.replace(
+        stop_loss_result_marker,
+        '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"window_results":windows',
+        1,
+    )
     (project_dir/'main.py').write_text(code)
 
 def snapshot_memory_from_runtime_stats(stats: dict) -> dict | None:
