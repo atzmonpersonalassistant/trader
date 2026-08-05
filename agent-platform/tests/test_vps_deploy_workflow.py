@@ -104,13 +104,28 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         workflow = workflow_text()
 
         self.assertIn('systemctl daemon-reload', workflow)
-        self.assertIn('systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer', workflow)
+        self.assertIn('systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer', workflow)
         self.assertIn("systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\\*-\\*-\\* 06:00:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/5:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/15:00 Asia/Jerusalem'", workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-otm-daily.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-postrun.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer', workflow)
+
+    def test_managed_research_retention_timer_is_verified(self):
+        workflow = workflow_text()
+
+        self.assertIn('trader-research-retention.service', workflow)
+        self.assertIn('trader-research-retention.timer', workflow)
+        self.assertIn('OnCalendar=*-*-* 04:15:00 Asia/Jerusalem', workflow)
+        self.assertIn('earnings-qc-research cleanup --older-than-days 14 --keep-last 20', workflow)
+        self.assertIn('docker image prune -f --filter until=168h', workflow)
+        self.assertIn("systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\\*-\\*-\\* 04:15:00 Asia/Jerusalem'", workflow)
+        self.assertIn("systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 14 --keep-last 20'", workflow)
+        self.assertIn("systemctl cat trader-research-retention.service | grep -q 'docker image prune -f --filter until=168h'", workflow)
+        self.assertIn('systemctl is-enabled --quiet trader-research-retention.timer', workflow)
+        self.assertNotIn('docker system prune', workflow)
+        self.assertNotIn('docker volume prune', workflow)
 
     def test_daily_wrapper_logs_contended_lock_before_exiting_successfully(self):
         script = deploy_run_script()
