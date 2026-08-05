@@ -47,6 +47,32 @@ make_runner_inputs_usable() {
   fi
 }
 
+write_failure_handoff_task() {
+  local condition="$1"
+  local task_file ts
+  ts="$(date -u +%Y%m%d-%H%M%S)"
+  task_file="$HANDOFF_DIR/research-watchdog-${DATE_COMPACT}-${ts}-${condition}-task.txt"
+  cat > "$task_file" <<TASK
+Earnings research watchdog detected a daily-run failure state.
+
+condition: $condition
+date: $DATE
+scheduled_at: ${DAILY_RUN_SCHEDULED_AT:-}
+grace_seconds: $MISSING_RUN_GRACE_SECONDS
+threshold_seconds: $STALE_RUNNING_SECONDS
+run_id: ${STATE_RUN_ID:-}
+status: ${STATE_STATUS:-}
+started_at: ${STATE_STARTED_AT:-}
+age_seconds: ${STATE_AGE_SECONDS:-}
+
+This is a durable handoff artifact for the LLM/operator loop. Keep the existing
+script exit/status signal; investigate why the deterministic daily run did not
+produce a usable finished run.
+TASK
+  chmod 0640 "$task_file"
+  echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --date) DATE="${2:?missing --date value}"; shift 2 ;;
@@ -175,6 +201,7 @@ else:
 PY
 )"
   if [[ "$MISSING_ROW_STATE" == "after_deadline" ]]; then
+    write_failure_handoff_task "DAILY_RUN_MISSING_AFTER_DEADLINE"
     echo "ERROR: DAILY_RUN_MISSING_AFTER_DEADLINE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
     exit 75
   fi
@@ -188,6 +215,7 @@ fi
 
 IFS='|' read -r STATE_RUN_ID STATE_STATUS STATE_STARTED_AT STATE_FINISHED_AT STATE_AGE_SECONDS STATE_RUN_DIR <<< "$RUN_STATE"
 if [[ "$STATE_STATUS" == "running" && -z "$STATE_FINISHED_AT" && "${STATE_AGE_SECONDS:-0}" =~ ^[0-9]+$ && "$STATE_AGE_SECONDS" -gt "$STALE_RUNNING_SECONDS" ]]; then
+  write_failure_handoff_task "STALE_RUNNING_DAILY_RUN"
   echo "ERROR: STALE_RUNNING_DAILY_RUN date=$DATE run_id=$STATE_RUN_ID started_at=$STATE_STARTED_AT age_seconds=$STATE_AGE_SECONDS threshold_seconds=$STALE_RUNNING_SECONDS" >&2
   exit 75
 fi
