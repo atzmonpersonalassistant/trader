@@ -390,9 +390,29 @@ jobs:
           [Install]
           WantedBy=timers.target
           EOF_WATCHDOG_TIMER
+          sudo tee /etc/systemd/system/trader-research-retention.service >/dev/null <<'EOF_RETENTION_SERVICE'
+          [Unit]
+          Description=Trader research artifact and Docker retention
+
+          [Service]
+          Type=oneshot
+          Environment=TZ=Asia/Jerusalem
+          ExecStart=/bin/bash -lc 'set -euo pipefail; sudo -n -u agent-research /agents/research/bin/earnings-qc-research cleanup --older-than-days 14 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1; docker image prune -f --filter until=168h >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'
+          EOF_RETENTION_SERVICE
+          sudo tee /etc/systemd/system/trader-research-retention.timer >/dev/null <<'EOF_RETENTION_TIMER'
+          [Unit]
+          Description=Run trader research retention daily before the earnings scan
+
+          [Timer]
+          OnCalendar=*-*-* 04:15:00 Asia/Jerusalem
+          Persistent=false
+
+          [Install]
+          WantedBy=timers.target
+          EOF_RETENTION_TIMER
           command -v systemctl >/dev/null 2>&1
           sudo systemctl daemon-reload
-          sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer
+          sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
@@ -683,9 +703,13 @@ jobs:
           systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 06:00:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
+          systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\*-\*-\* 04:15:00 Asia/Jerusalem'
+          systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 14 --keep-last 20'
+          systemctl cat trader-research-retention.service | grep -q 'docker image prune -f --filter until=168h'
           systemctl is-enabled --quiet trader-earnings-otm-daily.timer
           systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
           systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer
+          systemctl is-enabled --quiet trader-research-retention.timer
           sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/bin/qc_cloud_capacity.py /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
