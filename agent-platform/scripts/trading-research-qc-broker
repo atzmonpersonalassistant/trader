@@ -470,8 +470,8 @@ elif lean_research_status == "non_interactive_research_execution_unsupported":
     status = "non_interactive_research_execution_unsupported"
     reason = "Lean CLI is authenticated, but this installed CLI did not advertise a non-interactive research/notebook execution command."
 else:
-    status = "cost_credit_guardrail_required"
-    reason = "Local Lean/Python/Docker surfaces did not produce an extract. QuantConnect cloud/API execution was not submitted because it may consume credits or cloud resources without an explicit bounded approval path."
+    status = "qc_cloud_execution_surface_unavailable"
+    reason = "Local Lean/Python/Docker surfaces did not produce an extract. QuantConnect cloud/API execution was not submitted because this broker has no authenticated non-interactive cloud execution surface available; QuantConnect backtest cost is not a blocker under the subscription plan."
 
 payload = {
     "type": "qc_research_execution_diagnostic",
