@@ -1244,6 +1244,51 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(warnings[0]["code"], "FINAL_SAMPLE_SIZE_UNSATISFIABLE_FOR_YEARS")
         self.assertEqual(warnings[0]["max_possible_quarterly_events"], 4)
 
+    def test_daily_summary_surfaces_broker_cloud_failure(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        mod.STATE_DIR = tmp / "state"
+        run_dir = tmp / "run"
+        run_dir.mkdir()
+        (run_dir / "chunk-0.stdout.json").write_text(json.dumps({
+            "ok": False,
+            "status": "BLOCKED_QC_BATCH_FAILED",
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 0,
+            "qc_batch_count": 1,
+            "candidate_details": [],
+            "funnel": {},
+        }))
+        (run_dir / "qc_research_execution_diagnostic.json").write_text(json.dumps({
+            "status": "qc_cloud_execution_failed",
+            "stderr_redacted_excerpt": "Runtime Error: forced cloud failure",
+            "reason": "cloud failed",
+        }))
+        (run_dir / "qc_research_artifact_manifest.json").write_text(json.dumps({
+            "auth_status": "authenticated",
+            "cloud_status": "qc_cloud_execution_failed",
+            "docker_status": "not_checked",
+            "execution_surface": "qc_cloud_backtest",
+            "execution_rc": 1,
+            "surface_attempts": [
+                {"surface": "qc_cloud_backtest", "status": "qc_cloud_execution_failed", "exit_code": 1},
+            ],
+            "extraction_reason": "The bounded QC Cloud extract failed.",
+            "artifacts": [
+                {"path": "qc_research_execution_diagnostic.json", "kind": "structured_execution_diagnostic"},
+            ],
+        }))
+
+        summary = mod.write_summary(run_dir, batch_size=1)
+        report = (run_dir / "hebrew_report.md").read_text()
+
+        self.assertEqual(summary["qc_broker_execution"]["execution_surface"], "qc_cloud_backtest")
+        self.assertEqual(summary["qc_broker_execution"]["cloud_status"], "qc_cloud_execution_failed")
+        self.assertIn("Runtime Error: forced cloud failure", summary["qc_broker_execution"]["cloud_error"])
+        self.assertIn("cloud_status=qc_cloud_execution_failed", report)
+        self.assertIn("cloud_error=Runtime Error: forced cloud failure", report)
+
     def test_full_scan_aggregation_does_not_promote_failed_multiyear_results(self):
         mod = load_script("earnings-qc-research")
         summary = mod.aggregate(
