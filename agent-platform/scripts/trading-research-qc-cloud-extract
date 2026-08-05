@@ -33,6 +33,41 @@ def qc_api(method, endpoint, payload=None):
     if not out.get("success"): raise RuntimeError(json.dumps({k: out.get(k) for k in ["errors", "messages", "Message"]}, ensure_ascii=False))
     return out
 
+def timeout_text(value):
+    if isinstance(value, bytes): return value.decode("utf-8", "replace")
+    return value or ""
+
+def extract_backtest_id(text):
+    m = re.search(r"Backtest id:\s*([0-9a-f]+)", text)
+    return m.group(1) if m else None
+
+def delete_backtest_if_known(project_id, backtest_id, run_dir):
+    if not backtest_id:
+        return {"attempted": False, "reason": "backtest_id_missing"}
+    result = {"attempted": True, "project_id": project_id, "backtest_id": backtest_id}
+    try:
+        qc_api("POST", "backtests/delete", {"projectId": project_id, "backtestId": backtest_id})
+        result["deleted"] = True
+    except Exception as exc:
+        result["deleted"] = False
+        result["error"] = str(exc)
+    (run_dir / "qc_cloud_backtest_delete.json").write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return result
+
+def run_cloud_backtest(project_id, run_dir, name):
+    try:
+        bt = subprocess.run(["lean", "cloud", "backtest", PROJECT_NAME, "--push", "--name", name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=TIMEOUT_BACKTEST)
+    except subprocess.TimeoutExpired as exc:
+        stdout = timeout_text(exc.stdout)
+        stderr = timeout_text(exc.stderr)
+        (run_dir / "qc_cloud_backtest_stdout.txt").write_text(stdout)
+        (run_dir / "qc_cloud_backtest_stderr.txt").write_text(stderr)
+        backtest_id = extract_backtest_id(stdout + "\n" + stderr)
+        deletion = delete_backtest_if_known(project_id, backtest_id, run_dir)
+        fail("qc_cloud_backtest_timeout", "lean cloud backtest timed out", 124, backtest_id=backtest_id, timeout_seconds=TIMEOUT_BACKTEST, cleanup=deletion, stdout=stdout[-1500:], stderr=stderr[-1500:])
+    (run_dir / "qc_cloud_backtest_stdout.txt").write_text(bt.stdout); (run_dir / "qc_cloud_backtest_stderr.txt").write_text(bt.stderr)
+    return bt
+
 def ensure_project(project_dir):
     project_dir.mkdir(parents=True, exist_ok=True); cfg_path = project_dir / "config.json"
     cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
@@ -407,11 +442,9 @@ def main():
     (run_dir / "qc_cloud_push_stdout.txt").write_text(push.stdout); (run_dir / "qc_cloud_push_stderr.txt").write_text(push.stderr)
     if push.returncode != 0: fail("qc_cloud_push_failed", "lean cloud push failed", 70, stdout=push.stdout[-1000:], stderr=push.stderr[-1000:])
     name = "trader-qc-cloud-extract-v2-" + dt.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    bt = subprocess.run(["lean", "cloud", "backtest", PROJECT_NAME, "--push", "--name", name], cwd=str(LEAN_WORKSPACE), text=True, capture_output=True, timeout=TIMEOUT_BACKTEST)
-    (run_dir / "qc_cloud_backtest_stdout.txt").write_text(bt.stdout); (run_dir / "qc_cloud_backtest_stderr.txt").write_text(bt.stderr)
-    m = re.search(r"Backtest id:\s*([0-9a-f]+)", bt.stdout + "\n" + bt.stderr)
-    if bt.returncode != 0 or not m: fail("qc_cloud_backtest_failed", "lean cloud backtest failed or no backtest id", 70, stdout=bt.stdout[-1500:], stderr=bt.stderr[-1500:])
-    backtest_id = m.group(1)
+    bt = run_cloud_backtest(project_id, run_dir, name)
+    backtest_id = extract_backtest_id(bt.stdout + "\n" + bt.stderr)
+    if bt.returncode != 0 or not backtest_id: fail("qc_cloud_backtest_failed", "lean cloud backtest failed or no backtest id", 70, stdout=bt.stdout[-1500:], stderr=bt.stderr[-1500:])
     b = qc_api("GET", "backtests/read", {"projectId": project_id, "backtestId": backtest_id}).get("backtest", {})
     (run_dir / "qc_cloud_backtest_read.json").write_text(json.dumps(b, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     stats = b.get("runtimeStatistics") or {}

@@ -1,7 +1,9 @@
 import argparse
+import contextlib
 import importlib.machinery
 import importlib.util
 import importlib.machinery
+import io
 import json
 import os
 import subprocess
@@ -10,6 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -1510,6 +1513,38 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('"validation_mode"', text)
         self.assertIn('"is_strategy_validation"', text)
 
+    def test_qc_cloud_extract_timeout_deletes_submitted_backtest(self):
+        mod = load("trading_research_qc_cloud_extract_timeout", "agent-platform/scripts/trading-research-qc-cloud-extract")
+        with TemporaryDirectory() as td:
+            run_dir = Path(td)
+            delete_calls = []
+
+            def timeout_run(*_args, **_kwargs):
+                raise subprocess.TimeoutExpired(
+                    cmd=["lean", "cloud", "backtest"],
+                    timeout=37,
+                    output="Project ID: 123\nBacktest id: abcdef1234\npartial stdout",
+                    stderr="partial stderr",
+                )
+
+            def fake_qc_api(method, endpoint, payload=None):
+                delete_calls.append((method, endpoint, payload))
+                return {"success": True}
+
+            with mock.patch.object(mod.subprocess, "run", side_effect=timeout_run), \
+                 mock.patch.object(mod, "qc_api", side_effect=fake_qc_api), \
+                 mock.patch.object(mod, "TIMEOUT_BACKTEST", 37), \
+                 contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    mod.run_cloud_backtest(123, run_dir, "timeout-test")
+
+            self.assertEqual(cm.exception.code, 124)
+            self.assertEqual(delete_calls, [("POST", "backtests/delete", {"projectId": 123, "backtestId": "abcdef1234"})])
+            cleanup = json.loads((run_dir / "qc_cloud_backtest_delete.json").read_text())
+            self.assertEqual(cleanup["deleted"], True)
+            self.assertEqual(cleanup["backtest_id"], "abcdef1234")
+            self.assertIn("Backtest id: abcdef1234", (run_dir / "qc_cloud_backtest_stdout.txt").read_text())
+
     def test_research_loop_dry_run_writes_final_report(self):
         text = (ROOT / "agent-platform/scripts/trading-research-agent-loop").read_text()
         self.assertIn('TRADING_RESEARCH_LOOP_DRY_RUN=1', text)
@@ -1588,6 +1623,53 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), None)
         self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 2, "backtestId": "bt", "statistics": {"Sharpe Ratio": "1"}}, 1, "bt"), "backtest extract project id mismatch")
         self.assertEqual(module.backtest_extract_error({"type": "qc_backtest_extract", "ok": True, "projectId": 1, "backtestId": "bt"}, 1, "bt"), "backtest extract missing expected backtest payload")
+        with TemporaryDirectory() as td:
+            tmp = Path(td)
+            run_dir = tmp / "run"
+            project_dir = tmp / "lean" / "prepared-project"
+            project_dir.mkdir(parents=True)
+            run_dir.mkdir()
+            (project_dir / "main.py").write_text("# prepared\n")
+            (run_dir / "qc_cloud_run_manifest.json").write_text(json.dumps({
+                "project_dir": str(project_dir),
+                "project_id": 456,
+                "project_ref": "prepared-project",
+            }) + "\n")
+            env_path = tmp / "qc.env"
+            env_path.write_text("QUANTCONNECT_USER_ID=uid\nQUANTCONNECT_API_TOKEN=secret-token\n")
+            run_calls = []
+            delete_calls = []
+
+            def fake_run(cmd, **kwargs):
+                run_calls.append(cmd)
+                if cmd[:2] == ["lean", "login"]:
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+                if cmd[:3] == ["lean", "cloud", "push"]:
+                    return subprocess.CompletedProcess(cmd, 0, "push ok", "")
+                raise subprocess.TimeoutExpired(
+                    cmd=cmd,
+                    timeout=60,
+                    output=b"Project ID: 456\nBacktest id: feedface1234\npartial",
+                    stderr=b"still running",
+                )
+
+            def fake_qc_api(_env, method, endpoint, payload=None):
+                delete_calls.append((method, endpoint, payload))
+                return {"success": True}
+
+            with mock.patch.object(module, "LEAN_WORKSPACE", tmp / "lean"), \
+                 mock.patch.object(module, "QC_ENV", env_path), \
+                 mock.patch.object(module.subprocess, "run", side_effect=fake_run), \
+                 mock.patch.object(module, "_qc_api_with_env", side_effect=fake_qc_api), \
+                 mock.patch.dict(os.environ, {"TRADING_QC_BACKTEST_TIMEOUT_SECONDS": "60"}):
+                self.assertEqual(module._run_prepared_qc_project(run_dir), 1)
+
+            self.assertEqual(run_calls[2][:3], ["lean", "cloud", "backtest"])
+            self.assertEqual(delete_calls, [("POST", "backtests/delete", {"projectId": 456, "backtestId": "feedface1234"})])
+            updated = json.loads((run_dir / "qc_cloud_run_manifest.json").read_text())
+            self.assertEqual(updated["backtest_returncode"], 124)
+            self.assertEqual(updated["timeout_cleanup"]["deleted"], True)
+            self.assertIn("lean cloud backtest timed out after 60 seconds", (run_dir / "qc_cloud_backtest_stderr.log").read_text())
         long_sweep = "s" * 90
         long_hypothesis = "h" * 90
         ids = [module.sanitize_run_id(f"qc-run-{long_sweep}-v{i}-{long_hypothesis}") for i in range(1, 4)]
