@@ -135,15 +135,19 @@ if ! flock -n 9; then
 fi
 
 daily_run_schedule() {
-  local schedule minute hour zone timer_calendar parsed
+  local schedule minute hour minute_i hour_i zone timer_calendar parsed
   zone="${EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE:-$DAILY_RUN_DEFAULT_ZONE}"
   if [[ -n "${EARNINGS_WATCHDOG_DAILY_SCHEDULE:-}" ]]; then
     schedule="${EARNINGS_WATCHDOG_DAILY_SCHEDULE}"
     minute="${schedule##*:}"
     hour="${schedule%%:*}"
-    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 ]]; then
-      printf '%s|%s|%s|%s\n' "$minute" "$hour" "$zone" "env"
-      return
+    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ ]]; then
+      minute_i=$((10#$minute))
+      hour_i=$((10#$hour))
+      if (( minute_i <= 59 && hour_i <= 23 )); then
+        printf '%s|%s|%s|%s\n' "$minute_i" "$hour_i" "$zone" "env"
+        return
+      fi
     fi
   fi
 
@@ -163,9 +167,13 @@ PY
 )"
       if [[ -n "$parsed" ]]; then
         IFS='|' read -r minute hour zone <<< "$parsed"
-        if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ && "$minute" -le 59 && "$hour" -le 23 && -n "$zone" ]]; then
-          printf '%s|%s|%s|%s\n' "$minute" "$hour" "$zone" "systemd"
-          return
+        if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ ]]; then
+          minute_i=$((10#$minute))
+          hour_i=$((10#$hour))
+          if (( minute_i <= 59 && hour_i <= 23 )) && [[ -n "$zone" ]]; then
+            printf '%s|%s|%s|%s\n' "$minute_i" "$hour_i" "$zone" "systemd"
+            return
+          fi
         fi
       fi
     fi
