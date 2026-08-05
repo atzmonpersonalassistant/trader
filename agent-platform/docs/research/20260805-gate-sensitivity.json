@@ -1,0 +1,890 @@
+{
+  "base_gate": {
+    "max_drawdown_pct_lt": 80.0,
+    "max_dropout_pct": 40.0,
+    "max_loss_pct_gt": -95.0,
+    "min_leave_one_out_mean_return_pct": 0.0,
+    "min_mean_return_pct": 0.0,
+    "min_sample_size": 12,
+    "min_win_rate": 0.35
+  },
+  "constant_thresholds": {
+    "max_loss_pct_gt": -95.0,
+    "min_leave_one_out_mean_return_pct": 0.0,
+    "min_mean_return_pct": 0.0,
+    "min_sample_size": 12,
+    "min_win_rate": 0.35
+  },
+  "matrix": [
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 80,
+        "max_dropout_pct": 40
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 80,
+        "max_dropout_pct": 55
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 80,
+        "max_dropout_pct": 70
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "max_drawdown_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 80,
+        "max_dropout_pct": 80
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 85,
+        "max_dropout_pct": 40
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 85,
+        "max_dropout_pct": 55
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 85,
+        "max_dropout_pct": 70
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 85,
+        "max_dropout_pct": 80
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 90,
+        "max_dropout_pct": 40
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 90,
+        "max_dropout_pct": 55
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 90,
+        "max_dropout_pct": 70
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 90,
+        "max_dropout_pct": 80
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 95,
+        "max_dropout_pct": 40
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 95,
+        "max_dropout_pct": 55
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 95,
+        "max_dropout_pct": 70
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "IREN": [
+          "sample_size_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok",
+          "max_drawdown_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 95,
+        "max_dropout_pct": 80
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 100,
+        "max_dropout_pct": 40
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 100,
+        "max_dropout_pct": 55
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "IREN": [
+          "sample_size_ok",
+          "dropout_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 100,
+        "max_dropout_pct": 70
+      }
+    },
+    {
+      "failed_checks_by_symbol": {
+        "BULL": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "IREN": [
+          "sample_size_ok"
+        ],
+        "NIO": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok"
+        ],
+        "NVDA": [
+          "win_rate_ok",
+          "leave_one_out_mean_return_ok",
+          "max_drawdown_ok",
+          "max_loss_ok"
+        ],
+        "TIGR": [
+          "sample_size_ok",
+          "win_rate_ok",
+          "mean_return_ok",
+          "leave_one_out_mean_return_ok",
+          "dropout_ok"
+        ]
+      },
+      "passing_symbol_count": 0,
+      "passing_symbols": [],
+      "thresholds": {
+        "max_drawdown_pct_lt": 100,
+        "max_dropout_pct": 80
+      }
+    }
+  ],
+  "run_date": "2026-08-05",
+  "source_artifact": "agent-platform/docs/research/20260805-corrected-iv-richness-measurement.json",
+  "source_run_dir": "/agents/research/reports/earnings-qc-options-scan-full-20260805-060002",
+  "source_run_id": "earnings-qc-options-scan-full-20260805-060002",
+  "symbols": [
+    "BULL",
+    "IREN",
+    "NIO",
+    "NVDA",
+    "TIGR"
+  ],
+  "type": "earnings_qc_gate_sensitivity",
+  "varied_thresholds": {
+    "max_drawdown_pct_lt": [
+      80,
+      85,
+      90,
+      95,
+      100
+    ],
+    "max_dropout_pct": [
+      40,
+      55,
+      70,
+      80
+    ]
+  },
+  "window_evidence_reconstruction": {
+    "as_of_date": "2026-08-05",
+    "method": "Reconstructed 1y/3y/5y/10y window sample counts from #174 per-trade report_date values; each reconstructed window must have sample_size >= 1 for window_evidence_ok.",
+    "window_sample_counts_by_symbol": {
+      "BULL": {
+        "10y": 3,
+        "1y": 3,
+        "3y": 3,
+        "5y": 3
+      },
+      "IREN": {
+        "10y": 5,
+        "1y": 1,
+        "3y": 5,
+        "5y": 5
+      },
+      "NIO": {
+        "10y": 4,
+        "1y": 3,
+        "3y": 4,
+        "5y": 4
+      },
+      "NVDA": {
+        "10y": 23,
+        "1y": 4,
+        "3y": 11,
+        "5y": 17
+      },
+      "TIGR": {
+        "10y": 3,
+        "1y": 1,
+        "3y": 2,
+        "5y": 3
+      }
+    }
+  }
+}
