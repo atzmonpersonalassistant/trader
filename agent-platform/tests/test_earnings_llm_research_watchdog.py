@@ -75,7 +75,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T10:00:00+03:00", timer_calendar=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T12:00:00+03:00", timer_calendar=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
         cleanup = TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -181,13 +181,13 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 75)
         self.assertIn("DAILY_RUN_MISSING_AFTER_DEADLINE date=2026-08-04", result.stderr)
-        self.assertIn("scheduled_at=06:00", result.stderr)
+        self.assertIn("scheduled_at=10:30", result.stderr)
         self.assertIn("grace_seconds=3600", result.stderr)
         self.assertEqual(len(result.handoff_tasks), 1)
         task_text = next(iter(result.handoff_tasks.values()))
         self.assertIn("condition: DAILY_RUN_MISSING_AFTER_DEADLINE", task_text)
         self.assertIn("date: 2026-08-04", task_text)
-        self.assertIn("scheduled_at: 06:00", task_text)
+        self.assertIn("scheduled_at: 10:30", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
 
     def test_date_with_no_daily_run_row_before_daily_is_due_is_not_due_yet(self):
@@ -198,7 +198,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertNotIn("DAILY_RUN_MISSING_AFTER_DEADLINE", result.stderr)
 
     def test_date_with_no_daily_run_row_after_due_within_grace_is_pending(self):
-        result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T06:30:00+03:00")
+        result = self.run_watchdog_with_fake_psql(["", ""], now="2026-08-04T11:00:00+03:00")
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
@@ -249,7 +249,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
     def test_missing_daily_row_default_schedule_matches_managed_timer_zone(self):
         result = self.run_watchdog_with_fake_psql(
             ["", ""],
-            now="2026-08-04T06:30:00+03:00",
+            now="2026-08-04T11:00:00+03:00",
         )
 
         self.assertEqual(result.returncode, 0)
@@ -267,7 +267,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
                 ["", ""],
                 root=tmp,
                 date="2026-08-05",
-                now="2026-08-05T10:00:00+03:00",
+                now="2026-08-05T12:00:00+03:00",
             )
 
             self.assertEqual(first.returncode, 75)

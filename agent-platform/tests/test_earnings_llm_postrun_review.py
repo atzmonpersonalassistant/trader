@@ -100,7 +100,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         task_text = next(iter(result.handoff_tasks.values()))
         self.assertIn("condition: NO_FINISHED_DAILY_RUN", task_text)
         self.assertIn("date: 2026-08-04", task_text)
-        self.assertIn("scheduled_at: 06:00", task_text)
+        self.assertIn("scheduled_at: 10:30", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
 
     def test_no_finished_daily_run_handoff_is_deduped_by_date_and_condition(self):

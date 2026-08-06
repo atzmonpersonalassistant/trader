@@ -354,10 +354,10 @@ jobs:
           EOF_DAILY_SERVICE
           sudo tee /etc/systemd/system/trader-earnings-otm-daily.timer >/dev/null <<'EOF_DAILY_TIMER'
           [Unit]
-          Description=Run trader earnings OTM deterministic daily scan at 06:00 Asia/Jerusalem
+          Description=Run trader earnings OTM deterministic daily scan at 10:30 Asia/Jerusalem
 
           [Timer]
-          OnCalendar=*-*-* 06:00:00 Asia/Jerusalem
+          OnCalendar=*-*-* 10:30:00 Asia/Jerusalem
           Persistent=false
 
           [Install]
@@ -373,6 +373,7 @@ jobs:
           Group=agent-research
           Environment=TZ=Asia/Jerusalem
           Environment=HOME=/home/agent-research
+          Environment=EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT=10:30
           ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1'
           EOF_POSTRUN_SERVICE
           sudo tee /etc/systemd/system/trader-earnings-llm-postrun.timer >/dev/null <<'EOF_POSTRUN_TIMER'
@@ -396,7 +397,7 @@ jobs:
           Group=agent-research
           Environment=TZ=Asia/Jerusalem
           Environment=HOME=/home/agent-research
-          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE=06:00
+          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE=10:30
           Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem
           ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1'
           EOF_WATCHDOG_SERVICE
@@ -725,7 +726,7 @@ jobs:
             ! grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
             ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
           fi
-          systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 06:00:00 Asia/Jerusalem'
+          systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 10:30:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\*-\*-\* 04:15:00 Asia/Jerusalem'
