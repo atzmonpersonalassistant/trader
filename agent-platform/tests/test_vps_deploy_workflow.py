@@ -9,6 +9,7 @@ import yaml
 
 
 WORKFLOW = Path('.github/workflows/vps-deploy.yml')
+OPERATOR_RUNBOOK = Path('agent-platform/docs/mvp0/operator-runbook.md')
 
 
 def workflow_text():
@@ -153,6 +154,29 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('docker image prune', workflow)
         self.assertNotIn('docker system prune', workflow)
         self.assertNotIn('docker volume prune', workflow)
+
+    def test_operator_runbook_documents_managed_earnings_units(self):
+        runbook = OPERATOR_RUNBOOK.read_text()
+
+        expected_units = {
+            'trader-earnings-otm-daily.timer': '10:30 Asia/Jerusalem',
+            'trader-earnings-llm-postrun.timer': 'every 5 minutes',
+            'trader-earnings-llm-watchdog.timer': 'every 15 minutes',
+            'trader-research-retention.timer': '04:15 Asia/Jerusalem',
+        }
+        for unit, schedule in expected_units.items():
+            self.assertIn(unit, runbook)
+            self.assertIn(schedule, runbook)
+
+        self.assertIn('systemctl list-timers trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer', runbook)
+        self.assertIn('/agents/research/logs/earnings-qc-research/daily-*.log', runbook)
+        self.assertIn('/agents/research/logs/earnings-qc-research/llm-postrun-review.log', runbook)
+        self.assertIn('/agents/research/logs/earnings-qc-research/llm-research-watchdog.log', runbook)
+        self.assertIn('/agents/research/logs/earnings-qc-research/retention.log', runbook)
+        self.assertIn("summary_json->>'failed_chunk_count' AS failed_chunk_count", runbook)
+        self.assertIn("summary_json->>'run_date' AS valuation_date", runbook)
+        self.assertIn('freed_bytes', runbook)
+        self.assertIn('failed_paths', runbook)
 
     def test_secret_file_source_of_truth_is_explicit(self):
         workflow = workflow_text()
