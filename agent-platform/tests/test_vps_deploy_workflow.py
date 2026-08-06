@@ -154,6 +154,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('docker system prune', workflow)
         self.assertNotIn('docker volume prune', workflow)
 
+    def test_secret_file_source_of_truth_is_explicit(self):
+        workflow = workflow_text()
+
+        self.assertIn('research/env is server-local runtime config', workflow)
+        self.assertIn('if ! sudo test -e /etc/trading-agents/secrets/research/env; then', workflow)
+        self.assertIn('QuantConnect credentials are GitHub Actions secret managed', workflow)
+        self.assertIn('Do not rotate only on the VPS', workflow)
+        self.assertIn(
+            'sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env',
+            workflow,
+        )
+
     def _daily_wrapper_script(self, root, fake_bin, state, logs, reports):
         script = deploy_run_script()
         start = script.index("sudo tee /agents/research/bin/earnings-otm-daily.sh")
