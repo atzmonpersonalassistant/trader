@@ -117,8 +117,8 @@ def hist_params(params:dict|None) -> dict:
         'min_relative_spread': float(p.get('min_relative_spread') if p.get('min_relative_spread') is not None else 0.25),
         'vol_spread_factor': float(p.get('vol_spread_factor') if p.get('vol_spread_factor') is not None else 0.50),
         'expected_move_spread_fraction': float(p.get('expected_move_spread_fraction') if p.get('expected_move_spread_fraction') is not None else 0.15),
-        'min_open_interest': int(p.get('min_open_interest') if p.get('min_open_interest') is not None else 50),
-        'min_volume': int(p.get('min_volume') if p.get('min_volume') is not None else 10),
+        'min_open_interest': int(p.get('min_open_interest') if p.get('min_open_interest') is not None else 0),
+        'min_volume': int(p.get('min_volume') if p.get('min_volume') is not None else 0),
         'max_contracts': int(max_contracts) if max_contracts is not None else 3,
         'stop_loss_max_loss_pct': stop_loss_max_loss_pct,
         'option_resolution': qc_resolution_expr(p.get('option_resolution') or p.get('historical_resolution'), 'daily'),
@@ -212,7 +212,10 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         "        if m['missing_volatility_inputs']: return 'missing_volatility_inputs'\n"
         "        if m['spread'] > m['allowed_spread']: return 'spread_too_wide'\n"
         "        if m['spread_mid_pct'] is None or m['spread_mid_pct'] > self.max_spread_pct * 100.0: return 'spread_too_wide'\n"
-        "        if (self.qget(q,'open_interest') or 0) < self.min_open_interest and (self.qget(q,'volume') or 0) < self.min_volume: return 'low_open_interest_and_volume'\n"
+        "        oi=self.qget(q,'open_interest') or 0; vol=self.qget(q,'volume') or 0\n"
+        "        if self.min_open_interest and self.min_volume and oi < self.min_open_interest and vol < self.min_volume: return 'low_open_interest_and_volume'\n"
+        "        if self.min_open_interest and not self.min_volume and oi < self.min_open_interest: return 'low_open_interest_and_volume'\n"
+        "        if self.min_volume and not self.min_open_interest and vol < self.min_volume: return 'low_open_interest_and_volume'\n"
         "        return None\n"
         + liquidity_pass_marker,
         1,
