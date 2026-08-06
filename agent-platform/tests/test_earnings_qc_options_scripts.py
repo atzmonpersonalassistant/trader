@@ -328,6 +328,55 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn("SET summary_json = NULL, parameters_json = NULL, updated_at = now()", joined)
         self.assertNotIn("DELETE FROM", joined)
 
+    def test_cleanup_reports_partial_delete_and_counts_only_actual_freed_bytes(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_scan = reports / "earnings-qc-options-scan-full-old"
+        old_scan.mkdir()
+        removed_file = old_scan / "removed.txt"
+        remaining_file = old_scan / "remaining.txt"
+        removed_file.write_text("removed")
+        remaining_file.write_text("remaining")
+        os.utime(old_scan, (1, 1))
+        os.utime(removed_file, (1, 1))
+        os.utime(remaining_file, (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=False)
+        calls = []
+
+        def fake_rmtree(path):
+            removed_file.unlink()
+            raise PermissionError("permission denied")
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod.shutil, "rmtree", side_effect=fake_rmtree), \
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql, fetch=False: calls.append(sql) or ('{}' if fetch else '')):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = mod.cmd_cleanup(args)
+
+        self.assertEqual(rc, 1)
+        out = json.loads(stdout.getvalue())
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["deleted_paths"], [])
+        self.assertEqual(out["freed_bytes"], len("removed"))
+        self.assertEqual(len(out["failed_paths"]), 1)
+        self.assertEqual(out["failed_paths"][0]["bytes_remaining"], len("remaining"))
+        self.assertIn("permission denied", out["failed_paths"][0]["error"])
+        joined = "\n".join(calls)
+        self.assertIn("freed_bytes,error", joined)
+        self.assertIn("permission denied", joined)
+
+    def test_cleanup_error_column_has_additive_migration(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+
+        with mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            self.assertTrue(mod.ensure_research_db())
+
+        joined = "\n".join(calls)
+        self.assertIn("ALTER TABLE earnings_cache.cleanup_runs ADD COLUMN IF NOT EXISTS error TEXT", joined)
+
     def test_cleanup_keep_last_is_per_report_prefix(self):
         mod = load_script("earnings-qc-research")
         reports = pathlib.Path(tempfile.mkdtemp())
