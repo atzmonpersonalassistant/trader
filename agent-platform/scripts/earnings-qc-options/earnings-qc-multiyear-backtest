@@ -81,8 +81,16 @@ def hist_params(params:dict|None) -> dict:
     option_right = str(p.get('option_right') or 'call').lower()
     if option_right not in {'call', 'put', 'both'}:
         raise SystemExit(f"invalid option_right {option_right!r}; expected call, put, or both")
+    exit_days_before = int(p.get('exit_days_before') if p.get('exit_days_before') is not None else 1)
+    if exit_days_before < 1:
+        raise SystemExit(f"invalid exit_days_before {exit_days_before!r}; expected integer >= 1")
+    exit_policy = str(p.get('exit_policy') or 'before-earnings').strip().lower().replace('_', '-')
+    if exit_policy not in {'before-earnings', 'after-market-report-day-close', 'sell-before-earnings-no-hold-through'}:
+        raise SystemExit(f"invalid exit_policy {exit_policy!r}; expected before-earnings")
     return {
         'option_right': option_right,
+        'exit_days_before': exit_days_before,
+        'exit_policy': 'sell_before_earnings_no_hold_through',
         'max_premium': float(p.get('max_premium') if p.get('max_premium') is not None else 0.50),
         'max_days_after_earnings': int(p.get('max_expiry_after_earnings_days') if p.get('max_expiry_after_earnings_days') is not None else 7),
         'min_expiration_days': int(p.get('min_expiration_days') if p.get('min_expiration_days') is not None else 1),
@@ -129,6 +137,10 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if option_right_setting_marker not in code:
         raise RuntimeError('generated multiyear option-right setting marker not found')
     code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n        self.delta_target = {hp['delta_target']:.6f}\n", 1)
+    exit_policy_marker = "        self.exit_policy = 'sell_before_earnings_no_hold_through'\n"
+    if exit_policy_marker not in code:
+        raise RuntimeError('generated multiyear exit-policy marker not found')
+    code = code.replace(exit_policy_marker, f"        self.exit_policy = {hp['exit_policy']!r}\n        self.exit_days_before = {hp['exit_days_before']}\n", 1)
     contract_fields_marker = '        self.contract_fields = ("symbol","strike","expiry","bid","ask","mid","last","volume","open_interest","iv","delta")'
     if contract_fields_marker not in code:
         raise RuntimeError('generated multiyear contract-fields marker not found')
@@ -176,10 +188,18 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if call_required_move_marker not in code:
         raise RuntimeError('generated multiyear call-only required-move marker not found')
     code = code.replace(call_required_move_marker, "                        req=self.required_move_pct(q, strike, spot)", 1)
+    after_market_exit_marker = "                        planned_exit_date=rd\n                        exit_reason='after_market_report_day_close_sell_before_earnings'"
+    if after_market_exit_marker not in code:
+        raise RuntimeError('generated after-market exit marker not found')
+    code = code.replace(after_market_exit_marker, "                        planned_exit_date=rd-timedelta(days=max(0,self.exit_days_before-1))\n                        exit_reason='after_market_report_day_close_sell_before_earnings'", 1)
+    prior_day_exit_marker = "                        planned_exit_date=rd-timedelta(days=1)\n                        exit_reason='pre_market_or_unknown_prior_trading_day_sell_before_earnings'"
+    if prior_day_exit_marker not in code:
+        raise RuntimeError('generated prior-day exit marker not found')
+    code = code.replace(prior_day_exit_marker, "                        planned_exit_date=rd-timedelta(days=self.exit_days_before)\n                        exit_reason='pre_market_or_unknown_prior_trading_day_sell_before_earnings'", 1)
     parameters_marker = f'"parameters":{{"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}'
     if parameters_marker not in code:
         raise RuntimeError('generated multiyear parameters marker not found')
-    code = code.replace(parameters_marker, f'"parameters":{{"delta_target":{hp["delta_target"]:.6f},"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
+    code = code.replace(parameters_marker, f'"parameters":{{"delta_target":{hp["delta_target"]:.6f},"exit_days_before":{hp["exit_days_before"]},"exit_policy":{hp["exit_policy"]!r},"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
     payload_marker = '\n        payload={"type":"earnings_qc_multiyear_backtest"'
     if payload_marker not in code:
         raise RuntimeError('generated multiyear payload marker not found')
@@ -188,10 +208,18 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if error_detail_marker not in code:
         raise RuntimeError('generated multiyear error detail marker not found')
     code = code.replace(error_detail_marker, '"errors":self.errors[:10],"error_count":error_count,"errors_truncated":error_count>10,"parameters"', 1)
+    payload_policy_marker = '"exit_policy":"sell_before_earnings_no_hold_through"'
+    if payload_policy_marker not in code:
+        raise RuntimeError('generated multiyear payload policy marker not found')
+    code = code.replace(payload_policy_marker, '"exit_policy":self.exit_policy', 1)
     runtime_marker = "self.set_runtime_statistic('multiyear_candidate_count', str(len(self.candidates)))"
     if runtime_marker not in code:
         raise RuntimeError('generated multiyear candidate-count statistic marker not found')
     code = code.replace(runtime_marker, runtime_marker + "\n        self.set_runtime_statistic('multiyear_error_count', str(error_count))", 1)
+    runtime_policy_marker = "self.set_runtime_statistic('multiyear_exit_policy','sell_before_earnings_no_hold_through')"
+    if runtime_policy_marker not in code:
+        raise RuntimeError('generated multiyear runtime policy marker not found')
+    code = code.replace(runtime_policy_marker, "self.set_runtime_statistic('multiyear_exit_policy', self.exit_policy)", 1)
     iv_helper_marker = "    def iv_trade_fields(self, entry_iv_raw, exit_iv_raw, entry_day, exit_day, expiry, iv_inputs):"
     if iv_helper_marker not in code:
         raise RuntimeError('generated multiyear IV method marker not found')
