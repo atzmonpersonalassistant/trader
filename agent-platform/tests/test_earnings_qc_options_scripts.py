@@ -43,7 +43,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             **(params or {}),
         }
         mod.write_project(project_dir, [{"symbol": "XYZ", "earnings_date": "2026-02-01"}], 1, params=params)
-        hist_params = mod.hist_params(params)
         main = (project_dir / "main.py").read_text()
 
         fake_imports = types.ModuleType("AlgorithmImports")
@@ -107,7 +106,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.snapshot_peak_day_count = 0
         alg.entry_min_days = 21
         alg.entry_max_days = 28
-        alg.exit_days_before = hist_params["exit_days_before"]
+        alg.exit_days_before = mod.hist_params(params)["exit_days_before"]
         alg.max_days_after_earnings = 7
         alg.max_premium = 0.50
         alg.max_spread = 0.25
@@ -116,11 +115,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.vol_spread_factor = 0.50
         alg.expected_move_spread_fraction = 0.15
         alg.min_bid = 0.05
-        alg.min_open_interest = hist_params["min_open_interest"]
-        alg.min_volume = hist_params["min_volume"]
-        alg.option_right = hist_params["option_right"]
-        alg.delta_target = hist_params["delta_target"]
-        alg.stop_loss_max_loss_pct = hist_params["stop_loss_max_loss_pct"]
+        alg.min_open_interest = 0
+        alg.min_volume = 0
+        alg.option_right = mod.hist_params(params)["option_right"]
+        alg.delta_target = mod.hist_params(params)["delta_target"]
+        alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
         return alg
 
     def quote(self, bid, ask=None, iv=0.40, symbol="XYZ_CALL_110", strike=110.0, right="call", delta=0.30, expiry="2026-02-05"):
@@ -1298,33 +1297,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(blockers["missing_volatility_inputs"], 1)
         self.assertEqual(blockers["no_eligible_entry_contract"], 1)
 
-    def test_multiyear_oi_volume_gate_matches_stage2_single_thresholds(self):
-        volume_only = self.build_multiyear_algorithm({"min_open_interest": 0, "min_volume": 10})
-        volume_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
-        volume_quote["open_interest"] = 100
-        volume_quote["volume"] = 0
-        self.assertEqual(
-            volume_only.liquidity_blocker(volume_quote, 100.0, 31),
-            "low_open_interest_and_volume",
-        )
-
-        both_thresholds = self.build_multiyear_algorithm({"min_open_interest": 50, "min_volume": 10})
-        oi_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
-        oi_quote["open_interest"] = 100
-        oi_quote["volume"] = 0
-        volume_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
-        volume_quote["open_interest"] = 0
-        volume_quote["volume"] = 100
-        failing_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
-        failing_quote["open_interest"] = 0
-        failing_quote["volume"] = 0
-        self.assertIsNone(both_thresholds.liquidity_blocker(oi_quote, 100.0, 31))
-        self.assertIsNone(both_thresholds.liquidity_blocker(volume_quote, 100.0, 31))
-        self.assertEqual(
-            both_thresholds.liquidity_blocker(failing_quote, 100.0, 31),
-            "low_open_interest_and_volume",
-        )
-
     def test_multiyear_exit_days_before_changes_generated_behavior(self):
         def run(exit_days_before, report_time):
             alg = self.build_multiyear_algorithm({"exit_days_before": exit_days_before})
@@ -2189,8 +2161,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
             datetime.date(2026, 7, 14),
         )
-        alg.min_open_interest = 50
-        alg.min_volume = 10
         contract = types.SimpleNamespace(
             symbol="OPEN_CALL_13",
             right="call",
@@ -2210,12 +2180,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.on_data(types.SimpleNamespace(option_chains={"OPEN OPTION": chain}))
 
         self.assertTrue(alg.quit_called)
-        self.assertEqual(alg.funnel["liquidity_pass"], 0)
-        self.assertEqual(alg.funnel["candidates"], 0)
-        self.assertEqual(
-            alg.rows[0]["liquidity_fail_reason_counts"],
-            {"low_open_interest_and_volume": 1},
-        )
+        self.assertEqual(alg.funnel["liquidity_pass"], 1)
+        self.assertEqual(alg.funnel["candidates"], 1)
+        self.assertEqual(alg.rows[0]["liquidity_fail_reason_counts"], {})
         self.assertEqual(
             alg.rows[0]["liquidity_warning_counts"],
             {"zero_open_interest": 1, "zero_volume": 1},
@@ -2226,11 +2193,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         )
         tuning = json.loads(alg.runtime_statistics["trader.tuning"])
         self.assertIsNone(tuning["max_spread"])
-        self.assertEqual(tuning["min_open_interest"], 50)
-        self.assertEqual(tuning["min_volume"], 10)
+        self.assertEqual(tuning["min_open_interest"], 0)
+        self.assertEqual(tuning["min_volume"], 0)
         self.assertEqual(
             tuning["open_interest_volume_policy"],
-            "gate_if_both_open_interest_and_volume_below_thresholds",
+            "diagnostic_warning_only_not_gate",
         )
         self.assertEqual(
             tuning["spread_policy"],
@@ -2608,12 +2575,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(again["min_open_interest_gate"], 10)
         self.assertEqual(again["min_volume_gate"], 5)
 
-    def test_stage2_params_default_oi_volume_gates_are_disabled(self):
-        mod = load_script("earnings-qc-options-scan")
-        params = mod.parse_stage2_params()
-        self.assertEqual(params["min_open_interest_gate"], 0)
-        self.assertEqual(params["min_volume_gate"], 0)
-
 
 
 
@@ -2877,7 +2838,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.option_right = 'both'", main)
         self.assertIn("self.delta_min = 0.05", main)
         self.assertIn("failure_reasons.append(\"delta_out_of_range\")", main)
-        self.assertIn("failure_reasons.append(\"low_open_interest_and_volume\")", main)
+        self.assertIn("failure_reasons.append(\"low_open_interest\")", main)
 
 
 class EarningsQcHistoricalObservabilityTests(unittest.TestCase):
