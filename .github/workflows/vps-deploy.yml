@@ -238,6 +238,10 @@ jobs:
               sudo apt-get update
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client
             fi
+            if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-yaml
+            fi
           fi
           if command -v systemctl >/dev/null 2>&1; then
             sudo systemctl enable --now docker || true

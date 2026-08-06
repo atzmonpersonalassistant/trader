@@ -35,7 +35,7 @@ class MVP0AgentTests(unittest.TestCase):
         script = ROOT / "agent-platform/scripts/bootstrap-new-vps.sh"
         subprocess.run(["bash", "-n", str(script)], check=True)
         text = script.read_text()
-        self.assertIn('acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo', text)
+        self.assertIn('acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv python3-yaml sqlite3 sudo', text)
         self.assertIn('npm install -g @openai/codex', text)
         self.assertIn('python3 -m pip install --break-system-packages --upgrade lean', text)
         self.assertIn('usermod -aG agent-coding agent-orchestrator', text)
@@ -2015,6 +2015,47 @@ class MVP0AgentTests(unittest.TestCase):
         wrapper = ROOT / "agent-platform/tools/trading-dispatch-review-agent"
         subprocess.run(["bash", "-n", str(wrapper)], check=True)
         self.assertEqual(subprocess.run([str(wrapper), "review", "--pr", "abc"]).returncode, 64)
+
+    def test_review_agent_blocks_invalid_workflow_yaml(self):
+        review = load("trading_review_agent_local_validation", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            workflow = workspace / ".github/workflows/vps-deploy.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text("name: broken\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n   steps: []\n")
+            context = {"files": [{"filename": ".github/workflows/vps-deploy.yml"}]}
+
+            findings = review.local_validation_findings(workspace, context)
+
+        self.assertEqual(len(findings), 1)
+        self.assertIn("Workflow YAML does not parse: .github/workflows/vps-deploy.yml", findings[0])
+
+    def test_review_agent_rejects_workflow_yaml_symlink(self):
+        review = load("trading_review_agent_symlink_validation", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            workflow = workspace / ".github/workflows/vps-deploy.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.symlink_to("/dev/zero")
+            context = {"files": [{"filename": ".github/workflows/vps-deploy.yml"}]}
+
+            findings = review.local_validation_findings(workspace, context)
+
+        self.assertEqual(findings, ["Workflow YAML must be a regular file, not a symlink: .github/workflows/vps-deploy.yml"])
+
+    def test_review_agent_blocks_invalid_utf8_workflow_yaml(self):
+        review = load("trading_review_agent_utf8_validation", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            workflow = workspace / ".github/workflows/vps-deploy.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_bytes(b"name: invalid\n\xff\n")
+            context = {"files": [{"filename": ".github/workflows/vps-deploy.yml"}]}
+
+            findings = review.local_validation_findings(workspace, context)
+
+        self.assertEqual(len(findings), 1)
+        self.assertIn("Workflow YAML is not valid UTF-8: .github/workflows/vps-deploy.yml", findings[0])
 
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
