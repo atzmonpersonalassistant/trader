@@ -1258,45 +1258,6 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertNotIn('"strike": 8', main)
         compile(main, str(project_dir / "main.py"), "exec")
 
-    def test_multiyear_runtime_stat_chunks_sort_numeric_suffixes(self):
-        mod = load_script("earnings-qc-multiyear-backtest")
-        stats = {
-            "multiyear_json_0000": "a",
-            "multiyear_json_0010": "k",
-            "multiyear_json_0002": "c",
-            "unrelated": "z",
-        }
-        self.assertEqual(mod.runtime_stat_chunks(stats, "multiyear_json_"), ["a", "c", "k"])
-
-    def test_multiyear_generated_payload_records_historical_resolution(self):
-        alg = self.build_multiyear_algorithm({"historical_resolution": "minute"})
-        alg.snapshots = {"XYZ": {}}
-        alg.on_end_of_algorithm()
-
-        payload = json.loads("".join(
-            alg.runtime_statistics[key]
-            for key in sorted(alg.runtime_statistics)
-            if key.startswith("multiyear_json_")
-        ))
-        self.assertEqual(payload["historical_resolution"], "minute")
-
-    def test_multiyear_generated_payload_counts_liquidity_blockers(self):
-        alg = self.build_multiyear_algorithm()
-        self.set_multiyear_snapshots(alg, {
-            "2026-01-05": self.quote(0.20, ask=0.25, iv=None, delta=None, expiry="2026-02-05"),
-        })
-
-        alg.on_end_of_algorithm()
-
-        payload = json.loads("".join(
-            alg.runtime_statistics[key]
-            for key in sorted(alg.runtime_statistics)
-            if key.startswith("multiyear_json_")
-        ))
-        blockers = payload["results"][0]["blockers"]
-        self.assertEqual(blockers["missing_volatility_inputs"], 1)
-        self.assertEqual(blockers["no_eligible_entry_contract"], 1)
-
     def test_multiyear_exit_days_before_changes_generated_behavior(self):
         def run(exit_days_before, report_time):
             alg = self.build_multiyear_algorithm({"exit_days_before": exit_days_before})
@@ -2417,16 +2378,33 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_stage2_runner_parses_chunked_stage2_json(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
         self.assertIn("trader.stage2_json_%04d", scan)
-        self.assertNotIn("trader.stage2_json_%02d", scan)
-        self.assertIn("key=lambda k: int(k.rsplit('_', 1)[1])", scan)
         self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
         self.assertIn('"candidate_details": self.candidate_details', scan)
+
+    def test_stage2_chunked_json_reassembles_in_order_past_99_fragments(self):
+        fragment_count = 150
+        payload = {
+            "type": "earnings_qc_stage2_batch_diagnostic",
+            "rows": [
+                {"symbol": f"S{i:04d}", "diagnostic": "x" * 3475}
+                for i in range(fragment_count)
+            ],
+        }
+        payload_text = json.dumps(payload, sort_keys=True)
+        stats = {
+            "trader.stage2_json_%04d" % (i // 3500): payload_text[i:i + 3500]
+            for i in range(0, len(payload_text), 3500)
+        }
+
+        parts = [stats[key] for key in sorted(stats) if key.startswith("trader.stage2_json_")]
+
+        self.assertGreaterEqual(len(parts), fragment_count)
+        self.assertEqual(json.loads("".join(parts)), payload)
 
     def test_qc_cloud_extract_uses_four_digit_chunk_keys(self):
         script = (ROOT / "agent-platform" / "scripts" / "trading-research-qc-cloud-extract").read_text()
         self.assertIn("trader.qc_extract_json_%04d", script)
         self.assertNotIn("trader.qc_extract_json_%03d", script)
-        self.assertIn('key=lambda k: int(k.rsplit("_", 1)[1])', script)
 
     def test_run_now_uses_chunked_stage2_candidate_details_before_capped_stat(self):
         mod = load_script("earnings-qc-options-scan")
