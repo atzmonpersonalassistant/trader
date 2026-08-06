@@ -236,8 +236,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.vol_spread_factor = 0.5
         alg.expected_move_spread_fraction = 0.15
         alg.min_bid = 0.05
-        alg.min_open_interest = 50
-        alg.min_volume = 10
+        alg.min_open_interest = 0
+        alg.min_volume = 0
         return alg
 
 
@@ -2161,6 +2161,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
             datetime.date(2026, 7, 14),
         )
+        alg.min_open_interest = 50
+        alg.min_volume = 10
         contract = types.SimpleNamespace(
             symbol="OPEN_CALL_13",
             right="call",
@@ -2577,6 +2579,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(again["iv_max"], 2.5)
         self.assertEqual(again["min_open_interest_gate"], 10)
         self.assertEqual(again["min_volume_gate"], 5)
+
+    def test_stage2_params_default_oi_volume_gates_are_disabled(self):
+        mod = load_script("earnings-qc-options-scan")
+        params = mod.parse_stage2_params()
+        self.assertEqual(params["min_open_interest_gate"], 0)
+        self.assertEqual(params["min_volume_gate"], 0)
 
 
 
