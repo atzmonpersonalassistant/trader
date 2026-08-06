@@ -350,7 +350,7 @@ chmod 750 "$OUTPUT_DIR"
 SUMMARY_EXCERPT="$(python3 - "$RUN_DIR/full_summary.json" <<'PY'
 import json, pathlib, sys
 j=json.loads(pathlib.Path(sys.argv[1]).read_text())
-keys=['status','run_date','calendar_universe_count','qc_symbols_scanned','forward_candidate_count','final_candidate_count','failed_chunk_count','aggregate_funnel','failed_chunks','chunk_multiyear_statuses','final_candidate_gate','qc_broker_execution']
+keys=['status','run_date','calendar_universe_count','qc_symbols_scanned','forward_candidate_count','final_candidate_count','failed_chunk_count','aggregate_funnel','failed_chunks','chunk_multiyear_statuses','final_candidate_gate']
 print(json.dumps({k:j.get(k) for k in keys}, ensure_ascii=False, indent=2, sort_keys=True)[:16000])
 PY
 )"

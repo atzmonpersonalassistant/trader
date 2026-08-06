@@ -8,16 +8,17 @@ export PYTHONDONTWRITEBYTECODE=1
 
 QC_ENV=${TRADING_QUANTCONNECT_ENV_FILE:-/etc/trading-agents/secrets/quantconnect/env}
 LEAN_WORKSPACE=${TRADING_RESEARCH_LEAN_WORKSPACE:-/agents/research/lean-workspace}
-QC_LEAN_DOCKER_WRAPPER=${TRADING_RESEARCH_QC_LEAN_DOCKER_WRAPPER:-/usr/local/sbin/trading-research-qc-docker-run}
-QC_LEAN_DOCKER_IMAGE_CONFIG=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE_CONFIG:-/etc/trading-agents/qc-lean-docker-image}
-QC_LEAN_DOCKER_IMAGE=${TRADING_RESEARCH_QC_LEAN_DOCKER_IMAGE:-}
 export QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT=${QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT:-900}
 QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS=${QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS:-300}
+QC_CLOUD_EXTRACT_MAX_ATTEMPTS=${QC_CLOUD_EXTRACT_MAX_ATTEMPTS:-3}
 case "$QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT" in
   ''|*[!0-9]*) echo "ERROR: QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT must be a positive integer" >&2; exit 64 ;;
 esac
 case "$QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS" in
   ''|*[!0-9]*) echo "ERROR: QC_CLOUD_EXTRACT_WRAPPER_MARGIN_SECONDS must be a positive integer" >&2; exit 64 ;;
+esac
+case "$QC_CLOUD_EXTRACT_MAX_ATTEMPTS" in
+  ''|*[!0-9]*) echo "ERROR: QC_CLOUD_EXTRACT_MAX_ATTEMPTS must be a positive integer" >&2; exit 64 ;;
 esac
 if (( QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT < 60 )); then
   echo "ERROR: QC_CLOUD_EXTRACT_BACKTEST_TIMEOUT must be >= 60" >&2
@@ -32,8 +33,9 @@ if (( QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS <= QC_CLOUD_EXTRACT_BACKTEST_TIME
   echo "ERROR: QC cloud extract wrapper timeout must be greater than backtest timeout" >&2
   exit 64
 fi
-if [[ -z "$QC_LEAN_DOCKER_IMAGE" && -r "$QC_LEAN_DOCKER_IMAGE_CONFIG" && ! -L "$QC_LEAN_DOCKER_IMAGE_CONFIG" ]]; then
-  QC_LEAN_DOCKER_IMAGE="$(head -n 1 "$QC_LEAN_DOCKER_IMAGE_CONFIG" | tr -d '[:space:]')"
+if (( QC_CLOUD_EXTRACT_MAX_ATTEMPTS < 1 || QC_CLOUD_EXTRACT_MAX_ATTEMPTS > 3 )); then
+  echo "ERROR: QC_CLOUD_EXTRACT_MAX_ATTEMPTS must be between 1 and 3" >&2
+  exit 64
 fi
 MODE=${1:-}
 RUN_DIR=${2:-}
@@ -104,13 +106,11 @@ if [[ "$MODE" == "research-artifact" || "$MODE" == "execute-research-artifact" ]
   EXEC_STDOUT=""
   EXEC_STDERR=""
   PY_IMPORT_STDERR=""
-  DOCKER_LOG=""
-  DOCKER_WRAPPER_LOG=""
   LEAN_HELP_LOG=""
   LEAN_WHOAMI_LOG=""
   LEAN_LOGIN_LOG=""
   SURFACE_ATTEMPTS_LOG=""
-  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_LOG" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG" "$SURFACE_ATTEMPTS_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
+  trap 'rm -f "$TMP_JSON" "$TMP_MD" "$TMP_PY" "$TMP_EXTRACT" "$TMP_EXEC_DIAG" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" "$LEAN_LOGIN_LOG" "$SURFACE_ATTEMPTS_LOG"; if [[ -n "$EXEC_DIR" ]]; then rm -rf "$EXEC_DIR"; fi' EXIT
 
   python3 - "$CANDIDATE_REAL" "$TMP_JSON" "$TMP_MD" "$TMP_PY" <<'PY'
 import json
@@ -315,8 +315,6 @@ PY
   EXEC_STDOUT="$(mktemp)"
   EXEC_STDERR="$(mktemp)"
   PY_IMPORT_STDERR="$(mktemp)"
-  DOCKER_LOG="$(mktemp)"
-  DOCKER_WRAPPER_LOG="$(mktemp)"
   LEAN_HELP_LOG="$(mktemp)"
   LEAN_WHOAMI_LOG="$(mktemp)"
   LEAN_LOGIN_LOG="$(mktemp)"
@@ -356,26 +354,26 @@ PY
   execution_status="extract_unavailable"
   execution_surface="none_attempted"
   execution_rc=""
-  local_python_runtime_status="not_checked"
+  local_python_runtime_status="removed"
   cloud_execution_rc=""
-  local_execution_rc=""
-  docker_execution_rc=""
-  docker_command_attempted=false
+  docker_status="removed"
   SURFACE_ATTEMPTS_LOG="$(mktemp)"
   append_surface_attempt() {
     printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$SURFACE_ATTEMPTS_LOG"
   }
   cloud_status="not_checked"
   if [[ "${TRADING_RESEARCH_FORCE_QC_CLOUD_EXTRACT:-1}" == "1" && "$auth_status" == "authenticated" && -x /usr/local/bin/trading-research-qc-cloud-extract ]]; then
-    cloud_status="attempted_qc_cloud_backtest"
-    execution_surface="qc_cloud_backtest"
-    set +e
-    /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
-    execution_rc=$?
-    cloud_execution_rc=$execution_rc
-    set -e
-    if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
-      python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PYVALIDATE'
+    attempt=1
+    while (( attempt <= QC_CLOUD_EXTRACT_MAX_ATTEMPTS )); do
+      cloud_status="attempted_qc_cloud_backtest"
+      execution_surface="qc_cloud_backtest"
+      set +e
+      QC_CLOUD_EXTRACT_ATTEMPT="$attempt" /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
+      execution_rc=$?
+      cloud_execution_rc=$execution_rc
+      set -e
+      if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
+        python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PYVALIDATE'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 payload = json.load(open(src, encoding="utf-8"))
@@ -399,171 +397,25 @@ if not isinstance(ctx, dict) or "target_event_windows" not in ctx or "target_exp
     raise SystemExit("cloud extract missing event/expiry context")
 open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 PYVALIDATE
-      mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-      execution_status="extract_written"
-      cloud_status="extract_written"
-    else
-      cloud_status="qc_cloud_execution_failed"
-    fi
-    append_surface_attempt "qc_cloud_backtest" "$cloud_status" "$cloud_execution_rc"
-  fi
-  if [[ "$execution_status" != "extract_written" ]]; then
-    if command -v python3 >/dev/null 2>&1; then
-      execution_surface="local_python_quantbook_script"
-      if /usr/bin/timeout 20s python3 - <<'PY' 2>"$PY_IMPORT_STDERR"
-import clr  # noqa: F401
-import QuantConnect  # noqa: F401
-PY
-      then
-        local_python_runtime_status="quantconnect_python_runtime_present"
+        mv "$TMP_EXTRACT" "$OUT_EXTRACT"
+        execution_status="extract_written"
+        cloud_status="extract_written"
       else
-        local_python_runtime_status="quantconnect_python_runtime_missing"
+        cloud_status="qc_cloud_execution_failed"
       fi
-      set +e
-      (cd "$EXEC_DIR" && /usr/bin/timeout 120s python3 qc_option_history_probe.py >"$EXEC_STDOUT" 2>"$EXEC_STDERR")
-      execution_rc=$?
-      local_execution_rc=$execution_rc
-      set -e
-      if [[ "$execution_rc" == "0" && -s "$EXEC_DIR/qc_option_history_extract.json" ]]; then
-        python3 - "$EXEC_DIR/qc_option_history_extract.json" "$TMP_EXTRACT" <<'PY'
-import json, sys
-src, dst = sys.argv[1], sys.argv[2]
-payload = json.load(open(src, encoding="utf-8"))
-if payload.get("type") != "qc_option_history_extract":
-    raise SystemExit("unexpected extract type")
-rows = payload.get("option_contract_rows") or []
-underlyings = payload.get("underlyings") or []
-limits = payload.get("limits") or {}
-if len(underlyings) > 3:
-    raise SystemExit("extract exceeds max underlyings")
-if int(limits.get("history_lookback_days", 0)) > 30:
-    raise SystemExit("extract exceeds history lookback")
-if int(limits.get("max_dte", limits.get("expiry_window_days", 0))) > 180:
-    raise SystemExit("extract exceeds expiry window")
-if len(rows) > max(1, len(underlyings)) * 200:
-    raise SystemExit("extract exceeds contract row limit")
-open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-PY
-        mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-        execution_status="extract_written"
+      append_surface_attempt "qc_cloud_backtest" "$cloud_status" "$cloud_execution_rc"
+      if [[ "$execution_status" == "extract_written" ]]; then
+        break
       fi
-      append_surface_attempt "local_python_quantbook_script" "$local_python_runtime_status" "$local_execution_rc"
-    else
-      local_python_runtime_status="python_missing"
-    fi
-  fi
-
-  if [[ "$cloud_status" == "not_checked" && "$execution_status" != "extract_written" && "$auth_status" == "authenticated" && -x /usr/local/bin/trading-research-qc-cloud-extract ]]; then
-    cloud_status="attempted_qc_cloud_backtest"
-    execution_surface="qc_cloud_backtest"
-    set +e
-    /usr/bin/timeout "${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s" /usr/local/bin/trading-research-qc-cloud-extract "$RUN_REAL" >"$EXEC_STDOUT" 2>"$EXEC_STDERR"
-    execution_rc=$?
-    cloud_execution_rc=$execution_rc
-    set -e
-    if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
-      python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PY'
-import json, sys
-src, dst = sys.argv[1], sys.argv[2]
-payload = json.load(open(src, encoding="utf-8"))
-if payload.get("type") != "qc_option_history_extract":
-    raise SystemExit("unexpected extract type")
-rows = payload.get("option_contract_rows") or []
-underlyings = payload.get("underlyings") or []
-limits = payload.get("limits") or {}
-if len(underlyings) > 3:
-    raise SystemExit("extract exceeds max underlyings")
-if int(limits.get("history_lookback_days", 0)) > 30:
-    raise SystemExit("extract exceeds history lookback")
-if int(limits.get("max_dte", limits.get("expiry_window_days", 0))) > 180:
-    raise SystemExit("extract exceeds expiry window")
-if len(rows) > max(1, len(underlyings)) * 200:
-    raise SystemExit("extract exceeds contract row limit")
-open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-PY
-      mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-      execution_status="extract_written"
-      cloud_status="extract_written"
-    else
-      cloud_status="qc_cloud_execution_failed"
-    fi
-    append_surface_attempt "qc_cloud_backtest" "$cloud_status" "$cloud_execution_rc"
-  fi
-
-  docker_status="not_checked"
-  docker_image="$QC_LEAN_DOCKER_IMAGE"
-  if [[ "$execution_status" != "extract_written" ]]; then
-    if [[ -z "$docker_image" ]]; then
-      docker_status="docker_image_not_configured"
-    elif [[ ! -x "$QC_LEAN_DOCKER_WRAPPER" ]]; then
-      docker_status="docker_wrapper_unavailable"
-    else
-      docker_status="attempted_configured_quantconnect_lean_image"
-      execution_surface="lean_docker_quantconnect_python_runtime"
-      docker_command_attempted=true
-      set +e
-      sudo -n "$QC_LEAN_DOCKER_WRAPPER" "$RUN_REAL" "$docker_image" >"$EXEC_STDOUT" 2>"$DOCKER_WRAPPER_LOG"
-      execution_rc=$?
-      docker_execution_rc=$execution_rc
-      set -e
-      cat "$DOCKER_WRAPPER_LOG" >>"$EXEC_STDERR"
-      wrapper_status="$(python3 - "$EXEC_STDOUT" "$DOCKER_WRAPPER_LOG" <<'PY'
-import json, sys
-for path in sys.argv[1:]:
-    try:
-        lines = open(path, errors="replace").read().splitlines()
-    except OSError:
-        continue
-    for line in reversed(lines):
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if payload.get("type") == "qc_docker_wrapper_status" and payload.get("status"):
-            print(payload["status"])
-            raise SystemExit(0)
-PY
-)"
-      case "$wrapper_status" in
-        docker_missing|docker_not_running|docker_image_not_configured|docker_image_missing|lean_docker_execution_failed|extract_written)
-          docker_status="$wrapper_status"
-          ;;
-        wrapper_not_root|usage_error|invalid_run_dir|probe_missing)
-          docker_status="docker_wrapper_unavailable"
-          ;;
-        "")
-          docker_status="docker_wrapper_unavailable"
-          ;;
-      esac
-      if [[ "$execution_rc" == "0" && -s "$OUT_EXTRACT" ]]; then
-        python3 - "$OUT_EXTRACT" "$TMP_EXTRACT" <<'PY'
-import json, sys
-src, dst = sys.argv[1], sys.argv[2]
-payload = json.load(open(src, encoding="utf-8"))
-if payload.get("type") != "qc_option_history_extract":
-    raise SystemExit("unexpected extract type")
-rows = payload.get("option_contract_rows") or []
-underlyings = payload.get("underlyings") or []
-limits = payload.get("limits") or {}
-if len(underlyings) > 3:
-    raise SystemExit("extract exceeds max underlyings")
-if int(limits.get("history_lookback_days", 0)) > 30:
-    raise SystemExit("extract exceeds history lookback")
-if int(limits.get("max_dte", limits.get("expiry_window_days", 0))) > 180:
-    raise SystemExit("extract exceeds expiry window")
-if len(rows) > max(1, len(underlyings)) * 200:
-    raise SystemExit("extract exceeds contract row limit")
-open(dst, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
-PY
-        mv "$TMP_EXTRACT" "$OUT_EXTRACT"
-        execution_status="extract_written"
+      if (( attempt < QC_CLOUD_EXTRACT_MAX_ATTEMPTS )); then
+        sleep "$(( attempt * 30 ))"
       fi
-      append_surface_attempt "lean_docker_quantconnect_python_runtime" "$docker_status" "$docker_execution_rc"
-    fi
+      attempt=$(( attempt + 1 ))
+    done
   fi
 
   if [[ "$execution_status" != "extract_written" ]]; then
-    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$docker_image" "$cloud_status" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$DOCKER_WRAPPER_LOG" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
+    python3 - "$TMP_EXEC_DIAG" "$auth_status" "$lean_status" "$lean_research_status" "$local_python_runtime_status" "$docker_status" "$cloud_status" "$execution_surface" "$execution_rc" "$EXEC_STDOUT" "$EXEC_STDERR" "$PY_IMPORT_STDERR" "$LEAN_HELP_LOG" "$LEAN_WHOAMI_LOG" <<'PY'
 import json, re, sys, time
 (
     path,
@@ -572,14 +424,12 @@ import json, re, sys, time
     lean_research_status,
     python_runtime_status,
     docker_status,
-    docker_image,
     cloud_status,
     surface,
     rc,
     stdout_path,
     stderr_path,
     py_import_stderr_path,
-    docker_log_path,
     help_path,
     whoami_path,
 ) = sys.argv[1:]
@@ -602,30 +452,19 @@ def maybe_int(value):
 
 if cloud_status == "qc_cloud_execution_failed":
     status = "qc_cloud_execution_failed"
-    reason = "The broker submitted a bounded QC Cloud backtest/extract request, but it did not produce qc_option_history_extract.json. Inspect stdout/stderr excerpts and QC cloud artifacts for the exact failure."
+    reason = "The broker submitted bounded QC Cloud backtest/extract attempts, but none produced qc_option_history_extract.json. Inspect stdout/stderr excerpts and QC cloud artifacts for the exact failure."
 elif auth_status == "auth_failure":
     status = "auth_failure"
     reason = "Lean CLI authentication check failed for the broker role; no raw credentials were exposed to the runner."
 elif auth_status == "lean_cli_missing":
     status = "lean_missing"
     reason = "Lean CLI is not installed or not on PATH for the broker role, so no authenticated QC Research execution surface is available."
-elif docker_status in ("attempted_configured_quantconnect_lean_image", "lean_docker_execution_failed"):
-    status = "lean_docker_execution_failed"
-    reason = "The broker attempted the explicitly configured QC/LEAN Docker image, but it did not produce qc_option_history_extract.json. Inspect docker/stdout/stderr excerpts for the exact runtime failure."
-elif docker_status in ("docker_missing", "docker_not_running", "docker_image_not_configured", "docker_image_missing", "docker_wrapper_unavailable"):
-    status = docker_status
-    reason = "Docker with an explicitly configured approved QC/LEAN image must run through the narrow root-owned wrapper, but Docker, the image, or the wrapper is missing, unavailable, or not configured for the broker role."
-# Diagnostic precedence note: docker_status == "attempted_configured_quantconnect_lean_image" is evaluated
-# before falling back to python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing").
-elif python_runtime_status in ("quantconnect_python_runtime_missing", "python_missing"):
-    status = "quantconnect_python_runtime_missing"
-    reason = "Local Python cannot import the QuantConnect research runtime (clr/QuantConnect), so the bounded QuantBook probe cannot run directly."
 elif lean_research_status == "non_interactive_research_execution_unsupported":
     status = "non_interactive_research_execution_unsupported"
     reason = "Lean CLI is authenticated, but this installed CLI did not advertise a non-interactive research/notebook execution command."
 else:
     status = "qc_cloud_execution_surface_unavailable"
-    reason = "Local Lean/Python/Docker surfaces did not produce an extract. QuantConnect cloud/API execution was not submitted because this broker has no authenticated non-interactive cloud execution surface available; QuantConnect backtest cost is not a blocker under the subscription plan."
+    reason = "QC Cloud extraction was not submitted because this broker has no authenticated non-interactive cloud execution surface available; QuantConnect backtest cost is not a blocker under the subscription plan."
 
 payload = {
     "type": "qc_research_execution_diagnostic",
@@ -634,15 +473,13 @@ payload = {
     "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "auth_status": auth_status,
     "attempted_surface": surface,
-    "attempted_command": "timeout 120s python3 qc_option_history_probe.py",
-    "docker_attempted_command": "sudo -n /usr/local/sbin/trading-research-qc-docker-run RUN_DIR CONFIGURED_IMAGE",
+    "attempted_command": "timeout ${QC_CLOUD_EXTRACT_WRAPPER_TIMEOUT_SECONDS}s trading-research-qc-cloud-extract RUN_DIR",
     "exit_code": maybe_int(rc),
     "surface_checks": {
         "lean_cli": lean_status,
         "lean_research_noninteractive": lean_research_status,
-        "local_python_quantconnect_runtime": python_runtime_status,
+        "local_python_quantconnect_runtime": "removed",
         "docker": docker_status,
-        "docker_image": docker_image or None,
         "cloud_or_api_research": cloud_status,
     },
     "extract_artifact": "qc_option_history_extract.json",
@@ -652,7 +489,6 @@ payload = {
     "lean_cli_help_redacted_excerpt": lean_help[:2000],
     "lean_whoami_redacted_excerpt": read_limited(whoami_path, 1000),
     "python_import_stderr_redacted_excerpt": read_limited(py_import_stderr_path),
-    "docker_redacted_excerpt": read_limited(docker_log_path),
     "stdout_redacted_excerpt": read_limited(stdout_path),
     "stderr_redacted_excerpt": read_limited(stderr_path),
     "bounded_limits": {
@@ -668,7 +504,7 @@ payload = {
         "contains_tokens_or_secret_paths": False,
         "runner_may_read": True,
     },
-    "next_research_instruction": "Use this diagnostic to distinguish auth failure from unavailable QuantBook/QC Research execution. Do not claim extracted option-chain/history data exists unless qc_option_history_extract.json is present.",
+    "next_research_instruction": "Use this diagnostic to distinguish auth failure from QC Cloud extraction failure. Do not claim extracted option-chain/history data exists unless qc_option_history_extract.json is present.",
 }
 open(path, "w", encoding="utf-8").write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 PY
@@ -710,6 +546,7 @@ for line in attempt_lines:
     surface, status, rc = (line.split("\t", 2) + ["", ""])[:3]
     surface_attempts.append({"surface": surface, "status": status, "exit_code": maybe_int(rc)})
 manifest["surface_attempts"] = surface_attempts
+manifest["attempt_count"] = len(surface_attempts)
 if execution_status == "extract_written":
     manifest["status"] = "executed_extract_available"
     manifest["extraction_status"] = "extract_written"
@@ -719,10 +556,6 @@ if execution_status == "extract_written":
         manifest["extraction_reason"] = "The broker executed the bounded QC probe via QC Cloud backtest and wrote qc_option_history_extract.json."
         manifest.setdefault("bounded_limits", {})["cloud_backtest_submitted"] = True
         detail = "Broker execution produced `qc_option_history_extract.json` via bounded QC Cloud backtest."
-    else:
-        manifest["extraction_surface"] = "local_quantbook_or_docker"
-        manifest["extraction_reason"] = "The broker executed the bounded QC/QuantBook probe through an available non-interactive local surface and wrote qc_option_history_extract.json."
-        detail = "Broker execution produced `qc_option_history_extract.json`."
     manifest["extracted_artifacts"] = [extract_rel]
     manifest["capability_gap"] = None
     manifest["artifacts"].append({"path": extract_rel, "kind": "bounded_option_history_extract", "description": "Bounded option-chain/history content produced by the broker."})
