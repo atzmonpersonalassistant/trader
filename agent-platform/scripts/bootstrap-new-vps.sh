@@ -206,7 +206,6 @@ install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-cloud-extract
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-cloud-run" /usr/local/bin/trading-research-qc-cloud-run
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
 install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
-install -o root -g root -m 755 "${SCRIPTS_DIR}/trading-research-qc-docker-run" /usr/local/sbin/trading-research-qc-docker-run
 install -o root -g root -m 755 "${EARNINGS_DIR}/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
 
 
@@ -344,28 +343,17 @@ SUDOERS_RUNNER
 chmod 440 /etc/sudoers.d/trading-agent-research-runner
 visudo -cf /etc/sudoers.d/trading-agent-research-runner >/dev/null
 
-cat > /etc/sudoers.d/trading-agent-research-qc-docker <<'SUDOERS_QC_DOCKER'
-# Allow the research broker to run only the safe QC/LEAN Docker wrapper as root.
-agent-research ALL=(root) NOPASSWD: /usr/local/sbin/trading-research-qc-docker-run *
-SUDOERS_QC_DOCKER
-chmod 440 /etc/sudoers.d/trading-agent-research-qc-docker
-visudo -cf /etc/sudoers.d/trading-agent-research-qc-docker >/dev/null
+rm -f /etc/sudoers.d/trading-agent-research-qc-docker /usr/local/sbin/trading-research-qc-docker-run /etc/trading-agents/qc-lean-docker-image
 
 log "creating placeholder config files if missing"
-if [[ ! -s /etc/trading-agents/qc-lean-docker-image ]]; then
-  printf '%s\n' 'quantconnect/research:latest' > /etc/trading-agents/qc-lean-docker-image
-fi
-chown root:root /etc/trading-agents/qc-lean-docker-image
-chmod 644 /etc/trading-agents/qc-lean-docker-image
 if command -v docker >/dev/null 2>&1; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl enable --now docker || true
   elif command -v service >/dev/null 2>&1; then
     service docker start || true
   fi
-  docker pull "$(head -n 1 /etc/trading-agents/qc-lean-docker-image)" || true
 else
-  log "docker is not installed; QC local Research/QuantBook execution will be blocked until Docker is installed"
+  log "docker is not installed; docker diagnostics and retention image-prune checks will be unavailable"
 fi
 
 if [[ ! -e /etc/trading-agents/github-apps.json ]]; then
