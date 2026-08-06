@@ -1280,6 +1280,23 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         ))
         self.assertEqual(payload["historical_resolution"], "minute")
 
+    def test_multiyear_generated_payload_counts_liquidity_blockers(self):
+        alg = self.build_multiyear_algorithm()
+        self.set_multiyear_snapshots(alg, {
+            "2026-01-05": self.quote(0.20, ask=0.25, iv=None, delta=None, expiry="2026-02-05"),
+        })
+
+        alg.on_end_of_algorithm()
+
+        payload = json.loads("".join(
+            alg.runtime_statistics[key]
+            for key in sorted(alg.runtime_statistics)
+            if key.startswith("multiyear_json_")
+        ))
+        blockers = payload["results"][0]["blockers"]
+        self.assertEqual(blockers["missing_volatility_inputs"], 1)
+        self.assertEqual(blockers["no_eligible_entry_contract"], 1)
+
     def test_multiyear_exit_days_before_changes_generated_behavior(self):
         def run(exit_days_before, report_time):
             alg = self.build_multiyear_algorithm({"exit_days_before": exit_days_before})

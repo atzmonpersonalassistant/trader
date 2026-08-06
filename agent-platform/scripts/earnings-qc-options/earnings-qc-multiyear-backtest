@@ -200,6 +200,34 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if call_required_move_marker not in code:
         raise RuntimeError('generated multiyear call-only required-move marker not found')
     code = code.replace(call_required_move_marker, "                        req=self.required_move_pct(q, strike, spot)", 1)
+    liquidity_pass_marker = "    def nearest_snapshot_date(self, sym, target, latest):"
+    if liquidity_pass_marker not in code:
+        raise RuntimeError('generated multiyear liquidity-blocker insertion marker not found')
+    code = code.replace(
+        liquidity_pass_marker,
+        "    def liquidity_blocker(self, q, spot, dte):\n"
+        "        bid=self.qget(q,'bid') or 0; ask=self.qget(q,'ask') or 0; mid=self.qget(q,'mid') or 0\n"
+        "        m=self.liquidity_metrics(q, spot, dte)\n"
+        "        if ask <= 0 or bid < self.min_bid or mid <= 0: return 'bad_price_or_bid'\n"
+        "        if m['missing_volatility_inputs']: return 'missing_volatility_inputs'\n"
+        "        if m['spread'] > m['allowed_spread']: return 'spread_too_wide'\n"
+        "        if m['spread_mid_pct'] is None or m['spread_mid_pct'] > self.max_spread_pct * 100.0: return 'spread_too_wide'\n"
+        "        if (self.qget(q,'open_interest') or 0) < self.min_open_interest and (self.qget(q,'volume') or 0) < self.min_volume: return 'low_open_interest_and_volume'\n"
+        "        return None\n"
+        + liquidity_pass_marker,
+        1,
+    )
+    liquidity_reject_marker = "                        if not self.liquidity_pass(q, spot, dte): continue"
+    if liquidity_reject_marker not in code:
+        raise RuntimeError('generated multiyear liquidity rejection marker not found')
+    code = code.replace(
+        liquidity_reject_marker,
+        "                        blocker=self.liquidity_blocker(q, spot, dte)\n"
+        "                        if blocker is not None:\n"
+        "                            blockers[blocker]=blockers.get(blocker,0)+1\n"
+        "                            continue",
+        1,
+    )
     after_market_exit_marker = "                        planned_exit_date=rd\n                        exit_reason='after_market_report_day_close_sell_before_earnings'"
     if after_market_exit_marker not in code:
         raise RuntimeError('generated after-market exit marker not found')
