@@ -43,6 +43,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             **(params or {}),
         }
         mod.write_project(project_dir, [{"symbol": "XYZ", "earnings_date": "2026-02-01"}], 1, params=params)
+        hist_params = mod.hist_params(params)
         main = (project_dir / "main.py").read_text()
 
         fake_imports = types.ModuleType("AlgorithmImports")
@@ -106,7 +107,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.snapshot_peak_day_count = 0
         alg.entry_min_days = 21
         alg.entry_max_days = 28
-        alg.exit_days_before = mod.hist_params(params)["exit_days_before"]
+        alg.exit_days_before = hist_params["exit_days_before"]
         alg.max_days_after_earnings = 7
         alg.max_premium = 0.50
         alg.max_spread = 0.25
@@ -115,11 +116,11 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.vol_spread_factor = 0.50
         alg.expected_move_spread_fraction = 0.15
         alg.min_bid = 0.05
-        alg.min_open_interest = 0
-        alg.min_volume = 0
-        alg.option_right = mod.hist_params(params)["option_right"]
-        alg.delta_target = mod.hist_params(params)["delta_target"]
-        alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
+        alg.min_open_interest = hist_params["min_open_interest"]
+        alg.min_volume = hist_params["min_volume"]
+        alg.option_right = hist_params["option_right"]
+        alg.delta_target = hist_params["delta_target"]
+        alg.stop_loss_max_loss_pct = hist_params["stop_loss_max_loss_pct"]
         return alg
 
     def quote(self, bid, ask=None, iv=0.40, symbol="XYZ_CALL_110", strike=110.0, right="call", delta=0.30, expiry="2026-02-05"):
@@ -1296,6 +1297,33 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         blockers = payload["results"][0]["blockers"]
         self.assertEqual(blockers["missing_volatility_inputs"], 1)
         self.assertEqual(blockers["no_eligible_entry_contract"], 1)
+
+    def test_multiyear_oi_volume_gate_matches_stage2_single_thresholds(self):
+        volume_only = self.build_multiyear_algorithm({"min_open_interest": 0, "min_volume": 10})
+        volume_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+        volume_quote["open_interest"] = 100
+        volume_quote["volume"] = 0
+        self.assertEqual(
+            volume_only.liquidity_blocker(volume_quote, 100.0, 31),
+            "low_open_interest_and_volume",
+        )
+
+        both_thresholds = self.build_multiyear_algorithm({"min_open_interest": 50, "min_volume": 10})
+        oi_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+        oi_quote["open_interest"] = 100
+        oi_quote["volume"] = 0
+        volume_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+        volume_quote["open_interest"] = 0
+        volume_quote["volume"] = 100
+        failing_quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+        failing_quote["open_interest"] = 0
+        failing_quote["volume"] = 0
+        self.assertIsNone(both_thresholds.liquidity_blocker(oi_quote, 100.0, 31))
+        self.assertIsNone(both_thresholds.liquidity_blocker(volume_quote, 100.0, 31))
+        self.assertEqual(
+            both_thresholds.liquidity_blocker(failing_quote, 100.0, 31),
+            "low_open_interest_and_volume",
+        )
 
     def test_multiyear_exit_days_before_changes_generated_behavior(self):
         def run(exit_days_before, report_time):
