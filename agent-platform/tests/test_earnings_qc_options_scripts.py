@@ -210,6 +210,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("derive_insights", cli)
         self.assertIn("research_verdict TEXT", cli)
         self.assertIn("ADD COLUMN IF NOT EXISTS research_verdict TEXT", cli)
+        self.assertIn("forward_candidate_count INTEGER NOT NULL DEFAULT 0", cli)
+        self.assertIn("ADD COLUMN IF NOT EXISTS forward_candidate_count INTEGER NOT NULL DEFAULT 0", cli)
+        self.assertIn("summary_json->>'forward_candidate_count'", cli)
+        self.assertIn("forward_candidate_count IS DISTINCT FROM (summary_json->>'forward_candidate_count')::integer", cli)
+        self.assertIn("ALTER COLUMN summary_json DROP NOT NULL", cli)
+        self.assertIn("ALTER COLUMN contract_json DROP NOT NULL", cli)
 
     def test_research_schema_identifier_is_sanitized(self):
         mod = load_script("earnings-qc-research")
@@ -259,7 +265,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_upsert_run_splits_lifecycle_verdict_and_bottleneck(self):
         mod = load_script("earnings-qc-research")
         calls = []
-        ok_summary = {"ok": True, "status": "OK_FULL_QC_SCAN", "final_candidate_count": 1}
+        ok_summary = {"ok": True, "status": "OK_FULL_QC_SCAN", "final_candidate_count": 1, "forward_candidate_count": 5}
         no_pass_summary = {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", "historical_gate_no_pass": True}
         blocked_summary = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE", "historical_gate_blocked": True}
         with mock.patch.object(mod, "ensure_research_db", return_value=True), \
@@ -268,11 +274,125 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             mod.persist_summary_to_db("camp", "no-pass-run", pathlib.Path("/tmp/no-pass"), no_pass_summary, {})
             mod.upsert_run("blocked-run", "camp", "blocked", pathlib.Path("/tmp/blocked"), {}, blocked_summary, finished=True)
         joined = "\n".join(calls)
-        self.assertIn("research_verdict,bottleneck,error", joined)
-        self.assertIn("'OK_FULL_QC_SCAN', NULL, NULL", joined)
+        self.assertIn("final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error", joined)
+        self.assertIn("1, 5, 'OK_FULL_QC_SCAN', NULL, NULL", joined)
         self.assertIn("'no-pass-run', 'camp', 'completed'", joined)
         self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', NULL, NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
+
+    def test_cleanup_prunes_old_db_blobs_without_deleting_rows(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_scan = reports / "earnings-qc-options-scan-full-old"
+        old_pass = reports / "research-pass-old"
+        old_experiment = reports / "qc-run-old"
+        for path in [old_scan, old_pass, old_experiment]:
+            path.mkdir()
+            (path / "payload.txt").write_text("old")
+            if path.name.startswith("research-pass-"):
+                (path / "final_report.md").write_text("discard\n")
+                (path / "exit_code").write_text("0\n")
+            if path.name.startswith("qc-run-"):
+                (path / "qc_run_result.json").write_text(json.dumps({"ok": True}))
+            os.utime(path, (1, 1))
+            os.utime(path / "payload.txt", (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=False)
+        calls = []
+
+        def fake_db_exec(sql, fetch=False):
+            calls.append(sql)
+            if fetch:
+                return '{"research_runs": 2, "candidate_dossiers": 3, "research_stages": 4}'
+            return ""
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=fake_db_exec):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = mod.cmd_cleanup(args)
+
+        self.assertEqual(rc, 0)
+        out = json.loads(stdout.getvalue())
+        self.assertFalse(out["dry_run"])
+        self.assertEqual(len(out["deleted_paths"]), 3)
+        self.assertEqual(out["pruned_db_blobs"]["research_runs"], 2)
+        joined = "\n".join(calls)
+        self.assertIn("row_number() OVER", joined)
+        self.assertIn("PARTITION BY campaign_id", joined)
+        self.assertIn("run_id NOT IN (SELECT run_id FROM ranked_runs WHERE rn <= 0)", joined)
+        self.assertIn("SET summary_json = NULL, parameters_json = NULL", joined)
+        self.assertIn("contract_json IS NOT NULL OR liquidity_json IS NOT NULL OR historical_pnl_json IS NOT NULL OR metrics_json IS NOT NULL", joined)
+        self.assertIn("input_json IS NOT NULL OR output_json IS NOT NULL", joined)
+        self.assertNotIn("SET summary_json = NULL, parameters_json = NULL, updated_at = now()", joined)
+        self.assertNotIn("DELETE FROM", joined)
+
+    def test_cleanup_keep_last_is_per_report_prefix(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        paths = [
+            ("earnings-qc-options-scan-full-old", 1),
+            ("earnings-qc-options-scan-full-new", 2),
+            ("research-pass-old", 3),
+            ("research-pass-new", 4),
+            ("qc-run-old", 5),
+            ("qc-run-new", 6),
+        ]
+        for name, mtime in paths:
+            path = reports / name
+            path.mkdir()
+            (path / "payload.txt").write_text("old")
+            if name.startswith("research-pass-"):
+                (path / "final_report.md").write_text("discard\n")
+                (path / "exit_code").write_text("0\n")
+            if name.startswith("qc-run-"):
+                (path / "qc_run_result.json").write_text(json.dumps({"ok": True}))
+            os.utime(path, (mtime, mtime))
+            os.utime(path / "payload.txt", (mtime, mtime))
+        args = argparse.Namespace(older_than_days=3, keep_last=1, dry_run=True)
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=False):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = mod.cmd_cleanup(args)
+
+        self.assertEqual(rc, 0)
+        deleted = {pathlib.Path(item["path"]).name for item in json.loads(stdout.getvalue())["deleted_paths"]}
+        self.assertEqual(deleted, {
+            "earnings-qc-options-scan-full-old",
+            "research-pass-old",
+            "qc-run-old",
+        })
+
+    def test_cleanup_preserves_active_expanded_run_prefixes(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        active_pass = reports / "research-pass-active"
+        active_qc = reports / "qc-run-active"
+        completed_pass = reports / "research-pass-completed"
+        completed_qc = reports / "qc-run-completed"
+        for path in [active_pass, active_qc, completed_pass, completed_qc]:
+            path.mkdir()
+            (path / "payload.txt").write_text("old")
+            os.utime(path, (1, 1))
+            os.utime(path / "payload.txt", (1, 1))
+        (completed_pass / "final_report.md").write_text("discard\n")
+        (completed_pass / "exit_code").write_text("0\n")
+        (completed_qc / "qc_run_result.json").write_text(json.dumps({"ok": True}))
+        for path in [completed_pass, completed_qc]:
+            os.utime(path, (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=True)
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=False):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = mod.cmd_cleanup(args)
+
+        self.assertEqual(rc, 0)
+        deleted = {pathlib.Path(item["path"]).name for item in json.loads(stdout.getvalue())["deleted_paths"]}
+        self.assertEqual(deleted, {"research-pass-completed", "qc-run-completed"})
 
     def test_derive_insights_uses_research_verdict_not_only_bottleneck(self):
         mod = load_script("earnings-qc-research")

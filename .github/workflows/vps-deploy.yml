@@ -582,14 +582,14 @@ jobs:
           EOF_WATCHDOG_TIMER
           sudo tee /etc/systemd/system/trader-research-retention.service >/dev/null <<'EOF_RETENTION_SERVICE'
           [Unit]
-          Description=Trader research artifact and Docker retention
+          Description=Trader research artifact and database retention
 
           [Service]
           Type=oneshot
           Environment=TZ=Asia/Jerusalem
-          # Deliberately no User=: docker image prune requires root-owned Docker socket access.
-          # The prune is constrained to dangling images older than 168h; research cleanup runs as agent-research.
-          ExecStart=/bin/bash -lc 'set -euo pipefail; sudo -n -u agent-research /agents/research/bin/earnings-qc-research cleanup --older-than-days 14 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1; docker image prune -f --filter until=168h >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'
+          User=agent-research
+          Group=agent-research
+          ExecStart=/bin/bash -lc 'set -euo pipefail; /agents/research/bin/earnings-qc-research cleanup --older-than-days 3 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'
           EOF_RETENTION_SERVICE
           sudo tee /etc/systemd/system/trader-research-retention.timer >/dev/null <<'EOF_RETENTION_TIMER'
           [Unit]
@@ -886,8 +886,8 @@ jobs:
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\*-\*-\* 04:15:00 Asia/Jerusalem'
-          systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 14 --keep-last 20'
-          systemctl cat trader-research-retention.service | grep -q 'docker image prune -f --filter until=168h'
+          systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 3 --keep-last 20'
+          systemctl cat trader-research-retention.service | grep -q 'User=agent-research'
           systemctl is-enabled --quiet trader-earnings-otm-daily.timer
           systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
           systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer
