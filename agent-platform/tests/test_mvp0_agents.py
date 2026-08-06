@@ -2043,6 +2043,20 @@ class MVP0AgentTests(unittest.TestCase):
 
         self.assertEqual(findings, ["Workflow YAML must be a regular file, not a symlink: .github/workflows/vps-deploy.yml"])
 
+    def test_review_agent_blocks_invalid_utf8_workflow_yaml(self):
+        review = load("trading_review_agent_utf8_validation", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            workflow = workspace / ".github/workflows/vps-deploy.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_bytes(b"name: invalid\n\xff\n")
+            context = {"files": [{"filename": ".github/workflows/vps-deploy.yml"}]}
+
+            findings = review.local_validation_findings(workspace, context)
+
+        self.assertEqual(len(findings), 1)
+        self.assertIn("Workflow YAML is not valid UTF-8: .github/workflows/vps-deploy.yml", findings[0])
+
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}

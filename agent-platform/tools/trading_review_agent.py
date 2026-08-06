@@ -273,6 +273,10 @@ def local_validation_findings(workspace: Path, context: dict[str, Any]) -> list[
             continue
         try:
             yaml.safe_load(path.read_text(encoding="utf-8"))
+        except UnicodeDecodeError as exc:
+            findings.append(f"Workflow YAML is not valid UTF-8: {filename}: {exc}")
+        except OSError as exc:
+            findings.append(f"Workflow YAML could not be read: {filename}: {exc}")
         except yaml.YAMLError as exc:
             findings.append(f"Workflow YAML does not parse: {filename}: {exc}")
     return findings
