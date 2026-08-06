@@ -125,6 +125,45 @@ fi
 # Legacy/manual runs before this fix may have used the old default campaign, so
 # fall back by deterministic daily run_id + conservative daily parameters only.
 cd /tmp && psql -d trader_research -qAt -v ON_ERROR_STOP=1 -c "ALTER TABLE earnings_cache.research_runs ADD COLUMN IF NOT EXISTS research_verdict TEXT;" >/dev/null
+RETRY_WAITING_ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
+SELECT run_id, COALESCE(summary_json->>'next_attempt_at_utc', parameters_json->>'next_attempt_at_utc', '')
+FROM earnings_cache.research_runs
+WHERE campaign_id = 'daily-earnings-otm'
+  AND run_id LIKE 'earnings-qc-options-scan-full-${DATE_COMPACT}-%'
+  AND status = 'running'
+  AND COALESCE(research_verdict, summary_json->>'status', '') = 'DAILY_RETRY_WAITING'
+ORDER BY updated_at DESC, started_at DESC
+LIMIT 1;
+")"
+if [[ -n "$RETRY_WAITING_ROW" ]]; then
+  IFS=$'\t' read -r RETRY_WAITING_RUN_ID RETRY_NEXT_ATTEMPT_AT <<< "$RETRY_WAITING_ROW"
+  RETRY_WAITING_STATE="$(python3 - "$RETRY_NEXT_ATTEMPT_AT" "${EARNINGS_POSTRUN_NOW:-}" <<'PY'
+import datetime as dt
+import sys
+
+next_s, now_s = sys.argv[1:3]
+try:
+    next_at = dt.datetime.fromisoformat(next_s.replace("Z", "+00:00"))
+    if next_at.tzinfo is None:
+        next_at = next_at.replace(tzinfo=dt.timezone.utc)
+    if now_s:
+        now = dt.datetime.fromisoformat(now_s.replace("Z", "+00:00"))
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.timezone.utc)
+        else:
+            now = now.astimezone(dt.timezone.utc)
+    else:
+        now = dt.datetime.now(dt.timezone.utc)
+    print("waiting" if now < next_at.astimezone(dt.timezone.utc) else "expired")
+except Exception:
+    print("unknown")
+PY
+)"
+  if [[ "$RETRY_WAITING_STATE" == "waiting" ]]; then
+    echo "POSTRUN_DAILY_RETRY_WAITING date=$DATE run_id=$RETRY_WAITING_RUN_ID next_attempt_at_utc=$RETRY_NEXT_ATTEMPT_AT"
+    exit 0
+  fi
+fi
 ROW="$(cd /tmp && psql -d trader_research -qAt -F $'\t' -v ON_ERROR_STOP=1 -c "
 SELECT run_id, status, COALESCE(research_verdict, summary_json->>'status', ''), COALESCE(finished_at::text,''), run_dir, COALESCE(final_candidate_count,0)::text, COALESCE(bottleneck,''), COALESCE(error,'')
 FROM earnings_cache.research_runs

@@ -32,7 +32,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
 
-    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04"):
+    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04", now=None):
         cleanup = tempfile.TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -77,6 +77,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
                     "EARNINGS_POSTRUN_SKILL_FILE": str(skill),
                     "EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600",
                     "EARNINGS_POSTRUN_STALE_RUNNING_SECONDS": "3600",
+                    **({"EARNINGS_POSTRUN_NOW": now} if now is not None else {}),
                 },
                 text=True,
                 capture_output=True,
@@ -102,6 +103,18 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("date: 2026-08-04", task_text)
         self.assertIn("scheduled_at: 10:30", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
+
+    def test_retry_waiting_daily_run_blocks_transient_failed_attempt_review(self):
+        result = self.run_postrun_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-retry-waiting-attempt-2\t2026-08-04T10:35:00Z\n",
+            "earnings-qc-options-scan-full-20260804-083500-attempt-1\tblocked\tBLOCKED_QC_CLOUD_NO_SPARE_NODES\t2026-08-04 08:40:00+00\t{report_root}/run\t0\tBLOCKED_QC_CLOUD_NO_SPARE_NODES\t\n",
+        ], now="2026-08-04T09:30:00Z")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("POSTRUN_DAILY_RETRY_WAITING", result.stdout)
+        self.assertIn("next_attempt_at_utc=2026-08-04T10:35:00Z", result.stdout)
+        self.assertEqual(len(result.handoff_tasks), 0)
 
     def test_no_finished_daily_run_handoff_is_deduped_by_date_and_condition(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import os
 import subprocess
 from tempfile import TemporaryDirectory
@@ -96,7 +97,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('holder="$(fuser "$LOCK"', workflow)
         self.assertNotIn('flock -n 9 || exit 0', workflow)
         self.assertIn('earnings-qc-research run', workflow)
-        self.assertIn('--campaign daily-earnings-otm', workflow)
+        self.assertIn('--campaign "$CAMPAIGN"', workflow)
         self.assertIn(r'/^0 9 \* \* \* \/agents\/research\/bin\/earnings-otm-daily\.sh$/ {next}', workflow)
         self.assertNotIn("'0 9 * * * /agents/research/bin/earnings-otm-daily.sh'", workflow)
         self.assertNotIn('earnings-qc-options-scan run-now', workflow)
@@ -129,7 +130,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('docker system prune', workflow)
         self.assertNotIn('docker volume prune', workflow)
 
-    def test_daily_wrapper_logs_contended_lock_before_exiting_successfully(self):
+    def _daily_wrapper_script(self, root, fake_bin, state, logs, reports):
         script = deploy_run_script()
         start = script.index("sudo tee /agents/research/bin/earnings-otm-daily.sh")
         heredoc_start = script.index("<<'EOF_DAILY_EARNINGS'", start)
@@ -139,24 +140,36 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             line[10:] if line.startswith("          ") else line
             for line in script[body_start:body_end].splitlines()
         )
+        daily_path = root / "earnings-otm-daily.sh"
+        daily_path.write_text(
+            daily.replace("/agents/research/state/earnings-qc-research", str(state))
+            .replace("/agents/research/logs/earnings-qc-research", str(logs))
+            .replace("/agents/research/reports", str(reports))
+            .replace("export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin", f"export PATH={fake_bin}:/usr/bin:/bin")
+        )
+        daily_path.chmod(0o755)
+        return daily_path
 
+    def _daily_log_text(self, logs):
+        matches = [path for path in logs.glob("daily-*.log") if "-attempt-" not in path.name]
+        self.assertEqual(len(matches), 1)
+        return matches[0].read_text()
+
+    def test_daily_wrapper_retries_lock_contention_once_then_fails(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             fake_bin = root / "bin"
             state = root / "state"
             logs = root / "logs"
+            reports = root / "reports"
             fake_bin.mkdir()
             state.mkdir()
             logs.mkdir()
-            daily_path = root / "earnings-otm-daily.sh"
-            daily_path.write_text(
-                daily.replace("/agents/research/state/earnings-qc-research", str(state))
-                .replace("/agents/research/logs/earnings-qc-research", str(logs))
-                .replace("export PATH=/agents/research/bin:/usr/local/bin:/usr/bin:/bin", f"export PATH={fake_bin}:/usr/bin:/bin")
-            )
-            daily_path.chmod(0o755)
+            reports.mkdir()
+            daily_path = self._daily_wrapper_script(root, fake_bin, state, logs, reports)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 1\n")
             (fake_bin / "fuser").write_text("#!/usr/bin/env bash\nprintf ' 1234 5678\\n'\n")
+            (fake_bin / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
             for name in ("date", "tr", "sed", "mkdir"):
                 target = fake_bin / name
                 target.symlink_to(f"/bin/{name}")
@@ -174,13 +187,105 @@ class VpsDeployWorkflowTests(unittest.TestCase):
                 check=False,
             )
 
-            self.assertEqual(result.returncode, 0)
-            log_files = list(logs.glob("daily-*.log"))
-            self.assertEqual(len(log_files), 1)
-            log_text = log_files[0].read_text()
+            self.assertEqual(result.returncode, 75)
+            log_text = self._daily_log_text(logs)
             self.assertIn("DAILY_RUN_LOCK_CONTENDED", log_text)
+            self.assertIn("DAILY_RUN_RETRY_SLEEP", log_text)
+            self.assertIn("DAILY_RUN_RETRY_EXHAUSTED", log_text)
             self.assertIn("lock=", log_text)
             self.assertIn("holder=1234 5678", log_text)
+            retry_state = json.loads(next(state.glob("daily-retry-*.json")).read_text())
+            self.assertEqual(retry_state["attempt_count"], 2)
+
+    def test_daily_wrapper_terminal_no_candidate_rc_two_is_systemd_success(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            state = root / "state"
+            logs = root / "logs"
+            reports = root / "reports"
+            fake_bin.mkdir()
+            state.mkdir()
+            logs.mkdir()
+            reports.mkdir()
+            daily_path = self._daily_wrapper_script(root, fake_bin, state, logs, reports)
+            (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "fuser").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "earnings-qc-research").write_text(textwrap.dedent("""\
+                #!/usr/bin/env bash
+                printf '{"ok": false, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}\n'
+                exit 2
+            """))
+            for name in ("date", "tr", "sed", "mkdir"):
+                target = fake_bin / name
+                target.symlink_to(f"/bin/{name}")
+            for path in fake_bin.iterdir():
+                if not path.is_symlink():
+                    path.chmod(0o755)
+
+            result = subprocess.run(
+                [str(daily_path)],
+                env={**os.environ, "PATH": f"{fake_bin}:/usr/bin:/bin", "EARNINGS_DAILY_RETRY_DELAY_SECONDS": "0"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            log_text = self._daily_log_text(logs)
+            self.assertIn("classification=terminal", log_text)
+            self.assertNotIn("DAILY_RUN_RETRY_SLEEP", log_text)
+
+    def test_daily_wrapper_retries_data_availability_once(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            state = root / "state"
+            logs = root / "logs"
+            reports = root / "reports"
+            fake_bin.mkdir()
+            state.mkdir()
+            logs.mkdir()
+            reports.mkdir()
+            daily_path = self._daily_wrapper_script(root, fake_bin, state, logs, reports)
+            (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "fuser").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (fake_bin / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
+            counter = root / "counter"
+            (fake_bin / "earnings-qc-research").write_text(textwrap.dedent(f"""\
+                #!/usr/bin/env bash
+                count="$(cat {counter} 2>/dev/null || printf 0)"
+                count="$((count + 1))"
+                printf '%s' "$count" > {counter}
+                if [ "$count" -eq 1 ]; then
+                  printf '{{"ok": false, "status": "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "blocked_reason": "QC Cloud has no spare nodes available for a new backtest"}}\n'
+                  exit 2
+                fi
+                printf '{{"ok": true, "status": "OK_FULL_QC_SCAN", "final_candidate_count": 1}}\n'
+                exit 0
+            """))
+            for name in ("date", "tr", "sed", "mkdir"):
+                target = fake_bin / name
+                target.symlink_to(f"/bin/{name}")
+            for path in fake_bin.iterdir():
+                if not path.is_symlink():
+                    path.chmod(0o755)
+
+            result = subprocess.run(
+                [str(daily_path)],
+                env={**os.environ, "PATH": f"{fake_bin}:/usr/bin:/bin", "EARNINGS_DAILY_RETRY_DELAY_SECONDS": "0"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(counter.read_text(), "2")
+            log_text = self._daily_log_text(logs)
+            self.assertIn("classification=retryable", log_text)
+            self.assertIn("DAILY_RUN_RETRY_SLEEP", log_text)
+            self.assertIn("attempt=2", log_text)
 
     def test_research_postgres_cache_db_is_provisioned(self):
         workflow = workflow_text()
