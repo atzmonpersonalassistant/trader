@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.cleanup_runs (
  dry_run BOOLEAN NOT NULL, policy_json JSONB NOT NULL DEFAULT '{{}}'::jsonb, deleted_paths_json JSONB NOT NULL DEFAULT '[]'::jsonb,
  freed_bytes BIGINT NOT NULL DEFAULT 0, error TEXT
 );
+ALTER TABLE {PG_SCHEMA}.cleanup_runs ADD COLUMN IF NOT EXISTS error TEXT;
 ALTER TABLE {PG_SCHEMA}.research_stages ALTER COLUMN input_json DROP NOT NULL;
 ALTER TABLE {PG_SCHEMA}.research_stages ALTER COLUMN output_json DROP NOT NULL;
 ALTER TABLE {PG_SCHEMA}.candidate_dossiers ALTER COLUMN contract_json DROP NOT NULL;
@@ -1388,6 +1389,17 @@ def cleanup_can_delete_run_dir(path: pathlib.Path) -> bool:
     return False
 
 
+def cleanup_dir_size(path: pathlib.Path) -> int:
+    total = 0
+    for f in path.rglob('*'):
+        try:
+            if f.is_file():
+                total += f.stat().st_size
+        except FileNotFoundError:
+            continue
+    return total
+
+
 def cmd_cleanup(args) -> int:
     policy = {'older_than_days': args.older_than_days, 'keep_last': args.keep_last, 'dry_run': args.dry_run}
     cutoff = time.time() - args.older_than_days * 86400
@@ -1399,17 +1411,32 @@ def cmd_cleanup(args) -> int:
         dirs_by_path.update({str(p): p for p in matches})
         protected.update(str(p) for p in matches[:args.keep_last])
     dirs = sorted(dirs_by_path.values(), key=lambda p: p.stat().st_mtime, reverse=True)
-    deleted = []; freed = 0
+    deleted = []; failed = []; freed = 0
     for d in dirs[args.keep_last:]:
         if d.stat().st_mtime >= cutoff or str(d) in protected:
             continue
         if not cleanup_can_delete_run_dir(d):
             continue
-        size = sum((f.stat().st_size for f in d.rglob('*') if f.is_file()), 0)
-        item = {'path': str(d), 'bytes': size}
-        deleted.append(item); freed += size
+        size_before = cleanup_dir_size(d)
+        item = {'path': str(d), 'bytes': size_before}
         if not args.dry_run:
-            shutil.rmtree(d, ignore_errors=True)
+            try:
+                shutil.rmtree(d)
+            except Exception as exc:
+                bytes_remaining = cleanup_dir_size(d) if d.exists() else 0
+                bytes_freed = max(0, size_before - bytes_remaining)
+                freed += bytes_freed
+                failed.append({'path': str(d), 'bytes': size_before, 'bytes_freed': bytes_freed, 'bytes_remaining': bytes_remaining, 'error': str(exc)})
+                continue
+            bytes_remaining = cleanup_dir_size(d) if d.exists() else 0
+            bytes_freed = max(0, size_before - bytes_remaining)
+            freed += bytes_freed
+            if d.exists():
+                failed.append({'path': str(d), 'bytes': size_before, 'bytes_freed': bytes_freed, 'bytes_remaining': bytes_remaining, 'error': 'path remains after deletion'})
+                continue
+        else:
+            freed += size_before
+        deleted.append(item)
     pruned_db_blobs = {}
     if ensure_research_db():
         if args.dry_run:
@@ -1478,11 +1505,12 @@ SELECT json_build_object(
             try: pruned_db_blobs = json.loads((out or '').strip() or '{}')
             except Exception: pruned_db_blobs = {}
     cid = stable_id('cleanup', utc_now(), args.dry_run, args.older_than_days, args.keep_last)
+    cleanup_error = json.dumps(failed, ensure_ascii=False) if failed else None
     if ensure_research_db():
-        db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes)
-VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(deleted, ensure_ascii=False))}::jsonb, {freed});""")
-    print(json.dumps({'ok': True, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'freed_bytes': freed, 'policy': policy, 'pruned_db_blobs': pruned_db_blobs}, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
+        db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes,error)
+VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(deleted, ensure_ascii=False))}::jsonb, {freed}, {sql_lit(cleanup_error)});""")
+    print(json.dumps({'ok': not failed, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'failed_paths': failed, 'freed_bytes': freed, 'policy': policy, 'pruned_db_blobs': pruned_db_blobs}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 1 if failed else 0
 
 def add_qc_parameter_args(sp, *, default_stage_values=True):
     # QC option universe knobs shared by scan and historical-only validation.
