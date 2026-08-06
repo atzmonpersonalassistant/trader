@@ -2030,6 +2030,19 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("Workflow YAML does not parse: .github/workflows/vps-deploy.yml", findings[0])
 
+    def test_review_agent_rejects_workflow_yaml_symlink(self):
+        review = load("trading_review_agent_symlink_validation", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            workflow = workspace / ".github/workflows/vps-deploy.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.symlink_to("/dev/zero")
+            context = {"files": [{"filename": ".github/workflows/vps-deploy.yml"}]}
+
+            findings = review.local_validation_findings(workspace, context)
+
+        self.assertEqual(findings, ["Workflow YAML must be a regular file, not a symlink: .github/workflows/vps-deploy.yml"])
+
     def test_orchestrator_auto_merge_candidate_requires_agent_label_and_passing_review(self):
         orch = load("trading_orchestrator", "agent-platform/tools/trading_orchestrator.py")
         passing = {"name": "review-agent/pass", "status": "completed", "conclusion": "success", "app": {"slug": "trading-review-agent"}}

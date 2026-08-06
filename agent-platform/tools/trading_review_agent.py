@@ -23,6 +23,7 @@ DEFAULT_CONFIG_PATH = Path(os.environ.get("TRADING_REVIEW_CONFIG", "/agents/revi
 DEFAULT_LOG_DIR = Path(os.environ.get("TRADING_REVIEW_LOG_DIR", "/agents/review/logs"))
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 CHECK_NAME = "review-agent/pass"
+MAX_WORKFLOW_YAML_BYTES = 1_000_000
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "agent": "review",
@@ -238,12 +239,37 @@ def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
 
 def local_validation_findings(workspace: Path, context: dict[str, Any]) -> list[str]:
     findings: list[str] = []
+    workspace_root = workspace.resolve()
     for item in context.get("files", []):
         filename = str(item.get("filename") or "")
         if not filename.startswith(".github/workflows/") or not filename.endswith((".yml", ".yaml")):
             continue
         path = workspace / filename
+        try:
+            relative_path = path.relative_to(workspace)
+        except ValueError:
+            findings.append(f"Workflow path is outside review workspace: {filename}")
+            continue
+        if ".." in relative_path.parts:
+            findings.append(f"Workflow path escapes review workspace: {filename}")
+            continue
+        if path.is_symlink():
+            findings.append(f"Workflow YAML must be a regular file, not a symlink: {filename}")
+            continue
+        try:
+            resolved = path.resolve(strict=False)
+            resolved.relative_to(workspace_root)
+        except ValueError:
+            findings.append(f"Workflow path resolves outside review workspace: {filename}")
+            continue
         if not path.exists():
+            continue
+        stat = path.stat()
+        if not path.is_file():
+            findings.append(f"Workflow YAML must be a regular file: {filename}")
+            continue
+        if stat.st_size > MAX_WORKFLOW_YAML_BYTES:
+            findings.append(f"Workflow YAML is too large to parse safely: {filename}: {stat.st_size} bytes")
             continue
         try:
             yaml.safe_load(path.read_text(encoding="utf-8"))
