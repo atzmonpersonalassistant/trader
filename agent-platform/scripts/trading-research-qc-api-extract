@@ -61,7 +61,7 @@ for window in rolling.values():
         closed_trades += len(window.get("closedTrades") or [])
 summary={
     "type": "qc_backtest_extract",
-    "ok": data.get("success", True),
+    "ok": data.get("success", False),
     "projectId": b.get("projectId"),
     "backtestId": b.get("backtestId"),
     "name": b.get("name"),
