@@ -176,6 +176,28 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("date: 2026-08-04", task_text)
         self.assertIn("threshold_seconds: 3600", task_text)
 
+    def test_retry_waiting_daily_run_before_next_attempt_does_not_escalate_as_stale(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-retry-waiting-attempt-2|running|2026-08-04 10:35:00+03||5400||DAILY_RETRY_WAITING|2026-08-04T10:35:00Z\n",
+        ], now="2026-08-04T12:20:00+03:00")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("DAILY_RUN_RETRY_WAITING", result.stdout)
+        self.assertIn("next_attempt_at_utc=2026-08-04T10:35:00Z", result.stdout)
+        self.assertNotIn("STALE_RUNNING_DAILY_RUN", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 0)
+
+    def test_retry_waiting_daily_run_after_next_attempt_escalates_as_stale(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-retry-waiting-attempt-2|running|2026-08-04 10:35:00+03||9000||DAILY_RETRY_WAITING|2026-08-04T10:35:00Z\n",
+        ], now="2026-08-04T14:00:00+03:00")
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("STALE_RUNNING_DAILY_RUN", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+
     def test_date_with_no_daily_run_row_escalates(self):
         result = self.run_watchdog_with_fake_psql(["", ""])
 
