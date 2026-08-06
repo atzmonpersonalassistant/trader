@@ -162,6 +162,84 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             rows[day] = {"underlying": underlying, "contracts": [quote]}
         alg.snapshots = {"XYZ": rows}
 
+    def build_stage2_algorithm(self, batch_rows=None, today=None):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        batch_rows = batch_rows or [{"symbol": "OPEN", "report_date": "2026-08-04"}]
+        today = today or datetime.date(2026, 7, 14)
+        mod.write_qc_stage2_project(project_dir, batch_rows, today)
+        main = (project_dir / "main.py").read_text()
+
+        fake_imports = types.ModuleType("AlgorithmImports")
+
+        class QCAlgorithm:
+            def debug(self, message):
+                self.debug_messages.append(message)
+
+            def set_runtime_statistic(self, key, value):
+                self.runtime_statistics[key] = value
+
+            def quit(self):
+                self.quit_called = True
+
+        fake_imports.QCAlgorithm = QCAlgorithm
+        fake_imports.OptionRight = types.SimpleNamespace(CALL="call", PUT="put")
+        old_imports = sys.modules.get("AlgorithmImports")
+        sys.modules["AlgorithmImports"] = fake_imports
+        namespace = {}
+        try:
+            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+        finally:
+            if old_imports is None:
+                sys.modules.pop("AlgorithmImports", None)
+            else:
+                sys.modules["AlgorithmImports"] = old_imports
+
+        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
+        alg.valuation_date = mod.last_completed_qc_trading_day(today)
+        alg.valuation_data_slice_count = 0
+        alg.valuation_option_chain_slice_count = 0
+        alg.option_chain_slice_count = 0
+        alg.max_option_chain_slice_count = 0
+        alg.option_chain_symbols_sample = []
+        alg.option_by_underlying = {row["symbol"]: f"{row['symbol']} OPTION" for row in batch_rows}
+        alg.done_by_symbol = {row["symbol"]: False for row in batch_rows}
+        alg.earnings = {row["symbol"]: row["report_date"] for row in batch_rows}
+        alg.rows = []
+        alg.candidate_details = []
+        alg.funnel = {
+            "symbols_input": len(batch_rows),
+            "option_chain_available": 0,
+            "expiry_within_0_7d_after_earnings": 0,
+            "otm_expiry_within_0_7d_after_earnings": 0,
+            "calls_under_max_premium": 0,
+            "liquidity_pass": 0,
+            "candidates": 0,
+        }
+        alg.securities = {
+            row["symbol"]: types.SimpleNamespace(price=12.34) for row in batch_rows
+        }
+        alg.debug_messages = []
+        alg.runtime_statistics = {}
+        alg.quit_called = False
+        alg.min_days_after_earnings = 1
+        alg.max_days_after_earnings = 7
+        alg.option_right = "call"
+        alg.delta_min = None
+        alg.delta_max = None
+        alg.iv_min = None
+        alg.iv_max = None
+        alg.max_premium = 0.5
+        alg.max_spread = None
+        alg.max_spread_pct = 0.6
+        alg.min_relative_spread = 0.25
+        alg.vol_spread_factor = 0.5
+        alg.expected_move_spread_fraction = 0.15
+        alg.min_bid = 0.05
+        alg.min_open_interest = 0
+        alg.min_volume = 0
+        return alg
+
 
     def test_single_public_research_cli_uses_internal_libexec_stages(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
@@ -2040,36 +2118,54 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
 
 
     def test_stage2_relaxes_oi_volume_and_absolute_spread_gates_with_diagnostics(self):
-        mod = load_script("earnings-qc-options-scan")
-        project_dir = pathlib.Path(tempfile.mkdtemp())
-        mod.write_qc_stage2_project(
-            project_dir,
+        alg = self.build_stage2_algorithm(
             [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
-            datetime.date(2026, 7, 13),
+            datetime.date(2026, 7, 14),
         )
-        main = (project_dir / "main.py").read_text()
-        self.assertIn("self.min_open_interest = 0", main)
-        self.assertIn("self.min_volume = 0", main)
-        self.assertIn("self.max_spread = None", main)
-        self.assertNotIn("(oi >= self.min_open_interest or vol >= self.min_volume)", main)
-        self.assertIn("open_interest_volume_policy=\"diagnostic_warning_only_not_gate\"", main)
-        self.assertIn("spread_policy=\"volatility_aware_relative_expected_move_no_absolute_spread_gate\"", main)
-        self.assertIn("liquidity_fail_reasons=\"gate_all_reasons_per_contract\"", main)
-        self.assertIn("liquidity_warnings=\"zero_volume_zero_open_interest\"", main)
-        self.assertIn("liquidity_fail_reason_counts", main)
-        self.assertIn("liquidity_warning_counts", main)
-        self.assertIn("cheap_contract_diagnostics_sample", main)
-        self.assertIn("strike_spot_ratio", main)
-        self.assertIn("low_bid", main)
-        self.assertIn("missing_greeks", main)
-        self.assertIn("missing_iv", main)
-        self.assertIn("spread_too_wide", main)
-        self.assertIn("zero_volume", main)
-        self.assertIn("zero_open_interest", main)
-        self.assertNotIn("diagnostic_zero_volume", main)
-        self.assertNotIn("diagnostic_zero_open_interest", main)
-        self.assertIn('"liquidity_fail_reason_counts": {}, "liquidity_warning_counts": {"zero_option_chain_slices_observed": 1}', main)
-        self.assertIn("NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE", main)
+        contract = types.SimpleNamespace(
+            symbol="OPEN_CALL_13",
+            right="call",
+            strike=13.0,
+            expiry=datetime.datetime(2026, 8, 7),
+            bid_price=0.10,
+            ask_price=0.11,
+            last_price=0.10,
+            volume=0,
+            open_interest=0,
+            implied_volatility=0.40,
+            greeks=types.SimpleNamespace(delta=0.30),
+        )
+        chain = types.SimpleNamespace(symbol="OPEN OPTION", contracts=[contract])
+
+        alg.time = datetime.datetime(2026, 7, 13, 16)
+        alg.on_data(types.SimpleNamespace(option_chains={"OPEN OPTION": chain}))
+
+        self.assertTrue(alg.quit_called)
+        self.assertEqual(alg.funnel["liquidity_pass"], 1)
+        self.assertEqual(alg.funnel["candidates"], 1)
+        self.assertEqual(alg.rows[0]["liquidity_fail_reason_counts"], {})
+        self.assertEqual(
+            alg.rows[0]["liquidity_warning_counts"],
+            {"zero_open_interest": 1, "zero_volume": 1},
+        )
+        self.assertEqual(
+            alg.rows[0]["cheap_contract_diagnostics_sample"][0]["liquidity_warnings"],
+            ["zero_open_interest", "zero_volume"],
+        )
+        tuning = json.loads(alg.runtime_statistics["trader.tuning"])
+        self.assertIsNone(tuning["max_spread"])
+        self.assertEqual(tuning["min_open_interest"], 0)
+        self.assertEqual(tuning["min_volume"], 0)
+        self.assertEqual(
+            tuning["open_interest_volume_policy"],
+            "diagnostic_warning_only_not_gate",
+        )
+        self.assertEqual(
+            tuning["spread_policy"],
+            "volatility_aware_relative_expected_move_no_absolute_spread_gate",
+        )
+        self.assertEqual(tuning["liquidity_fail_reasons"], "gate_all_reasons_per_contract")
+        self.assertEqual(tuning["liquidity_warnings"], "zero_volume_zero_open_interest")
 
     def test_stage2_notify_only_candidates_or_blockers(self):
         scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
@@ -2089,103 +2185,13 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("trader.valuation_date", scan)
 
     def test_stage2_records_no_chain_rows_when_anchor_has_equity_but_no_option_chains(self):
-        scan = (SCRIPTS / "earnings-qc-options-scan").read_text()
-        self.assertIn("self.valuation_option_chain_slice_count = 0", scan)
-        self.assertNotIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", scan)
-        self.assertIn("zero_option_chain_slices_observed", scan)
-        self.assertIn("NO_QC_OPTION_CHAIN_SLICES_OBSERVED_ON_VALUATION_DATE", scan)
-        self.assertIn("valuation_option_chain_slice_count", scan)
-        self.assertIn("if current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", scan)
-        self.assertIn("self.emit_and_quit()", scan)
-        self.assertIn("return", scan)
-        self.assertIn("if current_date == self.valuation_date:", scan)
-        self.assertIn("self.valuation_option_chain_slice_count += len(chains_by_symbol)", scan)
-
-    def test_stage2_emits_per_symbol_no_chain_rows_when_equity_session_exists(self):
-        mod = load_script("earnings-qc-options-scan")
-        project_dir = pathlib.Path(tempfile.mkdtemp())
-        mod.write_qc_stage2_project(
-            project_dir,
+        alg = self.build_stage2_algorithm(
             [
                 {"symbol": "GEG", "report_date": "2026-08-04"},
                 {"symbol": "CISS", "report_date": "2026-08-04"},
             ],
             datetime.date(2026, 7, 14),
         )
-        main = (project_dir / "main.py").read_text()
-        self.assertIn("self.valuation_option_chain_slice_count = 0", main)
-        self.assertNotIn("TRADER_VALUATION_ANCHOR_NO_OPTION_CHAIN_DATA", main)
-        self.assertIn("zero_option_chain_slices_observed", main)
-        self.assertIn("trader.valuation_option_chain_slice_count", main)
-        self.assertIn("current_date > self.valuation_date and self.valuation_option_chain_slice_count <= 0", main)
-
-        fake_imports = types.ModuleType("AlgorithmImports")
-
-        class QCAlgorithm:
-            def debug(self, message):
-                self.debug_messages.append(message)
-
-            def set_runtime_statistic(self, key, value):
-                self.runtime_statistics[key] = value
-
-            def quit(self):
-                self.quit_called = True
-
-        fake_imports.QCAlgorithm = QCAlgorithm
-        old_imports = sys.modules.get("AlgorithmImports")
-        sys.modules["AlgorithmImports"] = fake_imports
-        namespace = {}
-        try:
-            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
-        finally:
-            if old_imports is None:
-                sys.modules.pop("AlgorithmImports", None)
-            else:
-                sys.modules["AlgorithmImports"] = old_imports
-
-        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
-        alg.valuation_date = datetime.date(2026, 7, 13)
-        alg.valuation_data_slice_count = 0
-        alg.valuation_option_chain_slice_count = 0
-        alg.option_chain_slice_count = 0
-        alg.max_option_chain_slice_count = 0
-        alg.option_chain_symbols_sample = []
-        alg.option_by_underlying = {"GEG": "GEG OPTION", "CISS": "CISS OPTION"}
-        alg.done_by_symbol = {"GEG": False, "CISS": False}
-        alg.earnings = {"GEG": "2026-08-04", "CISS": "2026-08-04"}
-        alg.rows = []
-        alg.candidate_details = []
-        alg.funnel = {
-            "symbols_input": 2,
-            "option_chain_available": 0,
-            "expiry_within_0_7d_after_earnings": 0,
-            "calls_under_max_premium": 0,
-            "liquidity_pass": 0,
-            "candidates": 0,
-        }
-        alg.securities = {
-            "GEG": types.SimpleNamespace(price=12.34),
-            "CISS": types.SimpleNamespace(price=2.5),
-        }
-        alg.debug_messages = []
-        alg.runtime_statistics = {}
-        alg.quit_called = False
-        alg.min_days_after_earnings = 1
-        alg.max_days_after_earnings = 7
-        alg.option_right = "call"
-        alg.delta_min = None
-        alg.delta_max = None
-        alg.iv_min = None
-        alg.iv_max = None
-        alg.max_premium = 0.5
-        alg.max_spread = None
-        alg.max_spread_pct = 0.6
-        alg.min_relative_spread = 0.25
-        alg.vol_spread_factor = 0.5
-        alg.expected_move_spread_fraction = 0.15
-        alg.min_bid = 0.05
-        alg.min_open_interest = 0
-        alg.min_volume = 0
 
         empty_slice = types.SimpleNamespace(option_chains={})
         later_chain_slice = types.SimpleNamespace(
@@ -2215,37 +2221,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(alg.option_chain_slice_count, 0)
 
     def test_stage2_still_fails_loudly_when_anchor_has_zero_equity_slices(self):
-        mod = load_script("earnings-qc-options-scan")
-        project_dir = pathlib.Path(tempfile.mkdtemp())
-        mod.write_qc_stage2_project(
-            project_dir,
-            [{"symbol": "OPEN", "report_date": "2026-08-04"}],
-            datetime.date(2026, 7, 14),
-        )
-        main = (project_dir / "main.py").read_text()
-
-        fake_imports = types.ModuleType("AlgorithmImports")
-
-        class QCAlgorithm:
-            pass
-
-        fake_imports.QCAlgorithm = QCAlgorithm
-        old_imports = sys.modules.get("AlgorithmImports")
-        sys.modules["AlgorithmImports"] = fake_imports
-        namespace = {}
-        try:
-            exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
-        finally:
-            if old_imports is None:
-                sys.modules.pop("AlgorithmImports", None)
-            else:
-                sys.modules["AlgorithmImports"] = old_imports
-
-        alg = namespace["EarningsQcStage2BatchDiagnostic"]()
-        alg.valuation_date = datetime.date(2026, 7, 13)
-        alg.valuation_data_slice_count = 0
-        alg.valuation_option_chain_slice_count = 0
-        alg.option_chain_slice_count = 0
+        alg = self.build_stage2_algorithm()
         with self.assertRaisesRegex(Exception, "TRADER_VALUATION_ANCHOR_NO_SESSION_DATA") as ctx:
             alg.emit_and_quit()
         self.assertIn("valuation_data_slice_count=0", str(ctx.exception))
