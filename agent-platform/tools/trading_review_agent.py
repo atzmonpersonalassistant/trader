@@ -17,6 +17,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import yaml
 
 DEFAULT_CONFIG_PATH = Path(os.environ.get("TRADING_REVIEW_CONFIG", "/agents/review/config.json"))
 DEFAULT_LOG_DIR = Path(os.environ.get("TRADING_REVIEW_LOG_DIR", "/agents/review/logs"))
@@ -235,6 +236,22 @@ def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
     return {"pass": passed, "findings": findings, "checklist": CHECKLIST}
 
 
+def local_validation_findings(workspace: Path, context: dict[str, Any]) -> list[str]:
+    findings: list[str] = []
+    for item in context.get("files", []):
+        filename = str(item.get("filename") or "")
+        if not filename.startswith(".github/workflows/") or not filename.endswith((".yml", ".yaml")):
+            continue
+        path = workspace / filename
+        if not path.exists():
+            continue
+        try:
+            yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            findings.append(f"Workflow YAML does not parse: {filename}: {exc}")
+    return findings
+
+
 def run_model_review(workspace: Path, context: dict[str, Any], config: dict[str, Any], timeout: int) -> dict[str, Any]:
     prompt = (
         "Review this PR using the checklist below. Return concise Markdown with PASS or FAIL first.\n\n"
@@ -383,6 +400,10 @@ def cmd_review(args: argparse.Namespace) -> int:
     workspace_info = ensure_review_workspace(config, args.pr, token, context)
     workspace = Path(workspace_info["workspace"])
     deterministic = deterministic_review(context)
+    local_findings = local_validation_findings(workspace, context)
+    if local_findings:
+        deterministic["pass"] = False
+        deterministic["findings"] = list(deterministic.get("findings") or []) + local_findings
     model = run_model_review(workspace, context, config, args.model_timeout_seconds) if should_run_model_review(deterministic, args.skip_model) else None
     autoreview: dict[str, Any] | None
     if should_run_autoreview(context, config, deterministic, model, args.skip_autoreview):

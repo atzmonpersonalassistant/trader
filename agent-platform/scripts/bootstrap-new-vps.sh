@@ -60,7 +60,7 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     log "installing base packages via apt-get"
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv sqlite3 sudo
+      acl ca-certificates curl docker.io gh git jq nodejs npm openssh-client openssl python3 python3-pip python3-venv python3-yaml sqlite3 sudo
     if command -v systemctl >/dev/null 2>&1; then
       systemctl enable --now docker
     elif command -v service >/dev/null 2>&1; then

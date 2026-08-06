@@ -5,6 +5,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 import textwrap
 import unittest
+import yaml
 
 
 WORKFLOW = Path('.github/workflows/vps-deploy.yml')
@@ -38,6 +39,15 @@ def extract_deploy_ok_check(script):
 
 
 class VpsDeployWorkflowTests(unittest.TestCase):
+
+    def test_workflow_parses(self):
+        yaml.safe_load(WORKFLOW.read_text())
+
+    def test_deploy_ensures_review_agent_yaml_parser_dependency(self):
+        workflow = workflow_text()
+
+        self.assertIn("python3 -c 'import yaml'", workflow)
+        self.assertIn("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-yaml", workflow)
 
     def test_earnings_research_has_single_public_cli(self):
         workflow = workflow_text()
