@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 from tempfile import TemporaryDirectory
 import textwrap
@@ -139,6 +140,18 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('systemctl is-enabled --quiet trader-earnings-otm-daily.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-postrun.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer', workflow)
+
+    def test_daily_schedule_env_vars_match_managed_timer(self):
+        workflow = workflow_text()
+        match = re.search(
+            r'OnCalendar=\*-\*-\* (?P<hour>\d{1,2}):(?P<minute>\d{2}):00 Asia/Jerusalem',
+            workflow,
+        )
+        self.assertIsNotNone(match)
+        daily_schedule = f"{match.group('hour')}:{match.group('minute')}"
+
+        self.assertIn(f'Environment=EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT={daily_schedule}', workflow)
+        self.assertIn(f'Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE={daily_schedule}', workflow)
 
     def test_managed_research_retention_timer_is_verified(self):
         workflow = workflow_text()
