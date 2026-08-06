@@ -460,7 +460,10 @@ def main():
     b = qc_api("GET", "backtests/read", {"projectId": project_id, "backtestId": backtest_id}).get("backtest", {})
     (run_dir / "qc_cloud_backtest_read.json").write_text(json.dumps(b, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     stats = b.get("runtimeStatistics") or {}
-    parts = [stats[k] for k in sorted(stats) if k.startswith("trader.qc_extract_json_")]
+    parts = [stats[k] for k in sorted(
+        (k for k in stats if k.startswith("trader.qc_extract_json_")),
+        key=lambda k: int(k.rsplit("_", 1)[1]),
+    )]
     if not parts:
         deletion = delete_backtest_if_known(project_id, backtest_id, run_dir)
         fail("qc_cloud_extract_missing", "cloud backtest completed without extract runtime statistics", 70, cleanup=deletion, status=b.get("status"), error=b.get("error"), stacktrace=(b.get("stacktrace") or "")[-1000:])
