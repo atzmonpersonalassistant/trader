@@ -141,6 +141,10 @@ Example:
 - Treat `no spare nodes available` as compute-capacity blocked, not strategy failure.
 - Treat missing logs/object-store access as result-extraction blocked, not strategy failure.
 
+## Known limitations
+
+- The managed daily earnings retry is an in-process sleep inside `trader-earnings-otm-daily.service`. It is intentionally bounded to one delayed retry, but it does not survive a VPS reboot or `systemctl restart` of the service. Use a timer-backed retry if durable retry-after-reboot behavior becomes required.
+
 ## Prompt block for research runs
 
 ```text
