@@ -415,6 +415,36 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "qc-run-old",
         })
 
+    def test_cleanup_applies_unknown_report_dir_policy(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_unknown = reports / "earnings-qc-delta-targeted-seven-20260805-1906"
+        new_unknown = reports / "earnings-qc-delta-targeted-seven-20260805-1930"
+        known_active_pass = reports / "research-pass-active"
+        for path, mtime in [(old_unknown, 1), (new_unknown, 2), (known_active_pass, 1)]:
+            path.mkdir()
+            (path / "payload.txt").write_text("payload")
+            os.utime(path, (mtime, mtime))
+            os.utime(path / "payload.txt", (mtime, mtime))
+        args = argparse.Namespace(older_than_days=3, keep_last=1, dry_run=True)
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=False):
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = mod.cmd_cleanup(args)
+
+        self.assertEqual(rc, 0)
+        deleted = {pathlib.Path(item["path"]).name for item in json.loads(stdout.getvalue())["deleted_paths"]}
+        self.assertEqual(deleted, {"earnings-qc-delta-targeted-seven-20260805-1906"})
+
+    def test_cleanup_unknown_report_dir_uses_same_policy_gate(self):
+        mod = load_script("earnings-qc-research")
+        unknown = pathlib.Path("/tmp/earnings-qc-delta-targeted-seven-20260805-1906")
+
+        self.assertEqual(mod.cleanup_report_dir_policy(unknown), mod.UNKNOWN_CLEANUP_REPORT_DIR_POLICY)
+        self.assertTrue(mod.cleanup_can_delete_run_dir(unknown))
+
     def test_cleanup_preserves_active_expanded_run_prefixes(self):
         mod = load_script("earnings-qc-research")
         reports = pathlib.Path(tempfile.mkdtemp())
