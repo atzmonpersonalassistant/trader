@@ -106,6 +106,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.snapshot_peak_day_count = 0
         alg.entry_min_days = 21
         alg.entry_max_days = 28
+        alg.exit_days_before = mod.hist_params(params)["exit_days_before"]
         alg.max_days_after_earnings = 7
         alg.max_premium = 0.50
         alg.max_spread = 0.25
@@ -121,12 +122,12 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.stop_loss_max_loss_pct = mod.hist_params(params)["stop_loss_max_loss_pct"]
         return alg
 
-    def quote(self, bid, ask=None, iv=0.40, symbol="XYZ_CALL_110", strike=110.0, right="call", delta=0.30):
+    def quote(self, bid, ask=None, iv=0.40, symbol="XYZ_CALL_110", strike=110.0, right="call", delta=0.30, expiry="2026-02-05"):
         ask = bid if ask is None else ask
         return {
             "symbol": symbol,
             "strike": strike,
-            "expiry": "2026-02-05",
+            "expiry": expiry,
             "bid": bid,
             "ask": ask,
             "mid": round((bid + ask) / 2.0, 4),
@@ -1067,6 +1068,9 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.option_right = 'call'", main)
         self.assertIn("self.delta_target = 0.250000", main)
+        self.assertIn("self.exit_days_before = 1", main)
+        self.assertIn("planned_exit_date=rd-timedelta(days=self.exit_days_before)", main)
+        self.assertIn("planned_exit_date=rd-timedelta(days=max(0,self.exit_days_before-1))", main)
         self.assertIn("option_right_matches", main)
         self.assertNotIn("if c.right != OptionRight.CALL: continue", main)
         self.assertIn("self.min_open_interest = 11", main)
@@ -1086,7 +1090,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("overall=metrics(trades,'all',8)", main)
         self.assertIn("dropout_pct<=55.000000", main)
         self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
-        self.assertIn('"parameters":{"delta_target":0.250000,"option_right":', main)
+        self.assertIn('"parameters":{"delta_target":0.250000,"exit_days_before":1,"exit_policy":', main)
+        self.assertIn('"option_right":', main)
         self.assertIn("delta_targeted_comparison", main)
         self.assertIn("untraded_event_no_delta_eligible_contract_count", main)
         self.assertIn("delta_eligible=[q for q in eligible if self.delta_distance(q) is not None]", main)
@@ -1095,6 +1100,43 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
         compile(main, str(project_dir / "main.py"), "exec")
+
+    def test_multiyear_exit_days_before_changes_generated_behavior(self):
+        def run(exit_days_before, report_time):
+            alg = self.build_multiyear_algorithm({"exit_days_before": exit_days_before})
+            alg.events["XYZ"]["2026-02-01"]["report_time"] = report_time
+            quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+            self.set_multiyear_snapshots(alg, {
+                "2026-01-05": quote,
+                "2026-01-29": dict(quote, bid=0.25, ask=0.30, mid=0.275),
+                "2026-01-31": dict(quote, bid=0.30, ask=0.35, mid=0.325),
+                "2026-02-01": dict(quote, bid=0.35, ask=0.40, mid=0.375),
+            })
+            alg.on_end_of_algorithm()
+            payload = json.loads("".join(
+                alg.runtime_statistics[key]
+                for key in sorted(alg.runtime_statistics)
+                if key.startswith("multiyear_json_")
+            ))
+            return payload, payload["results"][0]["trades"][0], alg.runtime_statistics
+
+        before_payload_1, before_trade_1, before_stats_1 = run(1, "Before Market")
+        before_payload_3, before_trade_3, before_stats_3 = run(3, "Before Market")
+        after_payload_1, after_trade_1, after_stats_1 = run(1, "After Market")
+        after_payload_3, after_trade_3, after_stats_3 = run(3, "After Market")
+
+        self.assertEqual(before_trade_1["planned_exit_date"], "2026-01-31")
+        self.assertEqual(before_trade_3["planned_exit_date"], "2026-01-29")
+        self.assertNotEqual(before_trade_1["planned_exit_date"], before_trade_3["planned_exit_date"])
+        self.assertEqual(after_trade_1["planned_exit_date"], "2026-02-01")
+        self.assertEqual(after_trade_3["planned_exit_date"], "2026-01-30")
+        self.assertNotEqual(after_trade_1["planned_exit_date"], after_trade_3["planned_exit_date"])
+        self.assertEqual(before_payload_3["parameters"]["exit_days_before"], 3)
+        self.assertEqual(after_payload_3["parameters"]["exit_days_before"], 3)
+        self.assertEqual(before_payload_1["exit_policy"], "sell_before_earnings_no_hold_through")
+        self.assertEqual(after_payload_1["exit_policy"], "sell_before_earnings_no_hold_through")
+        self.assertEqual(before_stats_1["multiyear_exit_policy"], before_payload_1["exit_policy"])
+        self.assertEqual(after_stats_3["multiyear_exit_policy"], after_payload_3["exit_policy"])
 
     def test_multiyear_generated_qc_algorithm_defaults_resolution_to_daily(self):
         mod = load_script("earnings-qc-multiyear-backtest")
@@ -1541,6 +1583,19 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(multi.hist_params({"stop_loss_max_loss_pct": -50})["stop_loss_max_loss_pct"], -50.0)
         args = full.build_parser().parse_args(["run", "--stop-loss-max-loss-pct", "50"])
         self.assertEqual(full.current_parameters(args)["stop_loss_max_loss_pct"], -50.0)
+
+    def test_multiyear_exit_policy_accepts_public_alias_and_rejects_zero_days(self):
+        multi = load_script("earnings-qc-multiyear-backtest")
+        self.assertEqual(
+            multi.hist_params({"exit_policy": "after-market-report-day-close"})["exit_policy"],
+            "sell_before_earnings_no_hold_through",
+        )
+        self.assertEqual(
+            multi.hist_params({"exit_policy": "sell_before_earnings_no_hold_through"})["exit_policy"],
+            "sell_before_earnings_no_hold_through",
+        )
+        with self.assertRaises(SystemExit):
+            multi.hist_params({"exit_days_before": 0})
 
     def test_multiyear_stop_loss_fill_variants_mid_window_breach(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
