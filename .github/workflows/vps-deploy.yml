@@ -616,6 +616,8 @@ jobs:
           sudo usermod -aG agent-quantconnect agent-validator
           sudo usermod -aG agent-quantconnect agent-research
                     sudo install -d -o root -g agent-research -m 750 /etc/trading-agents/secrets/research
+          # research/env is server-local runtime config; this workflow has no secret payload for it.
+          # Preserve existing content and only create the file with safe ownership/mode if absent.
           if ! sudo test -e /etc/trading-agents/secrets/research/env; then
             sudo install -o root -g agent-research -m 640 /dev/null /etc/trading-agents/secrets/research/env
           fi
@@ -624,6 +626,8 @@ jobs:
           sudo install -d -o root -g agent-quantconnect -m 750 /etc/trading-agents/secrets/quantconnect
           test "$(stat -c '%a' "$DEPLOY_DIR")" = "700"
           test "$(stat -c '%a' "$DEPLOY_DIR/quantconnect.env")" = "600"
+          # QuantConnect credentials are GitHub Actions secret managed; overwrite on deploy so
+          # GitHub-side rotations are applied predictably. Do not rotate only on the VPS.
           sudo install -o root -g agent-quantconnect -m 640 "$DEPLOY_DIR/quantconnect.env" /etc/trading-agents/secrets/quantconnect/env
           command -v docker >/dev/null 2>&1
           sudo docker info >/dev/null

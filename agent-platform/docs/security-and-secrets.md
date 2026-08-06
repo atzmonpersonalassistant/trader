@@ -41,6 +41,14 @@ These allow the token helper to mint short-lived GitHub installation tokens for 
 
 This file is owned by `root:agent-quantconnect` and mode `640`. It may contain `QUANTCONNECT_USER_ID` and `QUANTCONNECT_API_TOKEN`. Membership in `agent-quantconnect` is intentionally limited to `agent-orchestrator`, `agent-research`, and `agent-validator`. Do not add prompt-driven coding or review users to this group unless a later design explicitly narrows the workflow and updates tests to prove the boundary.
 
+The deploy workflow treats GitHub Actions secrets as the source of truth for QuantConnect credentials and overwrites this file on each deploy. If a QuantConnect token is rotated during an incident, update the GitHub secret before the next merge or workflow dispatch; rotating only the VPS file is temporary and will be replaced by the next deploy.
+
+### Research runtime environment
+
+- `/etc/trading-agents/secrets/research/env`
+
+This file is server-local runtime configuration. The deploy workflow does not have a GitHub secret payload for it, so deploys preserve existing contents and only create the file with safe ownership and permissions when it is absent.
+
 ### Runtime state and logs
 
 - `/agents/orchestrator/state/orchestrator.db`
