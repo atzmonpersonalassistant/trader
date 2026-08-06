@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, concurrent.futures, datetime, hashlib, json, os, pathlib, re, shutil, sqlite3, subprocess, sys, threading, time
+import argparse, concurrent.futures, datetime, fnmatch, hashlib, json, os, pathlib, re, shutil, sqlite3, subprocess, sys, threading, time
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -1369,13 +1369,29 @@ def cmd_historical(args) -> int:
     return 0 if mb and summary.get('ok') else 2
 
 
-def cleanup_can_delete_run_dir(path: pathlib.Path) -> bool:
+KNOWN_CLEANUP_REPORT_DIR_POLICIES = (
+    ('earnings-qc-options-scan-full', 'earnings-qc-options-scan-full-*'),
+    ('research-pass', 'research-pass-*'),
+    ('qc-run', 'qc-run-*'),
+)
+UNKNOWN_CLEANUP_REPORT_DIR_POLICY = 'other-report-dir'
+
+
+def cleanup_report_dir_policy(path: pathlib.Path) -> str:
     name = path.name
-    if name.startswith('earnings-qc-options-scan-full-'):
+    for policy, pattern in KNOWN_CLEANUP_REPORT_DIR_POLICIES:
+        if fnmatch.fnmatchcase(name, pattern):
+            return policy
+    return UNKNOWN_CLEANUP_REPORT_DIR_POLICY
+
+
+def cleanup_can_delete_run_dir(path: pathlib.Path) -> bool:
+    policy = cleanup_report_dir_policy(path)
+    if policy == 'earnings-qc-options-scan-full':
         return True
-    if name.startswith('research-pass-'):
+    if policy == 'research-pass':
         return (path / 'final_report.md').is_file() and (path / 'exit_code').is_file()
-    if name.startswith('qc-run-'):
+    if policy == 'qc-run':
         if (path / 'qc_run_result.json').is_file():
             return True
         manifest_path = path / 'qc_cloud_run_manifest.json'
@@ -1386,6 +1402,8 @@ def cleanup_can_delete_run_dir(path: pathlib.Path) -> bool:
         except Exception:
             return False
         return manifest.get('status') in {'cloud_backtest_completed', 'cloud_backtest_failed'} and bool(manifest.get('completed_at_utc'))
+    if policy == UNKNOWN_CLEANUP_REPORT_DIR_POLICY:
+        return True
     return False
 
 
@@ -1403,16 +1421,20 @@ def cleanup_dir_size(path: pathlib.Path) -> int:
 def cmd_cleanup(args) -> int:
     policy = {'older_than_days': args.older_than_days, 'keep_last': args.keep_last, 'dry_run': args.dry_run}
     cutoff = time.time() - args.older_than_days * 86400
-    run_dir_prefixes = ('earnings-qc-options-scan-full-*', 'research-pass-*', 'qc-run-*')
     dirs_by_path = {}
     protected = set()
-    for pattern in run_dir_prefixes:
-        matches = sorted([p for p in REPORT_ROOT.glob(pattern) if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+    grouped_dirs = {}
+    for p in (REPORT_ROOT.iterdir() if REPORT_ROOT.is_dir() else []):
+        if not p.is_dir():
+            continue
+        grouped_dirs.setdefault(cleanup_report_dir_policy(p), []).append(p)
+    for matches in grouped_dirs.values():
+        matches = sorted(matches, key=lambda p: p.stat().st_mtime, reverse=True)
         dirs_by_path.update({str(p): p for p in matches})
         protected.update(str(p) for p in matches[:args.keep_last])
     dirs = sorted(dirs_by_path.values(), key=lambda p: p.stat().st_mtime, reverse=True)
     deleted = []; failed = []; freed = 0
-    for d in dirs[args.keep_last:]:
+    for d in dirs:
         if d.stat().st_mtime >= cutoff or str(d) in protected:
             continue
         if not cleanup_can_delete_run_dir(d):
