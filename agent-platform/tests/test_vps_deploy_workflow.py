@@ -102,6 +102,21 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn("'0 9 * * * /agents/research/bin/earnings-otm-daily.sh'", workflow)
         self.assertNotIn('earnings-qc-options-scan run-now', workflow)
 
+    def test_deploy_run_block_lines_are_yaml_indented(self):
+        text = workflow_text()
+        marker = '      - name: Install tools and verify'
+        start = text.index(marker)
+        run_start = text.index('        run: |', start)
+        next_step = text.find('\n      - name:', run_start + 1)
+        block = text[run_start:next_step].splitlines()[1:]
+
+        bad_lines = [
+            (idx, line)
+            for idx, line in enumerate(block, start=text[:run_start].count('\n') + 2)
+            if line.strip() and not line.startswith('          ')
+        ]
+        self.assertEqual(bad_lines, [])
+
     def test_managed_earnings_timers_are_verified(self):
         workflow = workflow_text()
 

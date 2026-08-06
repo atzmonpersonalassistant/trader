@@ -313,61 +313,61 @@ jobs:
           mkdir -p "$STATE_DIR" "$LOG_DIR" "$REPORT_ROOT"
           write_retry_state() {
             python3 - "$RETRY_STATE" "$@" <<'PY'
-import json, pathlib, sys, time
-path = pathlib.Path(sys.argv[1])
-records = []
-if path.exists():
-    try:
-        records = json.loads(path.read_text(encoding="utf-8")).get("attempts", [])
-    except Exception:
-        records = []
-record = {
-    "attempt": int(sys.argv[2]),
-    "run_id": sys.argv[3],
-    "returncode": int(sys.argv[4]),
-    "classification": sys.argv[5],
-    "reason": sys.argv[6],
-    "recorded_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-}
-records.append(record)
-path.write_text(json.dumps({"attempt_count": len(records), "attempts": records}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+          import json, pathlib, sys, time
+          path = pathlib.Path(sys.argv[1])
+          records = []
+          if path.exists():
+              try:
+                  records = json.loads(path.read_text(encoding="utf-8")).get("attempts", [])
+              except Exception:
+                  records = []
+          record = {
+              "attempt": int(sys.argv[2]),
+              "run_id": sys.argv[3],
+              "returncode": int(sys.argv[4]),
+              "classification": sys.argv[5],
+              "reason": sys.argv[6],
+              "recorded_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+          }
+          records.append(record)
+          path.write_text(json.dumps({"attempt_count": len(records), "attempts": records}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
           }
           classify_daily_attempt() {
             python3 - "$1" "$2" <<'PY'
-import json, pathlib, sys
-rc = int(sys.argv[1])
-path = pathlib.Path(sys.argv[2])
-payload = {}
-try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-except Exception:
-    payload = {}
-summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-multiyear = payload.get("multiyear") if isinstance(payload.get("multiyear"), dict) else {}
-status = str(payload.get("status") or summary.get("status") or multiyear.get("status") or "")
-reason = str(payload.get("blocked_reason") or summary.get("blocked_reason") or multiyear.get("blocked_reason") or status or f"rc={rc}")
-text = f"{status} {reason}".upper()
-terminal = {"NO_FORWARD_CANDIDATES", "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}
-retryable_statuses = {"BLOCKED_QC_CLOUD_RATE_LIMITED", "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "BLOCKED_QC_CLOUD_CAPACITY"}
-retryable_markers = (
-    "NASDAQ CALENDAR EMPTY",
-    "NASDAQ CALENDAR PARTIAL FETCH/PARSE FAILURE",
-    "TRADER_VALUATION_ANCHOR_NO_SESSION_DATA",
-    "ZERO OPTION-CHAIN ROWS ON VALUATION DATE",
-)
-code_failure_markers = ("EXCEPTION", "BAD_JSON", "INVALID_", "NOT_IMPLEMENTED")
-if rc == 0:
-    print(f"success\t{status or 'OK'}")
-elif status in terminal:
-    print(f"terminal\t{status}")
-elif status in retryable_statuses or any(marker in text for marker in retryable_markers):
-    print(f"retryable\t{reason}")
-elif any(marker in text for marker in code_failure_markers):
-    print(f"failed\t{reason}")
-else:
-    print(f"failed\t{reason}")
-PY
+          import json, pathlib, sys
+          rc = int(sys.argv[1])
+          path = pathlib.Path(sys.argv[2])
+          payload = {}
+          try:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          except Exception:
+              payload = {}
+          summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+          multiyear = payload.get("multiyear") if isinstance(payload.get("multiyear"), dict) else {}
+          status = str(payload.get("status") or summary.get("status") or multiyear.get("status") or "")
+          reason = str(payload.get("blocked_reason") or summary.get("blocked_reason") or multiyear.get("blocked_reason") or status or f"rc={rc}")
+          text = f"{status} {reason}".upper()
+          terminal = {"NO_FORWARD_CANDIDATES", "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}
+          retryable_statuses = {"BLOCKED_QC_CLOUD_RATE_LIMITED", "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "BLOCKED_QC_CLOUD_CAPACITY"}
+          retryable_markers = (
+              "NASDAQ CALENDAR EMPTY",
+              "NASDAQ CALENDAR PARTIAL FETCH/PARSE FAILURE",
+              "TRADER_VALUATION_ANCHOR_NO_SESSION_DATA",
+              "ZERO OPTION-CHAIN ROWS ON VALUATION DATE",
+          )
+          code_failure_markers = ("EXCEPTION", "BAD_JSON", "INVALID_", "NOT_IMPLEMENTED")
+          if rc == 0:
+              print(f"success\t{status or 'OK'}")
+          elif status in terminal:
+              print(f"terminal\t{status}")
+          elif status in retryable_statuses or any(marker in text for marker in retryable_markers):
+              print(f"retryable\t{reason}")
+          elif any(marker in text for marker in code_failure_markers):
+              print(f"failed\t{reason}")
+          else:
+              print(f"failed\t{reason}")
+          PY
           }
           register_retry_waiting() {
             local waiting_id="$1"
@@ -381,25 +381,25 @@ PY
               -v next_attempt_at="$next_attempt_at" \
               -v retry_delay="$RETRY_DELAY_SECONDS" \
               -v reason="$reason" <<'SQL' >/dev/null
-INSERT INTO earnings_cache.research_runs(
-  run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,
-  summary_json,final_candidate_count,research_verdict,bottleneck,error,updated_at
-)
-VALUES (
-  :'run_id', :'campaign', 'running', now(), NULL,
-  jsonb_build_object('daily_retry', true, 'attempt_count', 1, 'next_attempt_at_utc', :'next_attempt_at'),
-  NULL,
-  jsonb_build_object('status', 'DAILY_RETRY_WAITING', 'attempt_count', 1, 'retry_delay_seconds', (:'retry_delay')::int, 'next_attempt_at_utc', :'next_attempt_at', 'blocked_reason', :'reason'),
-  0, 'DAILY_RETRY_WAITING', :'reason', NULL, now()
-)
-ON CONFLICT (run_id) DO UPDATE SET
-  status=EXCLUDED.status,
-  parameters_json=EXCLUDED.parameters_json,
-  summary_json=EXCLUDED.summary_json,
-  research_verdict=EXCLUDED.research_verdict,
-  bottleneck=EXCLUDED.bottleneck,
-  updated_at=now();
-SQL
+          INSERT INTO earnings_cache.research_runs(
+            run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,
+            summary_json,final_candidate_count,research_verdict,bottleneck,error,updated_at
+          )
+          VALUES (
+            :'run_id', :'campaign', 'running', now(), NULL,
+            jsonb_build_object('daily_retry', true, 'attempt_count', 1, 'next_attempt_at_utc', :'next_attempt_at'),
+            NULL,
+            jsonb_build_object('status', 'DAILY_RETRY_WAITING', 'attempt_count', 1, 'retry_delay_seconds', (:'retry_delay')::int, 'next_attempt_at_utc', :'next_attempt_at', 'blocked_reason', :'reason'),
+            0, 'DAILY_RETRY_WAITING', :'reason', NULL, now()
+          )
+          ON CONFLICT (run_id) DO UPDATE SET
+            status=EXCLUDED.status,
+            parameters_json=EXCLUDED.parameters_json,
+            summary_json=EXCLUDED.summary_json,
+            research_verdict=EXCLUDED.research_verdict,
+            bottleneck=EXCLUDED.bottleneck,
+            updated_at=now();
+          SQL
             )
             then
               echo "$(date -u +%FT%TZ) DAILY_RUN_RETRY_WAITING_DB_WRITE_FAILED waiting_run_id=$waiting_id"
@@ -460,14 +460,14 @@ SQL
             if [[ "$rc" -eq 75 ]]; then
               waiting_id="earnings-qc-options-scan-full-${RUN_DATE}-retry-waiting-attempt-2"
               reason="$(python3 - "$RETRY_STATE" <<'PY'
-import json, pathlib, sys
-try:
-    attempts = json.loads(pathlib.Path(sys.argv[1]).read_text()).get("attempts", [])
-    print((attempts[-1] if attempts else {}).get("reason") or "retryable daily failure")
-except Exception:
-    print("retryable daily failure")
-PY
-)"
+          import json, pathlib, sys
+          try:
+              attempts = json.loads(pathlib.Path(sys.argv[1]).read_text()).get("attempts", [])
+              print((attempts[-1] if attempts else {}).get("reason") or "retryable daily failure")
+          except Exception:
+              print("retryable daily failure")
+          PY
+          )"
               register_retry_waiting "$waiting_id" "$reason"
               echo "$(date -u +%FT%TZ) DAILY_RUN_RETRY_SLEEP reason=$reason delay_seconds=$RETRY_DELAY_SECONDS waiting_run_id=$waiting_id"
               sleep "$RETRY_DELAY_SECONDS"
