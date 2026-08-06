@@ -122,9 +122,9 @@ STALE_RUNNING_SECONDS="${EARNINGS_WATCHDOG_STALE_RUNNING_SECONDS:-10800}"
 MISSING_RUN_GRACE_SECONDS="${EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS:-10800}"
 DAILY_RUN_COMMAND="/agents/research/bin/earnings-otm-daily.sh"
 # Fallback for the managed systemd timer in .github/workflows/vps-deploy.yml:
-# OnCalendar=*-*-* 06:00:00 Asia/Jerusalem
-DAILY_RUN_DEFAULT_MINUTE=0
-DAILY_RUN_DEFAULT_HOUR=6
+# OnCalendar=*-*-* 10:30:00 Asia/Jerusalem
+DAILY_RUN_DEFAULT_MINUTE=30
+DAILY_RUN_DEFAULT_HOUR=10
 DAILY_RUN_DEFAULT_ZONE="Asia/Jerusalem"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
