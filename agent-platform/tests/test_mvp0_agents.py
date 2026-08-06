@@ -1645,6 +1645,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("Match Lean CLI BacktestClient.get", extractor_text)
         self.assertIn("requests.get", extractor_text)
         self.assertIn('params={"projectId": project_id, "backtestId": backtest_id}', extractor_text)
+        self.assertIn('"ok": data.get("success", False)', extractor_text)
+        self.assertNotIn('"ok": data.get("success", True)', extractor_text)
         self.assertNotIn("requests.post", extractor_text)
         loader = importlib.machinery.SourceFileLoader("qc_run_script", str(runner))
         spec = importlib.util.spec_from_loader("qc_run_script", loader)
