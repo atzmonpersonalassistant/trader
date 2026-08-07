@@ -17,7 +17,14 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import yaml
+
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    yaml = None
+    YAML_IMPORT_ERROR = exc
+else:
+    YAML_IMPORT_ERROR = None
 
 DEFAULT_CONFIG_PATH = Path(os.environ.get("TRADING_REVIEW_CONFIG", "/agents/review/config.json"))
 DEFAULT_LOG_DIR = Path(os.environ.get("TRADING_REVIEW_LOG_DIR", "/agents/review/logs"))
@@ -270,6 +277,9 @@ def local_validation_findings(workspace: Path, context: dict[str, Any]) -> list[
             continue
         if stat.st_size > MAX_WORKFLOW_YAML_BYTES:
             findings.append(f"Workflow YAML is too large to parse safely: {filename}: {stat.st_size} bytes")
+            continue
+        if yaml is None:
+            findings.append(f"Workflow YAML parser dependency is unavailable: {filename}: {YAML_IMPORT_ERROR}")
             continue
         try:
             yaml.safe_load(path.read_text(encoding="utf-8"))

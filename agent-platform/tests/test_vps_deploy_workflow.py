@@ -6,7 +6,13 @@ import subprocess
 from tempfile import TemporaryDirectory
 import textwrap
 import unittest
-import yaml
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    HAVE_YAML = False
+else:
+    HAVE_YAML = True
 
 
 WORKFLOW = Path('.github/workflows/vps-deploy.yml')
@@ -42,6 +48,7 @@ def extract_deploy_ok_check(script):
 
 class VpsDeployWorkflowTests(unittest.TestCase):
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is required to parse workflow YAML")
     def test_workflow_parses(self):
         yaml.safe_load(WORKFLOW.read_text())
 
