@@ -34,6 +34,7 @@ DEFAULT_IDEA_CONTEXT_LIMIT = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_L
 DEFAULT_IDEA_CONTEXT_CHARS = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_CHARS", "1200"))
 DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research/handoff"))
 DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research-runner")
+LEAN_CLI_VERSION = "1.0.225"
 
 
 
@@ -201,8 +202,8 @@ Do not place live trades. Do not make trade recommendations from weak or technic
 def lean_setup_commands(workspace_dir: Path) -> list[str]:
     workspace = shlex.quote(str(workspace_dir))
     return [
-        "python3 -m pip install --user --upgrade lean",
-        "python3 -m pipx install lean  # acceptable alternative when pipx is available",
+        f"python3 -m pip install --user lean=={LEAN_CLI_VERSION}",
+        f"python3 -m pipx install lean=={LEAN_CLI_VERSION}  # acceptable alternative when pipx is available",
         "printf '%s\\n' \"$QUANTCONNECT_API_TOKEN\" | lean login --user-id $QUANTCONNECT_USER_ID",
         f"mkdir -p {workspace} && cd {workspace} && lean init",
         "lean whoami",
