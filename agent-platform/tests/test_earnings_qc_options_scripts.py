@@ -1406,6 +1406,127 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("if dte < 1 or dte > 60: continue", main)
         self.assertIn("self.max_spread = 0.250000", main)
 
+    def test_multiyear_generated_qc_algorithm_filters_subscription_by_option_right(self):
+        def filter_chain_ops(option_right):
+            mod = load_script("earnings-qc-multiyear-backtest")
+            project_dir = pathlib.Path(tempfile.mkdtemp())
+            mod.write_project(
+                project_dir,
+                [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+                8,
+                {"option_right": option_right},
+            )
+            main = (project_dir / "main.py").read_text()
+
+            fake_imports = types.ModuleType("AlgorithmImports")
+
+            class FakeUniverse:
+                def __init__(self):
+                    self.ops = []
+
+                def include_weeklys(self):
+                    self.ops.append(("include_weeklys",))
+                    return self
+
+                def calls_only(self):
+                    self.ops.append(("calls_only",))
+                    return self
+
+                def puts_only(self):
+                    self.ops.append(("puts_only",))
+                    return self
+
+                def strikes(self, low, high):
+                    self.ops.append(("strikes", low, high))
+                    return self
+
+                def expiration(self, low, high):
+                    self.ops.append(("expiration", low.days, high.days))
+                    return self
+
+            class FakeOption:
+                def __init__(self, symbol):
+                    self.symbol = f"{symbol} OPTION"
+                    self.filter_ops = None
+
+                def set_filter(self, filter_func):
+                    universe = FakeUniverse()
+                    filter_func(universe)
+                    self.filter_ops = universe.ops
+
+            class FakeQCAlgorithm:
+                def set_start_date(self, *_args):
+                    pass
+
+                def set_end_date(self, *_args):
+                    pass
+
+                def set_cash(self, *_args):
+                    pass
+
+                def add_universe(self, *_args):
+                    pass
+
+                def add_equity(self, symbol, *_args):
+                    return types.SimpleNamespace(
+                        symbol=symbol,
+                        set_data_normalization_mode=lambda _mode: None,
+                    )
+
+                def add_option(self, symbol, *_args):
+                    option = FakeOption(symbol)
+                    self.created_options.append(option)
+                    return option
+
+            fake_imports.QCAlgorithm = FakeQCAlgorithm
+            fake_imports.Resolution = types.SimpleNamespace(DAILY="Daily")
+            fake_imports.OptionRight = types.SimpleNamespace(CALL="call", PUT="put")
+            fake_imports.DataNormalizationMode = types.SimpleNamespace(RAW="raw")
+            data_source = types.ModuleType("QuantConnect.DataSource")
+            data_source.EODHDUpcomingEarnings = object
+            quantconnect = types.ModuleType("QuantConnect")
+            old_imports = sys.modules.get("AlgorithmImports")
+            old_qc = sys.modules.get("QuantConnect")
+            old_data_source = sys.modules.get("QuantConnect.DataSource")
+            sys.modules["AlgorithmImports"] = fake_imports
+            sys.modules["QuantConnect"] = quantconnect
+            sys.modules["QuantConnect.DataSource"] = data_source
+            namespace = {}
+            try:
+                compile(main, str(project_dir / "main.py"), "exec")
+                exec(compile(main, str(project_dir / "main.py"), "exec"), namespace)
+                alg = namespace["EarningsQcHistoricalOptionPnl"]()
+                alg.universe_settings = types.SimpleNamespace(resolution=None)
+                alg.created_options = []
+                alg.initialize()
+                return alg.created_options[0].filter_ops
+            finally:
+                if old_imports is None:
+                    sys.modules.pop("AlgorithmImports", None)
+                else:
+                    sys.modules["AlgorithmImports"] = old_imports
+                if old_qc is None:
+                    sys.modules.pop("QuantConnect", None)
+                else:
+                    sys.modules["QuantConnect"] = old_qc
+                if old_data_source is None:
+                    sys.modules.pop("QuantConnect.DataSource", None)
+                else:
+                    sys.modules["QuantConnect.DataSource"] = old_data_source
+
+        self.assertEqual(
+            filter_chain_ops("call"),
+            [("include_weeklys",), ("calls_only",), ("strikes", -50, 300), ("expiration", 1, 60)],
+        )
+        self.assertEqual(
+            filter_chain_ops("put"),
+            [("include_weeklys",), ("puts_only",), ("strikes", -50, 300), ("expiration", 1, 60)],
+        )
+        self.assertEqual(
+            filter_chain_ops("both"),
+            [("include_weeklys",), ("strikes", -50, 300), ("expiration", 1, 60)],
+        )
+
     def test_multiyear_generated_qc_algorithm_defaults_to_calls_only(self):
         alg = self.build_multiyear_algorithm()
         alg.option_by_underlying = {"XYZ": "XYZ_OPT"}
