@@ -58,6 +58,21 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("python3 -c 'import yaml'", workflow)
         self.assertIn("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-yaml", workflow)
 
+    def test_deploy_validates_payload_syntax_before_installing_live_paths(self):
+        script = deploy_run_script()
+
+        first_install = script.index('sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_orchestrator.py" /usr/local/lib/trading_orchestrator.py')
+        self.assertLess(script.index("ensure_deploy_syntax_runtime\nvalidate_deploy_payload_syntax"), first_install)
+        self.assertLess(script.index("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3"), first_install)
+        self.assertLess(script.index("validate_deploy_payload_syntax\nsudo install"), first_install)
+        self.assertLess(script.index("bash -n \"$DEPLOY_DIR/$shell_script\""), first_install)
+        self.assertLess(script.index("trading-research-agent-loop \\"), first_install)
+        self.assertLess(script.index("trading-research-bounded-earnings-qc \\"), first_install)
+        self.assertLess(script.index("ast.parse((deploy_dir / name).read_text"), first_install)
+        self.assertLess(script.index('"earnings-qc-research"'), first_install)
+        self.assertLess(script.index('"trading-research-qc-cloud-extract"'), first_install)
+        self.assertLess(script.index('"trading-research-qc-run"'), first_install)
+
     def test_earnings_research_has_single_public_cli(self):
         workflow = workflow_text()
 

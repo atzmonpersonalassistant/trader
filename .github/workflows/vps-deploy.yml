@@ -201,6 +201,64 @@ jobs:
             sudo -n -u agent-research bash -lc "set -euo pipefail; test -w '$smoke_dir/from-coding.txt'; test -w '$smoke_dir/review-subdir/from-review.txt'"
             sudo rm -rf "$smoke_dir"
           }
+          ensure_deploy_syntax_runtime() {
+            if command -v python3 >/dev/null 2>&1; then
+              return 0
+            fi
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3
+            fi
+            command -v python3 >/dev/null 2>&1
+          }
+          validate_deploy_payload_syntax() {
+            local shell_script
+            for shell_script in \
+              trading-orchestrator \
+              trading-coding-agent \
+              trading-dispatch-coding-agent \
+              trading-dispatch-review-agent \
+              trading-dispatch-coding-agent-stub \
+              trading-review-agent \
+              trading-research-agent \
+              trading-research-agent-loop \
+              trading-research-qc-smoke \
+              trading-research-qc-broker \
+              trading-research-qc-cloud-run \
+              trading-research-qc-api-extract \
+              trading-research-bounded-earnings-qc \
+              earnings-llm-postrun-review \
+              earnings-llm-research-watchdog \
+              trading-orchestrator-tick
+            do
+              bash -n "$DEPLOY_DIR/$shell_script"
+            done
+            python3 - "$DEPLOY_DIR" <<'PY'
+          import ast
+          import sys
+          from pathlib import Path
+
+          deploy_dir = Path(sys.argv[1])
+          for name in (
+              "trading_agent_token.py",
+              "trading_orchestrator.py",
+              "trading_coding_agent.py",
+              "trading_review_agent.py",
+              "trading_coding_agent_stub.py",
+              "trading_research_agent.py",
+              "trading-research-qc-cloud-extract",
+              "trading-research-qc-run",
+              "earnings-qc-research",
+              "earnings-qc-classify-bounded-action",
+              "earnings-qc-options-scan",
+              "earnings-qc-multiyear-backtest",
+              "qc_cloud_capacity.py",
+          ):
+              ast.parse((deploy_dir / name).read_text(encoding="utf-8"), filename=name)
+          PY
+          }
+          ensure_deploy_syntax_runtime
+          validate_deploy_payload_syntax
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_orchestrator.py" /usr/local/lib/trading_orchestrator.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_coding_agent.py" /usr/local/lib/trading_coding_agent.py
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_review_agent.py" /usr/local/lib/trading_review_agent.py
