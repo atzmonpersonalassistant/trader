@@ -751,12 +751,21 @@ jobs:
           sudo -n -u agent-research bash -lc 'test -d /agents/research/lean-workspace && test -w /agents/research/lean-workspace && test -w /agents/shared/research-artifacts && test -w /agents/research/handoff'
           validate_shared_collab_dir /agents/shared/lean-projects
           validate_shared_collab_dir /agents/shared/research-artifacts
-          if ! sudo python3 -c 'import lean' >/dev/null 2>&1 || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
+          LEAN_CLI_VERSION=1.0.225
+          installed_lean_version="$(sudo python3 - <<'PY_LEAN_VERSION' 2>/dev/null || true
+          from importlib.metadata import version
+          try:
+              print(version("lean"))
+          except Exception:
+              pass
+          PY_LEAN_VERSION
+          )"
+          if [[ "$installed_lean_version" != "$LEAN_CLI_VERSION" ]] || ! sudo -n -u agent-research bash -lc 'command -v lean >/dev/null 2>&1'; then
             if ! python3 -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
               sudo apt-get update
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-pip python3-venv
             fi
-            sudo python3 -m pip install --break-system-packages --upgrade lean
+            sudo python3 -m pip install --break-system-packages "lean==$LEAN_CLI_VERSION"
           fi
           sudo python3 - <<'PY_LEAN_MODULES'
           import lean.models

@@ -69,8 +69,17 @@ if [[ "$INSTALL_TOOLS" == "1" ]]; then
     if ! command -v codex >/dev/null 2>&1; then
       npm install -g @openai/codex
     fi
-    if ! python3 -c 'import lean' >/dev/null 2>&1 || ! command -v lean >/dev/null 2>&1; then
-      python3 -m pip install --break-system-packages --upgrade lean
+    LEAN_CLI_VERSION=1.0.225
+    installed_lean_version="$(python3 - <<'PY_LEAN_VERSION' 2>/dev/null || true
+from importlib.metadata import version
+try:
+    print(version("lean"))
+except Exception:
+    pass
+PY_LEAN_VERSION
+)"
+    if [[ "$installed_lean_version" != "$LEAN_CLI_VERSION" ]] || ! command -v lean >/dev/null 2>&1; then
+      python3 -m pip install --break-system-packages "lean==$LEAN_CLI_VERSION"
     fi
     python3 - <<'PY_LEAN_MODULES'
 import lean.models
