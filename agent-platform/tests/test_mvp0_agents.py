@@ -1943,7 +1943,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("surface_checks", text)
         self.assertIn("QC_CLOUD_EXTRACT_MAX_ATTEMPTS", text)
         self.assertIn("QC_CLOUD_EXTRACT_ATTEMPT", text)
-        self.assertIn('docker_status": "removed"', text)
+        self.assertIn('docker_status="removed"', text)
         self.assertIn("qc_cloud_execution_surface_unavailable", text)
         self.assertIn("/agents/shared/research-artifacts", text)
         self.assertIn("validate_shared_collab_dir /agents/shared/lean-projects", text)
