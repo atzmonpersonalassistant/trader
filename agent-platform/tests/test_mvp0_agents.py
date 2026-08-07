@@ -15,6 +15,12 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
+try:
+    import yaml  # noqa: F401
+except ModuleNotFoundError:
+    HAVE_YAML = False
+else:
+    HAVE_YAML = True
 
 
 def load(name, rel):
@@ -2016,6 +2022,7 @@ class MVP0AgentTests(unittest.TestCase):
         subprocess.run(["bash", "-n", str(wrapper)], check=True)
         self.assertEqual(subprocess.run([str(wrapper), "review", "--pr", "abc"]).returncode, 64)
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is required for workflow YAML validation")
     def test_review_agent_blocks_invalid_workflow_yaml(self):
         review = load("trading_review_agent_local_validation", "agent-platform/tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
@@ -2030,6 +2037,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("Workflow YAML does not parse: .github/workflows/vps-deploy.yml", findings[0])
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is required for workflow YAML validation")
     def test_review_agent_rejects_workflow_yaml_symlink(self):
         review = load("trading_review_agent_symlink_validation", "agent-platform/tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
@@ -2043,6 +2051,7 @@ class MVP0AgentTests(unittest.TestCase):
 
         self.assertEqual(findings, ["Workflow YAML must be a regular file, not a symlink: .github/workflows/vps-deploy.yml"])
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is required for workflow YAML validation")
     def test_review_agent_blocks_invalid_utf8_workflow_yaml(self):
         review = load("trading_review_agent_utf8_validation", "agent-platform/tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
