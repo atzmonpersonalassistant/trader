@@ -212,12 +212,16 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
         if value is None:
             return FUNNEL_INCOMPLETE_BOTTLENECK
         counts.append((name, value))
-    largest_drop = 0
+    largest_drop_rate = 0.0
     bottleneck = None
     for (_, prev_count), (name, count) in zip(counts, counts[1:]):
-        drop = prev_count - count
-        if drop > largest_drop:
-            largest_drop = drop
+        if count == 0:
+            return name
+        if prev_count <= 0:
+            continue
+        drop_rate = (prev_count - count) / prev_count
+        if drop_rate > largest_drop_rate:
+            largest_drop_rate = drop_rate
             bottleneck = name
     return bottleneck
 
