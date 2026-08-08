@@ -120,6 +120,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.min_volume = hist_params["min_volume"]
         alg.option_right = hist_params["option_right"]
         alg.delta_target = hist_params["delta_target"]
+        alg.path_metrics = hist_params["path_metrics"]
         alg.stop_loss_max_loss_pct = hist_params["stop_loss_max_loss_pct"]
         return alg
 
@@ -1226,6 +1227,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("self.max_spread_pct = 0.700000", main)
         self.assertIn("self.option_right = 'call'", main)
         self.assertIn("self.delta_target = 0.250000", main)
+        self.assertIn("self.path_metrics = 'daily'", main)
         self.assertIn("self.exit_days_before = 1", main)
         self.assertIn("planned_exit_date=rd-timedelta(days=self.exit_days_before)", main)
         self.assertIn("planned_exit_date=rd-timedelta(days=max(0,self.exit_days_before-1))", main)
@@ -1250,6 +1252,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"final_candidate_gate":{"min_sample_size":8,"max_dropout_pct":55.000000}', main)
         self.assertIn('"parameters":{"delta_target":0.250000,"exit_days_before":1,"exit_policy":', main)
         self.assertIn('"option_right":', main)
+        self.assertIn('"path_metrics":', main)
         self.assertIn("delta_targeted_comparison", main)
         self.assertIn("untraded_event_no_delta_eligible_contract_count", main)
         self.assertIn("delta_eligible=[q for q in eligible if self.delta_distance(q) is not None]", main)
@@ -1280,6 +1283,38 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             if key.startswith("multiyear_json_")
         ))
         self.assertEqual(payload["historical_resolution"], "minute")
+
+    def test_multiyear_path_metrics_none_strips_trade_path_details(self):
+        def run(path_metrics):
+            alg = self.build_multiyear_algorithm({"path_metrics": path_metrics})
+            quote = self.quote(0.20, ask=0.25, expiry="2026-02-05")
+            self.set_multiyear_snapshots(alg, {
+                "2026-01-05": quote,
+                "2026-01-31": dict(quote, bid=0.30, ask=0.35, mid=0.325),
+            })
+            alg.on_end_of_algorithm()
+            payload = json.loads("".join(
+                alg.runtime_statistics[key]
+                for key in sorted(alg.runtime_statistics)
+                if key.startswith("multiyear_json_")
+            ))
+            return payload, alg.runtime_statistics
+
+        daily_payload, daily_stats = run("daily")
+        none_payload, none_stats = run("none")
+        daily_result = daily_payload["results"][0]
+        none_result = none_payload["results"][0]
+
+        self.assertEqual(daily_payload["parameters"]["path_metrics"], "daily")
+        self.assertEqual(none_payload["parameters"]["path_metrics"], "none")
+        self.assertEqual(daily_stats["multiyear_path_metrics"], "daily")
+        self.assertEqual(none_stats["multiyear_path_metrics"], "none")
+        self.assertIn("trades", daily_result)
+        self.assertIn("per_trade_return_pct", daily_result)
+        self.assertNotIn("trades", none_result)
+        self.assertNotIn("per_trade_return_pct", none_result)
+        self.assertEqual(none_result["sample_size"], daily_result["sample_size"])
+        self.assertEqual(none_result["mean_return_pct"], daily_result["mean_return_pct"])
 
     def test_multiyear_generated_payload_counts_liquidity_blockers(self):
         alg = self.build_multiyear_algorithm()
