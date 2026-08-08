@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import unittest
@@ -75,7 +76,7 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertLess(text.index('ARTIFACTS_VALID=0'), text.index("printf '%s\\n' \"$FINGERPRINT\" > \"$LAST_FINGERPRINT_FILE\""))
         self.assertIn('WATCHDOG_FAILED run_id=$RUN_ID rc=$RC artifacts_valid=$ARTIFACTS_VALID', text)
 
-    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T12:00:00+03:00", timer_calendar=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None):
+    def run_watchdog_with_fake_psql(self, psql_outputs, now="2026-08-04T12:00:00+03:00", timer_calendar=None, *, root=None, date="2026-08-04", schedule=None, schedule_zone=None, full_summary=None):
         cleanup = TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -93,7 +94,9 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             skill.write_text("# skill\n")
             happy_run_dir = report_root / "run"
             happy_run_dir.mkdir(parents=True, exist_ok=True)
-            (happy_run_dir / "full_summary.json").write_text('{"status":"NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}')
+            if full_summary is None:
+                full_summary = {"status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}
+            (happy_run_dir / "full_summary.json").write_text(json.dumps(full_summary))
             resolved_outputs = [
                 output.replace("{report_root}", str(report_root))
                 for output in psql_outputs
@@ -319,6 +322,53 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("WOULD_RUN_WATCHDOG run_id=earnings-qc-options-scan-full-20260804-060000", result.stdout)
+
+    def test_finished_daily_run_with_scans_but_no_option_chain_data_escalates(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\tliquidity\t\n",
+        ], full_summary={
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "qc_symbols_scanned": 150,
+            "forward_candidate_count": 0,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": 0,
+                "03_qc_expiry_within_0_7d_after_earnings": 0,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
+                "05_qc_liquidity_greeks_quality_pass": 0,
+            },
+        })
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("DAILY_RUN_PRODUCED_NO_DATA", result.stderr)
+        self.assertIn("qc_symbols_scanned=150", result.stderr)
+        self.assertIn("option_chain_available=0", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: DAILY_RUN_PRODUCED_NO_DATA", task_text)
+
+    def test_finished_daily_run_with_empty_candidates_but_option_chain_data_does_not_escalate(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\tliquidity\t\n",
+        ], full_summary={
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "qc_symbols_scanned": 25,
+            "forward_candidate_count": 0,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": 25,
+                "03_qc_expiry_within_0_7d_after_earnings": 25,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 25,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        })
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("WOULD_RUN_WATCHDOG run_id=earnings-qc-options-scan-full-20260804-060000", result.stdout)
+        self.assertNotIn("DAILY_RUN_PRODUCED_NO_DATA", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 0)
 
 
 if __name__ == "__main__":

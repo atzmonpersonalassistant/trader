@@ -333,6 +333,42 @@ if [[ ! -d "$RUN_DIR" || ! -f "$RUN_DIR/full_summary.json" ]]; then
   exit 66
 fi
 
+NO_DATA_STATE="$(python3 - "$RUN_DIR/full_summary.json" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+except Exception as exc:
+    print(f"parse_error|{exc}")
+    raise SystemExit(0)
+
+def int_value(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+symbols_scanned = int_value(summary.get("qc_symbols_scanned"))
+funnel = summary.get("aggregate_funnel") or {}
+option_chain_available = int_value(funnel.get("02_qc_option_chain_available"))
+if symbols_scanned is not None and symbols_scanned > 0 and option_chain_available == 0:
+    print(f"no_data|{symbols_scanned}|{option_chain_available}")
+else:
+    print(f"ok|{symbols_scanned if symbols_scanned is not None else ''}|{option_chain_available if option_chain_available is not None else ''}")
+PY
+)"
+IFS='|' read -r NO_DATA_STATUS NO_DATA_QC_SYMBOLS_SCANNED NO_DATA_OPTION_CHAIN_AVAILABLE <<< "$NO_DATA_STATE"
+if [[ "$NO_DATA_STATUS" == "no_data" ]]; then
+  write_failure_handoff_task "DAILY_RUN_PRODUCED_NO_DATA"
+  echo "ERROR: DAILY_RUN_PRODUCED_NO_DATA date=$DATE run_id=$RUN_ID qc_symbols_scanned=$NO_DATA_QC_SYMBOLS_SCANNED option_chain_available=$NO_DATA_OPTION_CHAIN_AVAILABLE" >&2
+  exit 75
+fi
+
 SAFE_RUN_MARKER="$(printf '%s' "$RUN_ID" | tr -c 'A-Za-z0-9._-' '-')"
 RUN_STATE_DIR="$STATE_DIR/runs/$SAFE_RUN_MARKER"
 mkdir -p "$RUN_STATE_DIR"
