@@ -357,6 +357,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "02_qc_option_chain_available": 73,
                 "03_qc_expiry_within_0_7d_after_earnings": 26,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "04_qc_calls_ask_under_max_premium": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -369,6 +370,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "02_qc_option_chain_available": 73,
                 "03_qc_expiry_within_0_7d_after_earnings": 26,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "04_qc_calls_ask_under_max_premium": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -380,6 +382,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "aggregate_funnel": {
                 "02_qc_option_chain_available": 73,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "04_qc_calls_ask_under_max_premium": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -409,6 +412,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "02_qc_option_chain_available": 73,
                     "03_qc_expiry_within_0_7d_after_earnings": 26,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                    "04_qc_calls_ask_under_max_premium": 26,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -422,6 +426,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "02_qc_option_chain_available": 10,
                     "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "04_qc_calls_ask_under_max_premium": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -436,6 +441,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "02_qc_option_chain_available": 10,
                     "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "04_qc_calls_ask_under_max_premium": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             })
@@ -446,6 +452,20 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "qc_symbols_scanned": 10,
                 "aggregate_funnel": {
                     "02_qc_option_chain_available": 10,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "04_qc_calls_ask_under_max_premium": 10,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "funnel_incomplete",
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 10,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 10,
+                    "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },

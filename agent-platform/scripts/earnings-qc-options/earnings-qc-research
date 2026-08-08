@@ -201,6 +201,9 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
     if final_count > 0:
         return None
     funnel = summary.get('aggregate_funnel') or summary.get('funnel') or {}
+    for key in INT_FUNNEL_KEYS:
+        if int_or_none(funnel.get(key)) is None:
+            return FUNNEL_INCOMPLETE_BOTTLENECK
     counts = []
     for key, name in BOTTLENECK_FUNNEL_STAGES:
         raw = summary.get(key) if key == 'qc_symbols_scanned' else funnel.get(key)
