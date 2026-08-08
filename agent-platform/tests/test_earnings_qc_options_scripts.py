@@ -1,5 +1,6 @@
 import contextlib
 import argparse
+import ast
 import datetime
 import io
 import json
@@ -1261,6 +1262,37 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn('"strike": 7', main)
         self.assertNotIn('"strike": 8', main)
         compile(main, str(project_dir / "main.py"), "exec")
+
+    def test_multiyear_generated_algorithm_self_assignments_are_consumed(self):
+        """Referenced somewhere is weaker than affects output; this catches assigned-but-never-read knobs."""
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        mod.write_project(
+            project_dir,
+            [{"symbol": "OPEN", "earnings_date": "2026-08-04", "spot": 4.79, "contracts": []}],
+            8,
+            {},
+        )
+        tree = ast.parse((project_dir / "main.py").read_text())
+        assigned = set()
+        referenced = set()
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            ):
+                continue
+            if isinstance(node.ctx, ast.Store):
+                assigned.add(node.attr)
+            elif isinstance(node.ctx, ast.Load):
+                referenced.add(node.attr)
+
+        report_only = {
+            "snapshot_contract_count",
+            "snapshot_day_count",
+        }
+        self.assertEqual(sorted(assigned - referenced - report_only), [])
 
     def test_multiyear_runtime_stat_chunks_sort_numeric_suffixes(self):
         mod = load_script("earnings-qc-multiyear-backtest")
