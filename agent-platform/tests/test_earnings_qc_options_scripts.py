@@ -448,6 +448,20 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             }),
             "liquidity",
         )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 98,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 95,
+                    "03_qc_expiry_within_0_7d_after_earnings": 90,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 90,
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "premium",
+        )
         self.assertIsNone(
             mod.derive_funnel_bottleneck({
                 "status": "OK_FULL_QC_SCAN",

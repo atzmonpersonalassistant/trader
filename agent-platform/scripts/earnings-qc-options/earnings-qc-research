@@ -38,6 +38,7 @@ BOTTLENECK_FUNNEL_STAGES = [
     ('02_qc_option_chain_available', 'option_chain'),
     ('03_qc_expiry_within_0_7d_after_earnings', 'expiry'),
     ('035_qc_otm_expiry_within_0_7d_after_earnings', 'otm_expiry'),
+    ('04_qc_calls_ask_under_max_premium', 'premium'),
     ('05_qc_liquidity_greeks_quality_pass', 'liquidity'),
 ]
 FUNNEL_INCOMPLETE_BOTTLENECK = 'funnel_incomplete'
