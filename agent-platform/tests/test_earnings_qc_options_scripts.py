@@ -415,11 +415,31 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("'incomplete-run', 'camp', 'completed'", joined)
         self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'funnel_incomplete', NULL", joined)
         self.assertIn("'candidate-scan-run', 'camp', 'completed'", joined)
-        self.assertIn("'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL', NULL, NULL", joined)
+        self.assertIn("'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL', 'expiry', NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
 
     def test_derive_funnel_bottleneck_uses_dominant_collapse(self):
         mod = load_script("earnings-qc-research")
+        for status in [
+            "NO_FORWARD_CANDIDATES",
+            "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "NO_CANDIDATES_AFTER_FUTURE_STATUS",
+        ]:
+            with self.subTest(status=status):
+                self.assertEqual(
+                    mod.derive_funnel_bottleneck({
+                        "status": status,
+                        "qc_symbols_scanned": 98,
+                        "aggregate_funnel": {
+                            "02_qc_option_chain_available": 73,
+                            "03_qc_expiry_within_0_7d_after_earnings": 26,
+                            "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                            "04_qc_calls_ask_under_max_premium": 26,
+                            "05_qc_liquidity_greeks_quality_pass": 1,
+                        },
+                    }),
+                    "expiry",
+                )
         self.assertEqual(
             mod.derive_funnel_bottleneck({
                 "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
@@ -476,7 +496,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 },
             })
         )
-        self.assertIsNone(
+        self.assertEqual(
             mod.derive_funnel_bottleneck({
                 "status": "OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL",
                 "candidate_scan_only": True,
@@ -488,7 +508,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "04_qc_calls_ask_under_max_premium": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
-            })
+            }),
+            "liquidity",
         )
         self.assertEqual(
             mod.derive_funnel_bottleneck({
