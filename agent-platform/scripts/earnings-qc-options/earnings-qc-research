@@ -201,9 +201,6 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
     final_count = int_or_none(summary.get('final_candidate_count') or summary.get('candidate_count')) or 0
     if final_count > 0:
         return None
-    status = str(summary.get('status') or '')
-    if not (summary.get('historical_gate_no_pass') or status == 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL'):
-        return None
     funnel = summary.get('aggregate_funnel') or summary.get('funnel') or {}
     for key in INT_FUNNEL_KEYS:
         if int_or_none(funnel.get(key)) is None:
