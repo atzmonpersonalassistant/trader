@@ -2813,6 +2813,51 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("raw diff was not sent to the model", review_text)
 
+    def test_review_risk_sensitive_guard_matches_prose_and_identifiers(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        terms = [
+            "live trading",
+            "ibkr",
+            "position sizing",
+            "position size",
+            "risk limit",
+            "sell to open",
+            "short call",
+            "short put",
+            "naked",
+            "credit spread",
+            "debit spread",
+            "premium sell",
+            "margin",
+            "assignment",
+            "uncovered",
+            "write call",
+            "write put",
+        ]
+        for term in terms:
+            for spelling in (term, term.replace(" ", "_")):
+                with self.subTest(term=term, spelling=spelling):
+                    result = review.deterministic_review({
+                        "diff": f"+changed = {spelling!r}\n",
+                        "pr": {"labels": []},
+                    })
+                    self.assertFalse(result["pass"])
+                    self.assertIn("Potential trading/risk-sensitive change lacks human:approved label.", result["findings"])
+
+    def test_review_risk_sensitive_guard_allows_human_approved_and_unrelated_diff(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        approved = review.deterministic_review({
+            "diff": "+ENABLE_LIVE_TRADING = True\n",
+            "pr": {"labels": [{"name": "human:approved"}]},
+        })
+        self.assertTrue(approved["pass"])
+
+        unrelated = review.deterministic_review({
+            "diff": "+scanner_batch_size = 25\n+report_title = 'daily scan'\n",
+            "pr": {"labels": []},
+        })
+        self.assertTrue(unrelated["pass"])
+
 
 
 class ResearchIdeaQualityPromptTests(unittest.TestCase):
