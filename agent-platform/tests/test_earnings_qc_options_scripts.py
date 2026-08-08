@@ -243,6 +243,53 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         alg.min_volume = 0
         return alg
 
+    def test_stage2_project_generation_preserves_qc_cloud_cache(self):
+        mod = load_script("earnings-qc-options-scan")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        (project_dir / "config.json").write_text(json.dumps({
+            "algorithm-language": "Python",
+            "parameters": {"stale": "rewritten"},
+            "description": "old",
+            "cloud-id": 987654,
+            "organization-id": "org-cache",
+        }))
+
+        mod.write_qc_stage2_project(
+            project_dir,
+            [{"symbol": "ABC", "report_date": "2026-08-12"}],
+            datetime.date(2026, 8, 8),
+        )
+
+        cfg = json.loads((project_dir / "config.json").read_text())
+        self.assertEqual(cfg["cloud-id"], 987654)
+        self.assertEqual(cfg["organization-id"], "org-cache")
+        self.assertEqual(cfg["parameters"], {})
+        self.assertEqual(cfg["description"], "Earnings cheap near-expiry call QC batch diagnostic")
+
+    def test_multiyear_project_generation_preserves_qc_cloud_cache(self):
+        mod = load_script("earnings-qc-multiyear-backtest")
+        project_dir = pathlib.Path(tempfile.mkdtemp())
+        (project_dir / "config.json").write_text(json.dumps({
+            "algorithm-language": "Python",
+            "parameters": {"stale": "rewritten"},
+            "description": "old",
+            "cloud-id": 123456,
+            "organization-id": "org-multiyear-cache",
+        }))
+
+        mod.write_project(
+            project_dir,
+            [{"symbol": "XYZ", "earnings_date": "2026-02-01"}],
+            1,
+            params={"final_min_sample_size": 1},
+        )
+
+        cfg = json.loads((project_dir / "config.json").read_text())
+        self.assertEqual(cfg["cloud-id"], 123456)
+        self.assertEqual(cfg["organization-id"], "org-multiyear-cache")
+        self.assertEqual(cfg["parameters"], {})
+        self.assertEqual(cfg["description"], "Earnings candidates multi-year historical option PnL backtest")
+
 
     def test_single_public_research_cli_uses_internal_libexec_stages(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
