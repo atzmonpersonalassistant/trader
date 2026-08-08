@@ -341,7 +341,7 @@ import sys
 try:
     summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
 except Exception as exc:
-    print(f"parse_error|{exc}")
+    print(f"funnel_key_missing|||full_summary_parse_error:{exc}")
     raise SystemExit(0)
 
 def int_value(value):
@@ -354,15 +354,25 @@ def int_value(value):
     return None
 
 symbols_scanned = int_value(summary.get("qc_symbols_scanned"))
-funnel = summary.get("aggregate_funnel") or {}
-option_chain_available = int_value(funnel.get("02_qc_option_chain_available"))
-if symbols_scanned is not None and symbols_scanned > 0 and option_chain_available == 0:
+funnel = summary.get("aggregate_funnel")
+funnel_key = "02_qc_option_chain_available"
+option_chain_available = None
+if isinstance(funnel, dict) and funnel_key in funnel:
+    option_chain_available = int_value(funnel.get(funnel_key))
+if symbols_scanned is not None and symbols_scanned > 0 and option_chain_available is None:
+    print(f"funnel_key_missing|{symbols_scanned}||{funnel_key}")
+elif symbols_scanned is not None and symbols_scanned > 0 and option_chain_available == 0:
     print(f"no_data|{symbols_scanned}|{option_chain_available}")
 else:
     print(f"ok|{symbols_scanned if symbols_scanned is not None else ''}|{option_chain_available if option_chain_available is not None else ''}")
 PY
 )"
-IFS='|' read -r NO_DATA_STATUS NO_DATA_QC_SYMBOLS_SCANNED NO_DATA_OPTION_CHAIN_AVAILABLE <<< "$NO_DATA_STATE"
+IFS='|' read -r NO_DATA_STATUS NO_DATA_QC_SYMBOLS_SCANNED NO_DATA_OPTION_CHAIN_AVAILABLE NO_DATA_DETAIL <<< "$NO_DATA_STATE"
+if [[ "$NO_DATA_STATUS" == "funnel_key_missing" ]]; then
+  write_failure_handoff_task "WATCHDOG_FUNNEL_KEY_MISSING"
+  echo "ERROR: WATCHDOG_FUNNEL_KEY_MISSING date=$DATE run_id=$RUN_ID qc_symbols_scanned=$NO_DATA_QC_SYMBOLS_SCANNED detail=$NO_DATA_DETAIL" >&2
+  exit 75
+fi
 if [[ "$NO_DATA_STATUS" == "no_data" ]]; then
   write_failure_handoff_task "DAILY_RUN_PRODUCED_NO_DATA"
   echo "ERROR: DAILY_RUN_PRODUCED_NO_DATA date=$DATE run_id=$RUN_ID qc_symbols_scanned=$NO_DATA_QC_SYMBOLS_SCANNED option_chain_available=$NO_DATA_OPTION_CHAIN_AVAILABLE" >&2
