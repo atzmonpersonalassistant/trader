@@ -149,6 +149,15 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if option_right_setting_marker not in code:
         raise RuntimeError('generated multiyear option-right setting marker not found')
     code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n        self.delta_target = {hp['delta_target']:.6f}\n", 1)
+    option_right_filter_marker = f"                opt.set_filter(lambda u: u.include_weeklys().strikes({hp['strike_min']}, {hp['strike_max']}).expiration(timedelta({hp['min_expiration_days']}), timedelta({hp['max_expiration_days']})))"
+    if option_right_filter_marker not in code:
+        raise RuntimeError('generated multiyear option-right filter marker not found')
+    code = code.replace(
+        option_right_filter_marker,
+        "                right_filter = (lambda u: u.calls_only()) if self.option_right == 'call' else ((lambda u: u.puts_only()) if self.option_right == 'put' else (lambda u: u))\n"
+        f"                opt.set_filter(lambda u: right_filter(u.include_weeklys()).strikes({hp['strike_min']}, {hp['strike_max']}).expiration(timedelta({hp['min_expiration_days']}), timedelta({hp['max_expiration_days']})))",
+        1,
+    )
     exit_policy_marker = "        self.exit_policy = 'sell_before_earnings_no_hold_through'\n"
     if exit_policy_marker not in code:
         raise RuntimeError('generated multiyear exit-policy marker not found')
