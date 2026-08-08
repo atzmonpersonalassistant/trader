@@ -96,7 +96,10 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
             happy_run_dir.mkdir(parents=True, exist_ok=True)
             if full_summary is None:
                 full_summary = {"status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL"}
-            (happy_run_dir / "full_summary.json").write_text(json.dumps(full_summary))
+            if isinstance(full_summary, str):
+                (happy_run_dir / "full_summary.json").write_text(full_summary)
+            else:
+                (happy_run_dir / "full_summary.json").write_text(json.dumps(full_summary))
             resolved_outputs = [
                 output.replace("{report_root}", str(report_root))
                 for output in psql_outputs
@@ -347,6 +350,68 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertEqual(len(result.handoff_tasks), 1)
         task_text = next(iter(result.handoff_tasks.values()))
         self.assertIn("condition: DAILY_RUN_PRODUCED_NO_DATA", task_text)
+
+    def test_finished_daily_run_with_missing_option_chain_funnel_key_escalates(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\tliquidity\t\n",
+        ], full_summary={
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "qc_symbols_scanned": 25,
+            "forward_candidate_count": 0,
+            "aggregate_funnel": {
+                "03_qc_expiry_within_0_7d_after_earnings": 25,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 25,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        })
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("WATCHDOG_FUNNEL_KEY_MISSING", result.stderr)
+        self.assertIn("qc_symbols_scanned=25", result.stderr)
+        self.assertIn("detail=02_qc_option_chain_available", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: WATCHDOG_FUNNEL_KEY_MISSING", task_text)
+
+    def test_finished_daily_run_with_non_numeric_option_chain_funnel_key_escalates(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\tliquidity\t\n",
+        ], full_summary={
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "qc_symbols_scanned": 25,
+            "forward_candidate_count": 0,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": None,
+                "03_qc_expiry_within_0_7d_after_earnings": 25,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 25,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        })
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("WATCHDOG_FUNNEL_KEY_MISSING", result.stderr)
+        self.assertIn("detail=02_qc_option_chain_available", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: WATCHDOG_FUNNEL_KEY_MISSING", task_text)
+
+    def test_finished_daily_run_with_unparseable_summary_escalates(self):
+        result = self.run_watchdog_with_fake_psql([
+            "",
+            "earnings-qc-options-scan-full-20260804-060000|completed|2026-08-04 06:00:00+03|2026-08-04 07:00:00+03|0|{report_root}/run\n",
+            "earnings-qc-options-scan-full-20260804-060000\tcompleted\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t2026-08-04 07:00:00+03\t{report_root}/run\t0\tliquidity\t\n",
+        ], full_summary="{not-json")
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIn("WATCHDOG_FUNNEL_KEY_MISSING", result.stderr)
+        self.assertIn("detail=full_summary_parse_error:", result.stderr)
+        self.assertEqual(len(result.handoff_tasks), 1)
+        task_text = next(iter(result.handoff_tasks.values()))
+        self.assertIn("condition: WATCHDOG_FUNNEL_KEY_MISSING", task_text)
 
     def test_finished_daily_run_with_empty_candidates_but_option_chain_data_does_not_escalate(self):
         result = self.run_watchdog_with_fake_psql([
