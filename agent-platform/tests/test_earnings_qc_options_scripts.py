@@ -458,14 +458,14 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error", joined)
         self.assertIn("1, 5, 'OK_FULL_QC_SCAN', NULL, NULL", joined)
         self.assertIn("'no-pass-run', 'camp', 'completed'", joined)
-        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'expiry', NULL", joined)
+        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'liquidity', NULL", joined)
         self.assertIn("'incomplete-run', 'camp', 'completed'", joined)
         self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'funnel_incomplete', NULL", joined)
         self.assertIn("'candidate-scan-run', 'camp', 'completed'", joined)
-        self.assertIn("'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL', 'expiry', NULL", joined)
+        self.assertIn("'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL', 'liquidity', NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
 
-    def test_derive_funnel_bottleneck_uses_dominant_collapse(self):
+    def test_derive_funnel_bottleneck_uses_proportional_collapse(self):
         mod = load_script("earnings-qc-research")
         for status in [
             "NO_FORWARD_CANDIDATES",
@@ -485,7 +485,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                             "05_qc_liquidity_greeks_quality_pass": 1,
                         },
                     }),
-                    "expiry",
+                    "liquidity",
                 )
         self.assertEqual(
             mod.derive_funnel_bottleneck({
@@ -497,6 +497,48 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                     "04_qc_calls_ask_under_max_premium": 26,
                     "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "liquidity",
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FORWARD_CANDIDATES",
+                "qc_symbols_scanned": 98,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 73,
+                    "03_qc_expiry_within_0_7d_after_earnings": 26,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                    "04_qc_calls_ask_under_max_premium": 26,
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            }),
+            "liquidity",
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 98,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 0,
+                    "03_qc_expiry_within_0_7d_after_earnings": 0,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
+                    "04_qc_calls_ask_under_max_premium": 0,
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            }),
+            "option_chain",
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 98,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 95,
+                    "03_qc_expiry_within_0_7d_after_earnings": 20,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 20,
+                    "04_qc_calls_ask_under_max_premium": 20,
+                    "05_qc_liquidity_greeks_quality_pass": 18,
                 },
             }),
             "expiry",
