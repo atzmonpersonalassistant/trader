@@ -2828,9 +2828,16 @@ class MVP0AgentTests(unittest.TestCase):
             "credit spread",
             "debit spread",
             "premium sell",
-            "margin",
-            "assignment",
-            "uncovered",
+            "option assignment",
+            "assignment risk",
+            "early assignment",
+            "margin requirement",
+            "margin call",
+            "buying power",
+            "reg t",
+            "uncovered call",
+            "uncovered put",
+            "uncovered option",
             "write call",
             "write put",
         ]
@@ -2857,6 +2864,25 @@ class MVP0AgentTests(unittest.TestCase):
             "pr": {"labels": []},
         })
         self.assertTrue(unrelated["pass"])
+
+    def test_review_risk_sensitive_guard_ignores_ordinary_collisions(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        collisions = [
+            "+# variable assignment moved above the loop\n",
+            "+self.assignment = compute(x)\n",
+            "+assignment_date = row['date']\n",
+            "+margin = layout.margin + 2\n",
+            "+# this leaves the error margin unchanged\n",
+            "+# uncovered branch in the test suite\n",
+            "+coverage = '3 uncovered lines remain'\n",
+        ]
+        for diff in collisions:
+            with self.subTest(diff=diff):
+                result = review.deterministic_review({
+                    "diff": diff,
+                    "pr": {"labels": []},
+                })
+                self.assertTrue(result["pass"])
 
 
 
