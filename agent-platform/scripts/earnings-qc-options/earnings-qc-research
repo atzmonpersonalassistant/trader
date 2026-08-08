@@ -40,6 +40,7 @@ BOTTLENECK_FUNNEL_STAGES = [
     ('035_qc_otm_expiry_within_0_7d_after_earnings', 'otm_expiry'),
     ('05_qc_liquidity_greeks_quality_pass', 'liquidity'),
 ]
+FUNNEL_INCOMPLETE_BOTTLENECK = 'funnel_incomplete'
 
 
 
@@ -205,7 +206,7 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
         raw = summary.get(key) if key == 'qc_symbols_scanned' else funnel.get(key)
         value = int_or_none(raw)
         if value is None:
-            return None
+            return FUNNEL_INCOMPLETE_BOTTLENECK
         counts.append((name, value))
     largest_drop = 0
     bottleneck = None

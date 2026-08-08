@@ -372,17 +372,31 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
+        incomplete_summary = {
+            "ok": False,
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "historical_gate_no_pass": True,
+            "qc_symbols_scanned": 98,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": 73,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        }
         blocked_summary = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE", "historical_gate_blocked": True}
         with mock.patch.object(mod, "ensure_research_db", return_value=True), \
              mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
             mod.upsert_run("ok-run", "camp", "completed", pathlib.Path("/tmp/ok"), {}, ok_summary, finished=True)
             mod.persist_summary_to_db("camp", "no-pass-run", pathlib.Path("/tmp/no-pass"), no_pass_summary, {})
+            mod.persist_summary_to_db("camp", "incomplete-run", pathlib.Path("/tmp/incomplete"), incomplete_summary, {})
             mod.upsert_run("blocked-run", "camp", "blocked", pathlib.Path("/tmp/blocked"), {}, blocked_summary, finished=True)
         joined = "\n".join(calls)
         self.assertIn("final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error", joined)
         self.assertIn("1, 5, 'OK_FULL_QC_SCAN', NULL, NULL", joined)
         self.assertIn("'no-pass-run', 'camp', 'completed'", joined)
         self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'expiry', NULL", joined)
+        self.assertIn("'incomplete-run', 'camp', 'completed'", joined)
+        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'funnel_incomplete', NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
 
     def test_derive_funnel_bottleneck_uses_dominant_collapse(self):
@@ -425,6 +439,18 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             })
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 10,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 10,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "funnel_incomplete",
         )
 
     def test_cleanup_prunes_old_db_blobs_without_deleting_rows(self):
