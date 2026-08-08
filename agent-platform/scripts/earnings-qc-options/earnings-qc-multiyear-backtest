@@ -74,6 +74,12 @@ def qc_resolution_expr(value: str | None, default: str = 'daily') -> str:
     }
     return mapping[qc_resolution_key(value, default)]
 
+def path_metrics_key(value: str | None, default: str = 'daily') -> str:
+    v = (value or default).strip().lower()
+    if v not in {'none', 'daily', 'hour', 'minute'}:
+        raise SystemExit(f'invalid path_metrics {value!r}')
+    return v
+
 def runtime_stat_chunks(stats:dict, prefix:str)->list[str]:
     def chunk_index(key:str)->int:
         try:
@@ -122,6 +128,7 @@ def hist_params(params:dict|None) -> dict:
         'max_contracts': int(max_contracts) if max_contracts is not None else 3,
         'stop_loss_max_loss_pct': stop_loss_max_loss_pct,
         'option_resolution': qc_resolution_expr(p.get('option_resolution') or p.get('historical_resolution'), 'daily'),
+        'path_metrics': path_metrics_key(p.get('path_metrics'), 'daily'),
         'delta_target': float(p.get('delta_target') if p.get('delta_target') is not None else 0.25),
         # No public --final-* CLI flags exist today; keep scanner and generated QC defaults tied to the same env values.
         'final_min_sample_size': int(p.get('final_min_sample_size') if p.get('final_min_sample_size') is not None else os.environ.get('QC_FINAL_MIN_SAMPLE_SIZE', '12')),
@@ -148,7 +155,7 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     option_right_setting_marker = f"        self.max_spread_pct = {hp['max_spread_pct']:.6f}\n"
     if option_right_setting_marker not in code:
         raise RuntimeError('generated multiyear option-right setting marker not found')
-    code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n        self.delta_target = {hp['delta_target']:.6f}\n", 1)
+    code = code.replace(option_right_setting_marker, option_right_setting_marker + f"        self.option_right = {hp['option_right']!r}\n        self.delta_target = {hp['delta_target']:.6f}\n        self.path_metrics = {hp['path_metrics']!r}\n", 1)
     option_right_filter_marker = f"                opt.set_filter(lambda u: u.include_weeklys().strikes({hp['strike_min']}, {hp['strike_max']}).expiration(timedelta({hp['min_expiration_days']}), timedelta({hp['max_expiration_days']})))"
     if option_right_filter_marker not in code:
         raise RuntimeError('generated multiyear option-right filter marker not found')
@@ -240,6 +247,20 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         "                            continue",
         1,
     )
+    path_metrics_helper_marker = "    def on_end_of_algorithm(self):"
+    if path_metrics_helper_marker not in code:
+        raise RuntimeError('generated multiyear path-metrics helper marker not found')
+    code = code.replace(
+        path_metrics_helper_marker,
+        "    def strip_path_metrics(self, value):\n"
+        "        if isinstance(value, dict):\n"
+        "            return {k:self.strip_path_metrics(v) for k,v in value.items() if k not in ('trades','per_trade_return_pct')}\n"
+        "        if isinstance(value, list):\n"
+        "            return [self.strip_path_metrics(v) for v in value]\n"
+        "        return value\n"
+        + path_metrics_helper_marker,
+        1,
+    )
     after_market_exit_marker = "                        planned_exit_date=rd\n                        exit_reason='after_market_report_day_close_sell_before_earnings'"
     if after_market_exit_marker not in code:
         raise RuntimeError('generated after-market exit marker not found')
@@ -251,7 +272,7 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     parameters_marker = f'"parameters":{{"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}'
     if parameters_marker not in code:
         raise RuntimeError('generated multiyear parameters marker not found')
-    code = code.replace(parameters_marker, f'"parameters":{{"delta_target":{hp["delta_target"]:.6f},"exit_days_before":{hp["exit_days_before"]},"exit_policy":{hp["exit_policy"]!r},"option_right":{hp["option_right"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
+    code = code.replace(parameters_marker, f'"parameters":{{"delta_target":{hp["delta_target"]:.6f},"exit_days_before":{hp["exit_days_before"]},"exit_policy":{hp["exit_policy"]!r},"option_right":{hp["option_right"]!r},"path_metrics":{hp["path_metrics"]!r},"stop_loss_max_loss_pct":{repr(hp["stop_loss_max_loss_pct"])}}}', 1)
     payload_marker = '\n        payload={"type":"earnings_qc_multiyear_backtest"'
     if payload_marker not in code:
         raise RuntimeError('generated multiyear payload marker not found')
@@ -442,6 +463,24 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         '"stop_loss_fill_variants":stop_loss_fill_variants,"stop_loss_fill_model_limitation":stop_loss_fill_model_limitation,"delta_targeted_comparison":delta_targeted_comparison,"window_results":windows',
         1,
     )
+    path_metrics_result_marker = "            results.append(result)"
+    if path_metrics_result_marker not in code:
+        raise RuntimeError('generated multiyear path-metrics result marker not found')
+    code = code.replace(
+        path_metrics_result_marker,
+        "            if self.path_metrics == 'none':\n"
+        "                result=self.strip_path_metrics(result)\n"
+        "            results.append(result)",
+        1,
+    )
+    path_metrics_runtime_marker = "self.set_runtime_statistic('multiyear_exit_policy', self.exit_policy)"
+    if path_metrics_runtime_marker not in code:
+        raise RuntimeError('generated multiyear path-metrics runtime marker not found')
+    code = code.replace(
+        path_metrics_runtime_marker,
+        path_metrics_runtime_marker + "\n        self.set_runtime_statistic('multiyear_path_metrics', self.path_metrics)",
+        1,
+    )
     (project_dir/'main.py').write_text(code)
 
 def snapshot_memory_from_runtime_stats(stats: dict) -> dict | None:
@@ -512,7 +551,7 @@ def main(argv):
     ap.add_argument('--entry-window', default='21:28'); ap.add_argument('--exit-days-before', default='1')
     ap.add_argument('--exit-policy', default='before-earnings'); ap.add_argument('--historical-resolution', default='daily')
     ap.add_argument('--option-resolution', choices=['tick','second','minute','hour','daily'])
-    ap.add_argument('--path-metrics', default='daily'); ap.add_argument('--max-contracts', type=int)
+    ap.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute']); ap.add_argument('--max-contracts', type=int)
     ap.add_argument('--max-premium', type=float); ap.add_argument('--min-bid', type=float); ap.add_argument('--max-spread', type=float); ap.add_argument('--max-spread-pct', type=float)
     ap.add_argument('--min-relative-spread', type=float); ap.add_argument('--vol-spread-factor', type=float); ap.add_argument('--expected-move-spread-fraction', type=float)
     ap.add_argument('--min-open-interest', type=int); ap.add_argument('--min-volume', type=int); ap.add_argument('--strike-range', default='-50:300')
