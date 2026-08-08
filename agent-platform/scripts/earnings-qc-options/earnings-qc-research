@@ -33,6 +33,14 @@ INT_FUNNEL_KEYS = [
     '05_qc_liquidity_greeks_quality_pass',
 ]
 
+BOTTLENECK_FUNNEL_STAGES = [
+    ('qc_symbols_scanned', 'scanned'),
+    ('02_qc_option_chain_available', 'option_chain'),
+    ('03_qc_expiry_within_0_7d_after_earnings', 'expiry'),
+    ('035_qc_otm_expiry_within_0_7d_after_earnings', 'otm_expiry'),
+    ('05_qc_liquidity_greeks_quality_pass', 'liquidity'),
+]
+
 
 
 def utc_now() -> str:
@@ -176,12 +184,45 @@ def is_run_blocked(summary: dict | None) -> bool:
     )
 
 
+def int_or_none(v) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+def derive_funnel_bottleneck(summary: dict | None) -> str | None:
+    if not summary:
+        return None
+    final_count = int_or_none(summary.get('final_candidate_count') or summary.get('candidate_count')) or 0
+    if final_count > 0:
+        return None
+    funnel = summary.get('aggregate_funnel') or summary.get('funnel') or {}
+    counts = []
+    for key, name in BOTTLENECK_FUNNEL_STAGES:
+        raw = summary.get(key) if key == 'qc_symbols_scanned' else funnel.get(key)
+        value = int_or_none(raw)
+        if value is None:
+            return None
+        counts.append((name, value))
+    largest_drop = 0
+    bottleneck = None
+    for (_, prev_count), (name, count) in zip(counts, counts[1:]):
+        drop = prev_count - count
+        if drop > largest_drop:
+            largest_drop = drop
+            bottleneck = name
+    return bottleneck
+
+
 def upsert_run(run_id: str, campaign_id: str, status: str, run_dir: pathlib.Path | None, params: dict, summary: dict | None = None, error: str | None = None, finished: bool = False) -> None:
     if not ensure_research_db(): return
     summary = summary or {}; final_count = int(summary.get('final_candidate_count') or summary.get('candidate_count') or 0) if summary else 0
     forward_count = int(summary.get('forward_candidate_count') or 0) if summary else 0
     research_verdict = summary.get('status') if summary else None
-    bottleneck = research_verdict if summary and is_run_blocked(summary) else error
+    bottleneck = research_verdict if summary and is_run_blocked(summary) else (derive_funnel_bottleneck(summary) or error)
     finished_sql = 'now()' if finished else 'NULL'
     db_exec(f"""INSERT INTO {PG_SCHEMA}.research_runs(run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,summary_json,final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error,updated_at)
 VALUES ({sql_lit(run_id)}, {sql_lit(campaign_id)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(params)}, {sql_lit(str(run_dir) if run_dir else None)}, {sql_json(summary)}, {final_count}, {forward_count}, {sql_lit(research_verdict)}, {sql_lit(bottleneck)}, {sql_lit(error)}, now())

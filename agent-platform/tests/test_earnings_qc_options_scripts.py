@@ -347,8 +347,31 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
     def test_upsert_run_splits_lifecycle_verdict_and_bottleneck(self):
         mod = load_script("earnings-qc-research")
         calls = []
-        ok_summary = {"ok": True, "status": "OK_FULL_QC_SCAN", "final_candidate_count": 1, "forward_candidate_count": 5}
-        no_pass_summary = {"ok": False, "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", "historical_gate_no_pass": True}
+        ok_summary = {
+            "ok": True,
+            "status": "OK_FULL_QC_SCAN",
+            "qc_symbols_scanned": 98,
+            "final_candidate_count": 1,
+            "forward_candidate_count": 5,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": 73,
+                "03_qc_expiry_within_0_7d_after_earnings": 26,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        }
+        no_pass_summary = {
+            "ok": False,
+            "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+            "historical_gate_no_pass": True,
+            "qc_symbols_scanned": 98,
+            "aggregate_funnel": {
+                "02_qc_option_chain_available": 73,
+                "03_qc_expiry_within_0_7d_after_earnings": 26,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                "05_qc_liquidity_greeks_quality_pass": 1,
+            },
+        }
         blocked_summary = {"ok": False, "status": "BLOCKED_HISTORICAL_OPTION_PNL_GATE", "historical_gate_blocked": True}
         with mock.patch.object(mod, "ensure_research_db", return_value=True), \
              mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
@@ -359,8 +382,50 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error", joined)
         self.assertIn("1, 5, 'OK_FULL_QC_SCAN', NULL, NULL", joined)
         self.assertIn("'no-pass-run', 'camp', 'completed'", joined)
-        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', NULL, NULL", joined)
+        self.assertIn("'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL', 'expiry', NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
+
+    def test_derive_funnel_bottleneck_uses_dominant_collapse(self):
+        mod = load_script("earnings-qc-research")
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 98,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 73,
+                    "03_qc_expiry_within_0_7d_after_earnings": 26,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "expiry",
+        )
+        self.assertEqual(
+            mod.derive_funnel_bottleneck({
+                "status": "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL",
+                "qc_symbols_scanned": 10,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 10,
+                    "03_qc_expiry_within_0_7d_after_earnings": 10,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            }),
+            "liquidity",
+        )
+        self.assertIsNone(
+            mod.derive_funnel_bottleneck({
+                "status": "OK_FULL_QC_SCAN",
+                "final_candidate_count": 1,
+                "qc_symbols_scanned": 10,
+                "aggregate_funnel": {
+                    "02_qc_option_chain_available": 10,
+                    "03_qc_expiry_within_0_7d_after_earnings": 10,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                },
+            })
+        )
 
     def test_cleanup_prunes_old_db_blobs_without_deleting_rows(self):
         mod = load_script("earnings-qc-research")
