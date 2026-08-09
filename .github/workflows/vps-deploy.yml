@@ -120,6 +120,7 @@ jobs:
             agent-platform/scripts/trading-research-qc-api-extract \
             agent-platform/scripts/earnings-qc-options/earnings-qc-research \
             agent-platform/scripts/earnings-qc-options/earnings-qc-classify-bounded-action \
+            agent-platform/scripts/earnings-qc-options/earnings-qc-precheck-bounded-action \
             agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan \
             agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest \
             agent-platform/scripts/earnings-qc-options/qc_cloud_capacity.py \
@@ -340,6 +341,7 @@ jobs:
           sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/qc_cloud_capacity.py" /agents/research/bin/qc_cloud_capacity.py
           sudo install -o agent-research -g agent-research -m 644 "$DEPLOY_DIR/qc_cloud_capacity.py" /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-classify-bounded-action" /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action
+          sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-precheck-bounded-action" /agents/research/libexec/earnings-qc-options/earnings-qc-precheck-bounded-action
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-options-scan" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           sudo install -o agent-research -g agent-research -m 755 "$DEPLOY_DIR/earnings-qc-multiyear-backtest" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-bounded-earnings-qc" /usr/local/sbin/trading-research-bounded-earnings-qc
@@ -963,7 +965,7 @@ jobs:
           systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
           systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer
           systemctl is-enabled --quiet trader-research-retention.timer
-          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/bin/qc_cloud_capacity.py /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
+          sudo -n -u agent-research env PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile /agents/research/bin/earnings-qc-research /agents/research/bin/qc_cloud_capacity.py /agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-precheck-bounded-action /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest /agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py
           grep -q "REQUIRES_QC_EODHD_MULTIYEAR_OPTION_PNL" /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan
           grep -q "BLOCKED_HISTORICAL_OPTION_PNL_GATE" /agents/research/bin/earnings-qc-research
           grep -q "historical_option_pnl_v1" /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
