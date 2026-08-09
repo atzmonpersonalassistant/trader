@@ -3879,6 +3879,97 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertFalse(out["historical_gate_blocked"])
         self.assertFalse(out["historical_gate_no_pass"])
 
+    def test_aggregate_records_funnel_survivor_symbols_with_counter_invariant(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 3,
+                "calendar_universe_count": 3,
+                "qc_processed_row_count": 2,
+                "symbols": ["AAA", "BBB"],
+                "candidate_details": [],
+                "funnel": {
+                    "01_nasdaq_earnings_21_28d_universe": 2,
+                    "02_qc_option_chain_available": 2,
+                    "02_qc_option_chain_available_symbols": ["AAA", "BBB"],
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings_symbols": ["AAA"],
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings_symbols": ["AAA"],
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["AAA"],
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                    "05_qc_liquidity_greeks_quality_pass_symbols": [],
+                },
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 3,
+                "calendar_universe_count": 3,
+                "qc_processed_row_count": 1,
+                "symbols": ["BBB", "CCC"],
+                "candidate_details": [],
+                "funnel": {
+                    "01_nasdaq_earnings_21_28d_universe": 2,
+                    "02_qc_option_chain_available": 1,
+                    "02_qc_option_chain_available_symbols": ["CCC"],
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings_symbols": ["CCC"],
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings_symbols": ["CCC"],
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["CCC"],
+                    "05_qc_liquidity_greeks_quality_pass": 1,
+                    "05_qc_liquidity_greeks_quality_pass_symbols": ["CCC"],
+                },
+            },
+        ])
+        funnel = out["aggregate_funnel"]
+        expected_counts = {
+            "01_nasdaq_earnings_21_28d_universe": 3,
+            "02_qc_option_chain_available": 3,
+            "03_qc_expiry_within_0_7d_after_earnings": 2,
+            "035_qc_otm_expiry_within_0_7d_after_earnings": 2,
+            "04_qc_calls_ask_under_max_premium": 2,
+            "05_qc_liquidity_greeks_quality_pass": 1,
+        }
+        for key, value in expected_counts.items():
+            with self.subTest(key=key):
+                self.assertEqual(funnel[key], value)
+                self.assertEqual(len(funnel[f"{key}_symbols"]), value)
+        self.assertEqual(funnel["01_nasdaq_earnings_21_28d_universe_symbols"], ["AAA", "BBB", "CCC"])
+        self.assertEqual(funnel["02_qc_option_chain_available_symbols"], ["AAA", "BBB", "CCC"])
+        self.assertEqual(funnel["03_qc_expiry_within_0_7d_after_earnings_symbols"], ["AAA", "CCC"])
+        self.assertEqual(funnel["035_qc_otm_expiry_within_0_7d_after_earnings_symbols"], ["AAA", "CCC"])
+        self.assertEqual(funnel["04_qc_calls_ask_under_max_premium_symbols"], ["AAA", "CCC"])
+        self.assertEqual(funnel["05_qc_liquidity_greeks_quality_pass_symbols"], ["CCC"])
+        self.assertIn("02_qc_option_chain_available", funnel)
+        self.assertNotIn("02_qc_option_chain_available_renamed", funnel)
+
+    def test_aggregate_zero_symbol_stage_emits_empty_symbol_list(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([{
+            "ok": True,
+            "calendar_row_count": 1,
+            "calendar_universe_count": 1,
+            "qc_processed_row_count": 1,
+            "symbols": ["AAA"],
+            "candidate_details": [],
+            "funnel": {
+                "02_qc_option_chain_available": 0,
+                "03_qc_expiry_within_0_7d_after_earnings": 0,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
+                "04_qc_calls_ask_under_max_premium": 0,
+                "05_qc_liquidity_greeks_quality_pass": 0,
+            },
+        }])
+        funnel = out["aggregate_funnel"]
+        for key in mod.INT_FUNNEL_KEYS:
+            with self.subTest(key=key):
+                self.assertEqual(funnel[key], 0)
+                self.assertEqual(funnel[f"{key}_symbols"], [])
+
     def test_serial_chunk_runner_records_exceptions_and_continues(self):
         mod = load_script("earnings-qc-research")
         tmp = pathlib.Path(tempfile.mkdtemp())
