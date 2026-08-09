@@ -43,6 +43,55 @@ BOTTLENECK_FUNNEL_STAGES = [
 ]
 FUNNEL_INCOMPLETE_BOTTLENECK = 'funnel_incomplete'
 
+FUNNEL_SYMBOL_SOURCES = {
+    '01_nasdaq_earnings_21_28d_universe': ('symbols',),
+    '02_qc_option_chain_available': ('option_chain_available', '02_qc_option_chain_available_symbols'),
+    '03_qc_expiry_within_0_7d_after_earnings': ('expiry_within_0_7d_after_earnings', '03_qc_expiry_within_0_7d_after_earnings_symbols'),
+    '035_qc_otm_expiry_within_0_7d_after_earnings': ('otm_expiry_within_0_7d_after_earnings', '035_qc_otm_expiry_within_0_7d_after_earnings_symbols'),
+    '04_qc_calls_ask_under_max_premium': ('calls_under_max_premium', '04_qc_calls_ask_under_max_premium_symbols'),
+    '05_qc_liquidity_greeks_quality_pass': ('liquidity_pass', '05_qc_liquidity_greeks_quality_pass_symbols'),
+}
+
+
+def funnel_symbol_list_key(counter_key: str) -> str:
+    return f'{counter_key}_symbols'
+
+
+def normalized_symbols(values) -> list[str]:
+    out = []
+    seen = set()
+    for value in values or []:
+        sym = str(value or '').strip().upper()
+        if sym and sym not in seen:
+            out.append(sym)
+            seen.add(sym)
+    return out
+
+
+def chunk_funnel_symbols(chunk: dict, counter_key: str) -> list[str]:
+    for source in FUNNEL_SYMBOL_SOURCES.get(counter_key, ()):
+        if source in chunk:
+            return normalized_symbols(chunk.get(source))
+        funnel_symbols = chunk.get('funnel_symbols') or {}
+        if source in funnel_symbols:
+            return normalized_symbols(funnel_symbols.get(source))
+        funnel = chunk.get('funnel') or {}
+        symbol_key = funnel_symbol_list_key(counter_key)
+        if symbol_key in funnel:
+            return normalized_symbols(funnel.get(symbol_key))
+    return []
+
+
+def aggregate_funnel_symbols(chunks: list[dict], counter_key: str) -> list[str]:
+    out = []
+    seen = set()
+    for chunk in chunks:
+        for sym in chunk_funnel_symbols(chunk, counter_key):
+            if sym not in seen:
+                out.append(sym)
+                seen.add(sym)
+    return out
+
 
 
 def utc_now() -> str:
@@ -825,11 +874,13 @@ def aggregate(chunks: list[dict]) -> dict:
     calendar_rows = first.get('calendar_row_count') or universe
     agg = {
         '01_nasdaq_earnings_21_28d_universe': universe,
+        '01_nasdaq_earnings_21_28d_universe_symbols': aggregate_funnel_symbols(chunks, '01_nasdaq_earnings_21_28d_universe'),
         '07_multi_year_backtest_status': 'NOT_IMPLEMENTED_IN_RUNNER_YET_QC_EODHD_APPROVED',
     }
     for k in INT_FUNNEL_KEYS:
         vals = [(d.get('funnel') or {}).get(k) for d in chunks]
         agg[k] = sum(v for v in vals if isinstance(v, int))
+        agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(chunks, k)
     forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]; historical_result_symbols=set(); historical_results_by_symbol={}
     for d in chunks:
         offset = d.get('_chunk_offset')
