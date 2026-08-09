@@ -605,6 +605,18 @@ def add_if_value(cmd: list[str], flag: str, value) -> None:
 def normalize_stop_loss_max_loss_pct(value):
     return -abs(float(value)) if value is not None else None
 
+SUPPORTED_HISTORICAL_RUNTIME_PARAMS = {
+    'entry_time_policy': 'close',
+    'exit_time_policy': 'close',
+    'slippage_model': 'bidask',
+}
+
+def validate_historical_runtime_params(args) -> None:
+    for attr, supported in SUPPORTED_HISTORICAL_RUNTIME_PARAMS.items():
+        value = getattr(args, attr, None)
+        if value is not None and value != supported:
+            raise SystemExit(f"{attr} {value!r} is not implemented; only {supported!r} is supported")
+
 def stage_runtime_params(args) -> dict:
     names = [
         'from_stage','to_stage','as_of_date','calendar_from_days','calendar_to_days','calendar_source',
@@ -1061,6 +1073,7 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
 
 
 def cmd_run(args) -> int:
+    validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
     args.from_stage = normalize_stage(getattr(args, 'from_stage', None), 'calendar')
     args.to_stage = normalize_stage(getattr(args, 'to_stage', None), 'historical_option_pnl' if args.end_to_end else 'candidate_scan')
@@ -1187,6 +1200,7 @@ def cmd_summarize(args) -> int:
 
 
 def cmd_retry_failed(args) -> int:
+    validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
     if not require_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
@@ -1391,6 +1405,7 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
 
 
 def cmd_historical(args) -> int:
+    validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
     if not require_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
@@ -1625,8 +1640,8 @@ def add_historical_parameter_args(sp):
     sp.add_argument('--historical-resolution', default='daily', choices=['daily','hour','minute'])
     sp.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute'])
     sp.add_argument('--quote-resolution', choices=['hour','minute'], help='Reserved for intraday validation stage')
-    sp.add_argument('--entry-time-policy', choices=['open','open+30m','midday','close'])
-    sp.add_argument('--exit-time-policy', choices=['close','before-close-30m','midday'])
+    sp.add_argument('--entry-time-policy', default='close', choices=['open','open+30m','midday','close'])
+    sp.add_argument('--exit-time-policy', default='close', choices=['close','before-close-30m','midday'])
     sp.add_argument('--slippage-model', default='bidask', choices=['bidask','mid','bidask-plus-spread-fraction'])
     sp.add_argument('--max-contracts', type=int)
     sp.add_argument('--delta-target', type=float, help='Reporting-only historical comparison target delta; default is 0.25')
@@ -1663,6 +1678,7 @@ def main(argv):
     if not argv or argv[0].startswith('--'):
         argv = ['run'] + argv
     args = build_parser().parse_args(argv)
+    validate_historical_runtime_params(args)
     if args.cmd == 'run': return cmd_run(args)
     if args.cmd == 'status': return cmd_status(args)
     if args.cmd == 'summarize': return cmd_summarize(args)
