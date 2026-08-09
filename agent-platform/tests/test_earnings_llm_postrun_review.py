@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review"
 CLASSIFIER = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-qc-classify-bounded-action"
+PRECHECK = ROOT / "agent-platform/scripts/earnings-qc-options/earnings-qc-precheck-bounded-action"
 
 
 class EarningsLlmPostrunReviewTests(unittest.TestCase):
@@ -244,6 +245,16 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn('bounded_action_status=$BOUNDED_ACTION_STATUS', text)
         self.assertLess(text.index('bounded_action_status=$BOUNDED_ACTION_STATUS'), text.index('echo "REVIEW_FAILED run_id=$RUN_ID rc=$RC'))
 
+    def test_retry_failed_precondition_refusal_is_recorded_and_completed(self):
+        text = SCRIPT.read_text()
+        self.assertIn("earnings-qc-precheck-bounded-action", text)
+        self.assertIn('REFUSED_RETRY_FAILED_*', text)
+        self.assertIn('bounded_action_status.txt', text)
+        self.assertLess(
+            text.index("earnings-qc-precheck-bounded-action"),
+            text.index('cd "$OUTPUT_DIR" && /usr/local/sbin/trading-research-bounded-earnings-qc'),
+        )
+
 
     def test_empty_request_file_is_invalid_not_no_request(self):
         text = SCRIPT.read_text()
@@ -287,6 +298,43 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         path.write_text(json.dumps({"ok": False, "status": "INVALID_BOUNDED_ACTION"}))
         result = subprocess.run([str(CLASSIFIER), str(path)], check=False)
         self.assertEqual(result.returncode, 1)
+
+    def test_bounded_action_precheck_refuses_retry_failed_with_zero_failed_chunks(self):
+        tmp = Path(tempfile.mkdtemp())
+        summary = tmp / "full_summary.json"
+        result_path = tmp / "bounded_action_result.json"
+        summary.write_text(json.dumps({"failed_chunk_count": 0, "failed_chunks": []}))
+
+        result = subprocess.run(
+            [str(PRECHECK), str(summary), str(result_path), "retry-failed", "--offset", "650", "--years", "1", "--end-to-end"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("REFUSED_RETRY_FAILED_NO_FAILED_CHUNKS", result.stdout)
+        payload = json.loads(result_path.read_text())
+        self.assertEqual(payload["status"], "REFUSED_RETRY_FAILED_NO_FAILED_CHUNKS")
+        self.assertEqual(payload["returncode"], 65)
+        self.assertEqual(payload["argv"][0], "retry-failed")
+
+    def test_bounded_action_precheck_allows_retry_failed_with_failed_chunks(self):
+        tmp = Path(tempfile.mkdtemp())
+        summary = tmp / "full_summary.json"
+        result_path = tmp / "bounded_action_result.json"
+        summary.write_text(json.dumps({"failed_chunk_count": 1, "failed_chunks": [{"offset": 650}]}))
+
+        result = subprocess.run(
+            [str(PRECHECK), str(summary), str(result_path), "retry-failed", "--offset", "650", "--years", "1", "--end-to-end"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "OK")
+        self.assertFalse(result_path.exists())
 
 
 if __name__ == "__main__":

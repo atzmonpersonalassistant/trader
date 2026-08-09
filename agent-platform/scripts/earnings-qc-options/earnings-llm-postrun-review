@@ -417,6 +417,15 @@ PY
     fi
   fi
   if [[ "$BOUNDED_ACTION_STATUS" != "INVALID_REQUEST" ]]; then
+    PRECHECK_STATUS="$(
+      /agents/research/libexec/earnings-qc-options/earnings-qc-precheck-bounded-action \
+        "$RUN_DIR/full_summary.json" "$HOST_ACTION_DIR/bounded_action_result.json" "${BOUNDED_ACTION_ARGS[@]}"
+    )" || {
+      BOUNDED_ACTION_STATUS="$PRECHECK_STATUS"
+      BOUNDED_ACTION_RC=65
+    }
+  fi
+  if [[ "$BOUNDED_ACTION_STATUS" == "REQUESTED" ]]; then
   {
     printf 'issued_at=%s
 ' "$ISSUED_AT"
@@ -521,7 +530,7 @@ cat > "$OUTPUT_DIR/run_metadata.json" <<META
 }
 META
 
-if [[ "$RC" -eq 0 && ( "$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED" || "$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED" ) ]]; then
+if [[ "$RC" -eq 0 && ( "$BOUNDED_ACTION_STATUS" == "NO_REQUEST" || "$BOUNDED_ACTION_STATUS" == "EXECUTED" || "$BOUNDED_ACTION_STATUS" == "EXECUTED_RESEARCH_BLOCKED" || "$BOUNDED_ACTION_STATUS" == REFUSED_RETRY_FAILED_* ) ]]; then
   mkdir -p "$STATE_DIR/completed-runs"
   if mkdir "$COMPLETED_MARKER_DIR" 2>/dev/null; then
     printf '%s
