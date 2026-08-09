@@ -322,6 +322,35 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(args.years, 1)
         self.assertEqual(args.from_stage, "historical_option_pnl")
 
+    def test_historical_runtime_policy_defaults_are_recorded(self):
+        mod = load_script("earnings-qc-research")
+        args = mod.build_parser().parse_args(["run"])
+        params = mod.stage_runtime_params(args)
+        self.assertEqual(params["entry_time_policy"], "close")
+        self.assertEqual(params["exit_time_policy"], "close")
+        self.assertEqual(params["slippage_model"], "bidask")
+        mod.validate_historical_runtime_params(args)
+
+    def test_unimplemented_historical_runtime_policies_exit_before_db(self):
+        mod = load_script("earnings-qc-research")
+        cases = [
+            (["run", "--entry-time-policy", "open"], "entry_time_policy", "open"),
+            (["run", "--entry-time-policy", "open+30m"], "entry_time_policy", "open+30m"),
+            (["run", "--entry-time-policy", "midday"], "entry_time_policy", "midday"),
+            (["run", "--exit-time-policy", "before-close-30m"], "exit_time_policy", "before-close-30m"),
+            (["run", "--exit-time-policy", "midday"], "exit_time_policy", "midday"),
+            (["run", "--slippage-model", "mid"], "slippage_model", "mid"),
+            (["run", "--slippage-model", "bidask-plus-spread-fraction"], "slippage_model", "bidask-plus-spread-fraction"),
+        ]
+        for argv, name, value in cases:
+            with self.subTest(argv=argv):
+                args = mod.build_parser().parse_args(argv)
+                mod.require_research_db = lambda: (_ for _ in ()).throw(AssertionError("db should not be touched"))
+                with self.assertRaises(SystemExit) as cm:
+                    mod.cmd_run(args)
+                self.assertIn(name, str(cm.exception))
+                self.assertIn(value, str(cm.exception))
+
     def test_current_parameters_records_bounded_no_outbox_provenance(self):
         mod = load_script("earnings-qc-research")
         args = mod.build_parser().parse_args(["run", "--max-chunks", "1", "--no-outbox"])
