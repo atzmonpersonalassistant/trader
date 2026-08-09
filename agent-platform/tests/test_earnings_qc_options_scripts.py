@@ -494,6 +494,40 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("'OK_CANDIDATE_SCAN_REQUIRES_HISTORICAL_OPTION_PNL', 'liquidity', NULL", joined)
         self.assertIn("'BLOCKED_HISTORICAL_OPTION_PNL_GATE', 'BLOCKED_HISTORICAL_OPTION_PNL_GATE', NULL", joined)
 
+    def test_upsert_run_parameters_json_conflict_merge_preserves_absent_and_overrides_present(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.upsert_run("run-a", "camp", "completed", pathlib.Path("/tmp/run-a"), {"years": 1}, {"ok": True}, finished=True)
+        sql = "\n".join(calls)
+        self.assertIn(
+            "parameters_json=COALESCE(earnings_cache.research_runs.parameters_json, '{}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{}'::jsonb)",
+            sql,
+        )
+
+        existing = {"from_stage": "calendar", "to_stage": "historical_option_pnl", "no_outbox": False, "calendar_source": "nasdaq", "years": 1}
+        self.assertEqual({**existing, **{"status": "retry"}}["from_stage"], "calendar")
+        self.assertEqual({**existing, **{"from_stage": "qc_chain_scan"}}["from_stage"], "qc_chain_scan")
+        self.assertEqual({**{}, **{"years": 10}}, {"years": 10})
+
+    def test_upsert_stage_parameters_json_conflict_merge_preserves_absent_and_overrides_present(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.upsert_stage("camp", "run-a", "aggregate_report", "completed", params={"years": 1})
+        sql = "\n".join(calls)
+        self.assertIn(
+            "parameters_json=COALESCE(earnings_cache.research_stages.parameters_json, '{}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{}'::jsonb)",
+            sql,
+        )
+
+        existing = {"from_stage": "calendar", "to_stage": "historical_option_pnl", "no_outbox": False, "calendar_source": "nasdaq", "years": 1}
+        self.assertEqual({**existing, **{"status": "retry"}}["to_stage"], "historical_option_pnl")
+        self.assertEqual({**existing, **{"to_stage": "candidate_scan"}}["to_stage"], "candidate_scan")
+        self.assertEqual({**{}, **{"years": 10}}, {"years": 10})
+
     def test_derive_funnel_bottleneck_uses_proportional_collapse(self):
         mod = load_script("earnings-qc-research")
         for status in [
@@ -3942,6 +3976,77 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(summary["campaign_id"], "camp-a")
         self.assertEqual(summary["parameters"]["years"], 1)
         self.assertEqual(params["years"], 1)
+
+    def test_retry_failed_lifecycle_update_keeps_postrun_strict_selector_matching(self):
+        mod = load_script("earnings-qc-research")
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        captured = {}
+        existing = {
+            "from_stage": "calendar",
+            "to_stage": "historical_option_pnl",
+            "no_outbox": False,
+            "calendar_source": "nasdaq",
+            "years": 1,
+            "parallel": 1,
+            "end_to_end": True,
+            "chunk_size": 25,
+            "symbols": "",
+        }
+        args = mod.build_parser().parse_args([
+            "retry-failed",
+            "--campaign", "daily-earnings-otm",
+            "--run-dir", str(tmp),
+            "--run-id", "earnings-qc-options-scan-full-20260809-073011-attempt-1",
+            "--chunk-size", "25",
+            "--years", "1",
+        ])
+
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": args.run_id, "run_dir": str(tmp)}), \
+             mock.patch.object(mod, "aggregate", return_value={"failed_chunks": [], "historical_failed_chunks": [], "qc_capacity_blocked_chunks": []}), \
+             mock.patch.object(mod, "load_chunks", return_value=[]), \
+             mock.patch.object(mod, "write_summary", return_value={"ok": True, "status": "OK_FULL_QC_SCAN"}), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: captured.setdefault("params", a[4])):
+            rc = mod.cmd_retry_failed(args)
+
+        self.assertEqual(rc, 0)
+        merged = {**existing, **captured["params"]}
+        self.assertEqual(merged["from_stage"], "calendar")
+        self.assertEqual(merged["to_stage"], "historical_option_pnl")
+        self.assertEqual(merged["no_outbox"], False)
+        self.assertEqual(merged["calendar_source"], "nasdaq")
+        self.assertEqual(merged["years"], 1)
+        self.assertEqual(merged["parallel"], 1)
+        self.assertEqual(merged["end_to_end"], True)
+        self.assertEqual(merged["chunk_size"], 25)
+        self.assertEqual(merged["symbols"], "")
+
+    def test_historical_normalizes_stage_identity_without_backfilling_validation_years(self):
+        mod = load_script("earnings-qc-research")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        (run_dir / "full_summary.json").write_text(json.dumps({
+            "ok": False,
+            "status": "NO_FORWARD_CANDIDATES",
+            "calendar_row_count": 0,
+            "qc_symbols_scanned": 0,
+            "chunk_count": 1,
+            "forward_candidates": [],
+            "final_candidates": [],
+        }))
+        captured = {}
+        args = mod.build_parser().parse_args(["historical", "--campaign", "camp-a", "--run-dir", str(run_dir), "--run-id", "run-a", "--years", "10"])
+        with mock.patch.object(mod, "require_research_db", return_value=True), \
+             mock.patch.object(mod, "upsert_campaign"), \
+             mock.patch.object(mod, "upsert_run"), \
+             mock.patch.object(mod, "upsert_stage"), \
+             mock.patch.object(mod, "run_multiyear_if_requested", return_value={"ok": True, "status": "NO_FORWARD_CANDIDATES", "results": []}), \
+             mock.patch.object(mod, "persist_summary_to_db", side_effect=lambda *a, **k: captured.setdefault("params", a[4])), \
+             mock.patch.object(mod, "latest_db_run", return_value={"run_id": "run-a", "run_dir": str(run_dir)}):
+            rc = mod.cmd_historical(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["params"]["from_stage"], "historical_option_pnl")
+        self.assertEqual(captured["params"]["to_stage"], "historical_option_pnl")
+        self.assertNotIn("validation_years", captured["params"])
 
     def test_run_chunk_persists_capacity_status_for_bad_json_stdout(self):
         mod = load_script("earnings-qc-research")

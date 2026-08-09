@@ -166,6 +166,11 @@ def current_parameters(args=None) -> dict:
     return d
 
 
+def normalize_lifecycle_stage_params(args, *, default_from: str, default_to: str) -> None:
+    args.from_stage = normalize_stage(getattr(args, 'from_stage', None), default_from)
+    args.to_stage = normalize_stage(getattr(args, 'to_stage', None), default_to)
+
+
 def upsert_campaign(campaign_id: str, goal: str | None = None, params: dict | None = None) -> None:
     if not ensure_research_db(): return
     db_exec(f"""INSERT INTO {PG_SCHEMA}.research_campaigns(campaign_id,name,goal,default_parameters_json,updated_at)
@@ -235,7 +240,7 @@ def upsert_run(run_id: str, campaign_id: str, status: str, run_dir: pathlib.Path
     finished_sql = 'now()' if finished else 'NULL'
     db_exec(f"""INSERT INTO {PG_SCHEMA}.research_runs(run_id,campaign_id,status,started_at,finished_at,parameters_json,run_dir,summary_json,final_candidate_count,forward_candidate_count,research_verdict,bottleneck,error,updated_at)
 VALUES ({sql_lit(run_id)}, {sql_lit(campaign_id)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(params)}, {sql_lit(str(run_dir) if run_dir else None)}, {sql_json(summary)}, {final_count}, {forward_count}, {sql_lit(research_verdict)}, {sql_lit(bottleneck)}, {sql_lit(error)}, now())
-ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(EXCLUDED.finished_at,{PG_SCHEMA}.research_runs.finished_at), parameters_json=EXCLUDED.parameters_json, run_dir=EXCLUDED.run_dir, summary_json=EXCLUDED.summary_json, final_candidate_count=EXCLUDED.final_candidate_count, forward_candidate_count=EXCLUDED.forward_candidate_count, research_verdict=EXCLUDED.research_verdict, bottleneck=EXCLUDED.bottleneck, error=EXCLUDED.error, updated_at=now();""")
+ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(EXCLUDED.finished_at,{PG_SCHEMA}.research_runs.finished_at), parameters_json=COALESCE({PG_SCHEMA}.research_runs.parameters_json, '{{}}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{{}}'::jsonb), run_dir=EXCLUDED.run_dir, summary_json=EXCLUDED.summary_json, final_candidate_count=EXCLUDED.final_candidate_count, forward_candidate_count=EXCLUDED.forward_candidate_count, research_verdict=EXCLUDED.research_verdict, bottleneck=EXCLUDED.bottleneck, error=EXCLUDED.error, updated_at=now();""")
 
 
 def upsert_stage(campaign_id: str, run_id: str, stage_name: str, status: str, input_json=None, output_json=None, artifact_path: str | None = None, params=None, passed=None, failed=None, blocker=None, error=None) -> None:
@@ -243,7 +248,7 @@ def upsert_stage(campaign_id: str, run_id: str, stage_name: str, status: str, in
     sid = stable_id('stage', run_id, stage_name); ih = hashlib.sha256(json.dumps(input_json or {}, sort_keys=True).encode()).hexdigest()
     db_exec(f"""INSERT INTO {PG_SCHEMA}.research_stages(stage_id,campaign_id,run_id,stage_name,status,started_at,finished_at,input_json,input_hash,output_json,artifact_path,parameters_json,passed_count,failed_count,blocker,error,updated_at)
 VALUES ({sql_lit(sid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(stage_name)}, {sql_lit(status)}, now(), now(), {sql_json(input_json or {})}, {sql_lit(ih)}, {sql_json(output_json or {})}, {sql_lit(artifact_path)}, {sql_json(params or {})}, {sql_int_or_null(passed)}, {sql_int_or_null(failed)}, {sql_lit(blocker)}, {sql_lit(error)}, now())
-ON CONFLICT (run_id, stage_name) DO UPDATE SET status=EXCLUDED.status, finished_at=now(), input_json=EXCLUDED.input_json, input_hash=EXCLUDED.input_hash, output_json=EXCLUDED.output_json, artifact_path=EXCLUDED.artifact_path, parameters_json=EXCLUDED.parameters_json, passed_count=EXCLUDED.passed_count, failed_count=EXCLUDED.failed_count, blocker=EXCLUDED.blocker, error=EXCLUDED.error, updated_at=now();""")
+ON CONFLICT (run_id, stage_name) DO UPDATE SET status=EXCLUDED.status, finished_at=now(), input_json=EXCLUDED.input_json, input_hash=EXCLUDED.input_hash, output_json=EXCLUDED.output_json, artifact_path=EXCLUDED.artifact_path, parameters_json=COALESCE({PG_SCHEMA}.research_stages.parameters_json, '{{}}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{{}}'::jsonb), passed_count=EXCLUDED.passed_count, failed_count=EXCLUDED.failed_count, blocker=EXCLUDED.blocker, error=EXCLUDED.error, updated_at=now();""")
 
 
 def insert_artifact(stage_name: str, run_id: str, path: pathlib.Path, keep: bool=False, artifact_type: str='file', metadata=None) -> None:
@@ -1075,8 +1080,7 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
 def cmd_run(args) -> int:
     validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
-    args.from_stage = normalize_stage(getattr(args, 'from_stage', None), 'calendar')
-    args.to_stage = normalize_stage(getattr(args, 'to_stage', None), 'historical_option_pnl' if args.end_to_end else 'candidate_scan')
+    normalize_lifecycle_stage_params(args, default_from='calendar', default_to='historical_option_pnl' if args.end_to_end else 'candidate_scan')
     args.validation_years = int(getattr(args, 'validation_years', None) or args.years)
     if args.from_stage == 'historical_option_pnl':
         return cmd_historical(args)
@@ -1202,6 +1206,7 @@ def cmd_summarize(args) -> int:
 def cmd_retry_failed(args) -> int:
     validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    normalize_lifecycle_stage_params(args, default_from='calendar', default_to='historical_option_pnl' if args.end_to_end else 'candidate_scan')
     if not require_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
     global DB_STRICT
@@ -1407,6 +1412,7 @@ def refresh_summary_after_historical(run_dir: pathlib.Path, mb: dict | None) -> 
 def cmd_historical(args) -> int:
     validate_historical_runtime_params(args)
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    normalize_lifecycle_stage_params(args, default_from='historical_option_pnl', default_to='historical_option_pnl')
     if not require_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE', 'campaign_id': campaign_id}, ensure_ascii=False, indent=2)); return 1
     global DB_STRICT
