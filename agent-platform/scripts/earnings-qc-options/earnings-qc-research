@@ -1333,15 +1333,21 @@ def derive_insights(campaign_id: str, limit: int=20) -> dict:
     suggestions = []
     if runs:
         latest = runs[0]
-        latest_verdict = str(latest.get('research_verdict') or latest.get('bottleneck') or '')
+        latest_verdict = str(latest.get('research_verdict') or latest.get('bottleneck') or latest.get('status') or '')
         if latest.get('final_candidate_count'):
             suggestions.append({'action': 'inspect_candidates', 'reason': 'latest run has final candidates'})
+        elif is_qc_cloud_capacity_status(latest_verdict):
+            suggestions.append({'action': 'wait_and_retry', 'reason': 'latest run was blocked by QuantConnect cloud capacity; wait for capacity and retry without changing parameters'})
         elif 'BLOCKED_HISTORICAL_OPTION_PNL_GATE' in latest_verdict:
             suggestions.append({'action': 'try_more_years_or_stop', 'reason': 'forward candidates failed historical PnL gate; compare 1-year vs wider windows before loosening filters'})
         elif 'PARTIAL' in latest_verdict:
             suggestions.append({'action': 'resume', 'reason': 'latest run appears partial'})
-        else:
+        elif latest_verdict in ('funnel_incomplete', 'BLOCKED_FULL_SCAN_NOT_RUN', 'BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE'):
+            suggestions.append({'action': 'investigate_missing_data', 'reason': 'latest run is missing scan or telemetry evidence; investigate data completeness before changing parameters'})
+        elif latest_verdict == 'NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL':
             suggestions.append({'action': 'adjust_one_knob', 'reason': 'no final candidates; change one guardrailed parameter and document decision'})
+        else:
+            suggestions.append({'action': 'investigate', 'reason': 'latest run verdict is not recognized; inspect evidence before changing parameters'})
     else:
         suggestions.append({'action': 'run_initial_one_year', 'reason': 'no DB history yet', 'command': 'earnings-qc-research run --years 1 --parallel 1 --end-to-end'})
     return {'ok': True, 'campaign_id': campaign_id, 'run_count': len(runs), 'bottlenecks': bottlenecks, 'research_verdicts': research_verdicts, 'years_seen': years_seen, 'final_candidates_seen': candidates, 'suggestions': suggestions, 'runs': runs[:5]}
