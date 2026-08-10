@@ -1343,6 +1343,8 @@ def cmd_insights(args) -> int:
 
 def cmd_decision_add(args) -> int:
     campaign_id = args.campaign or DEFAULT_CAMPAIGN
+    global DB_STRICT
+    DB_STRICT = True
     if not ensure_research_db():
         print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE'})); return 1
     changes = json.loads(args.parameter_changes_json or '{}')
@@ -1541,6 +1543,10 @@ def cleanup_dir_size(path: pathlib.Path) -> int:
 
 
 def cmd_cleanup(args) -> int:
+    global DB_STRICT
+    DB_STRICT = True
+    if not ensure_research_db():
+        print(json.dumps({'ok': False, 'status': 'DB_UNAVAILABLE'})); return 1
     policy = {'older_than_days': args.older_than_days, 'keep_last': args.keep_last, 'dry_run': args.dry_run}
     cutoff = time.time() - args.older_than_days * 86400
     dirs_by_path = {}
@@ -1555,36 +1561,17 @@ def cmd_cleanup(args) -> int:
         dirs_by_path.update({str(p): p for p in matches})
         protected.update(str(p) for p in matches[:args.keep_last])
     dirs = sorted(dirs_by_path.values(), key=lambda p: p.stat().st_mtime, reverse=True)
-    deleted = []; failed = []; freed = 0
+    cleanup_candidates = []
     for d in dirs:
         if d.stat().st_mtime >= cutoff or str(d) in protected:
             continue
         if not cleanup_can_delete_run_dir(d):
             continue
         size_before = cleanup_dir_size(d)
-        item = {'path': str(d), 'bytes': size_before}
-        if not args.dry_run:
-            try:
-                shutil.rmtree(d)
-            except Exception as exc:
-                bytes_remaining = cleanup_dir_size(d) if d.exists() else 0
-                bytes_freed = max(0, size_before - bytes_remaining)
-                freed += bytes_freed
-                failed.append({'path': str(d), 'bytes': size_before, 'bytes_freed': bytes_freed, 'bytes_remaining': bytes_remaining, 'error': str(exc)})
-                continue
-            bytes_remaining = cleanup_dir_size(d) if d.exists() else 0
-            bytes_freed = max(0, size_before - bytes_remaining)
-            freed += bytes_freed
-            if d.exists():
-                failed.append({'path': str(d), 'bytes': size_before, 'bytes_freed': bytes_freed, 'bytes_remaining': bytes_remaining, 'error': 'path remains after deletion'})
-                continue
-        else:
-            freed += size_before
-        deleted.append(item)
+        cleanup_candidates.append({'path': str(d), 'bytes': size_before})
     pruned_db_blobs = {}
-    if ensure_research_db():
-        if args.dry_run:
-            out = db_exec(f"""
+    if args.dry_run:
+        out = db_exec(f"""
 WITH ranked_runs AS (
   SELECT run_id, row_number() OVER (
     PARTITION BY campaign_id
@@ -1603,10 +1590,10 @@ SELECT json_build_object(
   'candidate_dossiers', (SELECT count(*) FROM {PG_SCHEMA}.candidate_dossiers WHERE run_id IN (SELECT run_id FROM old_runs) AND (contract_json IS NOT NULL OR liquidity_json IS NOT NULL OR historical_pnl_json IS NOT NULL OR metrics_json IS NOT NULL)),
   'research_stages', (SELECT count(*) FROM {PG_SCHEMA}.research_stages WHERE run_id IN (SELECT run_id FROM old_runs) AND (input_json IS NOT NULL OR output_json IS NOT NULL))
 );""", fetch=True)
-            try: pruned_db_blobs = json.loads((out or '').strip() or '{}')
-            except Exception: pruned_db_blobs = {}
-        else:
-            out = db_exec(f"""
+        try: pruned_db_blobs = json.loads((out or '').strip() or '{}')
+        except Exception: pruned_db_blobs = {}
+    else:
+        out = db_exec(f"""
 WITH ranked_runs AS (
   SELECT run_id, row_number() OVER (
     PARTITION BY campaign_id
@@ -1646,13 +1633,72 @@ SELECT json_build_object(
   'candidate_dossiers', (SELECT count(*) FROM dossier_prune),
   'research_stages', (SELECT count(*) FROM stage_prune)
 );""", fetch=True)
-            try: pruned_db_blobs = json.loads((out or '').strip() or '{}')
-            except Exception: pruned_db_blobs = {}
+        try: pruned_db_blobs = json.loads((out or '').strip() or '{}')
+        except Exception: pruned_db_blobs = {}
     cid = stable_id('cleanup', utc_now(), args.dry_run, args.older_than_days, args.keep_last)
+    deleted = []; failed = []; freed = 0; staged = []
+    staging_root = REPORT_ROOT.parent / '.earnings-qc-cleanup-staging' / cid
+    if args.dry_run:
+        for item in cleanup_candidates:
+            freed += int(item.get('bytes') or 0)
+            deleted.append(item)
+    else:
+        staging_root.mkdir(parents=True, exist_ok=True)
+        for item in cleanup_candidates:
+            d = pathlib.Path(item['path'])
+            size_before = int(item.get('bytes') or 0)
+            staged_path = staging_root / d.name
+            try:
+                d.rename(staged_path)
+            except Exception as exc:
+                failed.append({'path': str(d), 'bytes': size_before, 'bytes_freed': 0, 'bytes_remaining': cleanup_dir_size(d) if d.exists() else 0, 'error': str(exc)})
+                continue
+            staged.append((d, staged_path, size_before))
+            freed += size_before
+            deleted.append(item)
     cleanup_error = json.dumps(failed, ensure_ascii=False) if failed else None
-    if ensure_research_db():
+    audit_deleted = deleted if args.dry_run else []
+    audit_freed = freed if args.dry_run else 0
+    audit_error = cleanup_error if args.dry_run else 'CLEANUP_IN_PROGRESS'
+    try:
         db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes,error)
-VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(deleted, ensure_ascii=False))}::jsonb, {freed}, {sql_lit(cleanup_error)});""")
+VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(audit_deleted, ensure_ascii=False))}::jsonb, {audit_freed}, {sql_lit(audit_error)});""")
+    except Exception:
+        for original, staged_path, _size_before in reversed(staged):
+            if staged_path.exists() and not original.exists():
+                staged_path.rename(original)
+        raise
+    actual_deleted = list(deleted) if args.dry_run else []
+    actual_failed = list(failed)
+    actual_freed = freed if args.dry_run else 0
+    for original, staged_path, size_before in staged:
+        try:
+            shutil.rmtree(staged_path)
+        except Exception as exc:
+            bytes_remaining = cleanup_dir_size(staged_path) if staged_path.exists() else 0
+            bytes_freed = max(0, size_before - bytes_remaining)
+            actual_freed += bytes_freed
+            if staged_path.exists() and not original.exists():
+                staged_path.rename(original)
+            actual_failed.append({'path': str(original), 'bytes': size_before, 'bytes_freed': bytes_freed, 'bytes_remaining': bytes_remaining, 'error': str(exc)})
+            continue
+        actual_freed += size_before
+        actual_deleted.append({'path': str(original), 'bytes': size_before})
+    if not args.dry_run:
+        actual_error = json.dumps(actual_failed, ensure_ascii=False) if actual_failed else None
+        db_exec(f"""UPDATE {PG_SCHEMA}.cleanup_runs
+SET deleted_paths_json = {sql_lit(json.dumps(actual_deleted, ensure_ascii=False))}::jsonb,
+    freed_bytes = {actual_freed},
+    error = {sql_lit(actual_error)}
+WHERE cleanup_id = {sql_lit(cid)};""")
+        deleted = actual_deleted
+        failed = actual_failed
+        freed = actual_freed
+    try:
+        staging_root.rmdir()
+        staging_root.parent.rmdir()
+    except Exception:
+        pass
     print(json.dumps({'ok': not failed, 'cleanup_id': cid, 'dry_run': args.dry_run, 'deleted_paths': deleted, 'failed_paths': failed, 'freed_bytes': freed, 'policy': policy, 'pruned_db_blobs': pruned_db_blobs}, ensure_ascii=False, indent=2, sort_keys=True))
     return 1 if failed else 0
 

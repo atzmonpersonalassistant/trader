@@ -753,7 +753,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         calls = []
 
         def fake_rmtree(path):
-            removed_file.unlink()
+            (path / "removed.txt").unlink()
             raise PermissionError("permission denied")
 
         with mock.patch.object(mod, "REPORT_ROOT", reports), \
@@ -774,7 +774,59 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("permission denied", out["failed_paths"][0]["error"])
         joined = "\n".join(calls)
         self.assertIn("freed_bytes,error", joined)
+        self.assertIn("CLEANUP_IN_PROGRESS", joined)
+        self.assertIn("UPDATE earnings_cache.cleanup_runs", joined)
         self.assertIn("permission denied", joined)
+
+    def test_cleanup_db_failure_happens_before_filesystem_delete(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_scan = reports / "earnings-qc-options-scan-full-old"
+        old_scan.mkdir()
+        payload = old_scan / "payload.txt"
+        payload.write_text("old")
+        os.utime(old_scan, (1, 1))
+        os.utime(payload, (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=False)
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=RuntimeError("db unavailable")), \
+             mock.patch.object(mod.shutil, "rmtree", side_effect=AssertionError("filesystem delete should wait for DB success")):
+            with self.assertRaises(RuntimeError):
+                mod.cmd_cleanup(args)
+
+        self.assertTrue(old_scan.exists())
+        self.assertTrue(payload.exists())
+
+    def test_cleanup_restores_staged_path_when_audit_insert_fails(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_scan = reports / "earnings-qc-options-scan-full-old"
+        old_scan.mkdir()
+        payload = old_scan / "payload.txt"
+        payload.write_text("old")
+        os.utime(old_scan, (1, 1))
+        os.utime(payload, (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=False)
+        calls = []
+
+        def fake_db_exec(sql, fetch=False):
+            calls.append(sql)
+            if fetch:
+                return "{}"
+            raise RuntimeError("audit insert failed")
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=fake_db_exec), \
+             mock.patch.object(mod.shutil, "rmtree", side_effect=AssertionError("filesystem delete should wait for audit insert")):
+            with self.assertRaises(RuntimeError):
+                mod.cmd_cleanup(args)
+
+        self.assertTrue(old_scan.exists())
+        self.assertTrue(payload.exists())
+        self.assertEqual(len(calls), 2)
 
     def test_cleanup_error_column_has_additive_migration(self):
         mod = load_script("earnings-qc-research")
@@ -811,7 +863,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         args = argparse.Namespace(older_than_days=3, keep_last=1, dry_run=True)
 
         with mock.patch.object(mod, "REPORT_ROOT", reports), \
-             mock.patch.object(mod, "ensure_research_db", return_value=False):
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql, fetch=False: "{}" if fetch else ""):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 rc = mod.cmd_cleanup(args)
@@ -838,7 +891,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         args = argparse.Namespace(older_than_days=3, keep_last=1, dry_run=True)
 
         with mock.patch.object(mod, "REPORT_ROOT", reports), \
-             mock.patch.object(mod, "ensure_research_db", return_value=False):
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql, fetch=False: "{}" if fetch else ""):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 rc = mod.cmd_cleanup(args)
@@ -874,7 +928,8 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=True)
 
         with mock.patch.object(mod, "REPORT_ROOT", reports), \
-             mock.patch.object(mod, "ensure_research_db", return_value=False):
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql, fetch=False: "{}" if fetch else ""):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
                 rc = mod.cmd_cleanup(args)
@@ -970,13 +1025,21 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
         self.assertIn("{sql_int_or_null(passed)}, {sql_int_or_null(failed)}", cli)
 
-    def test_db_persistence_is_strict_for_mutating_runs(self):
-        cli = (SCRIPTS / "earnings-qc-research").read_text()
-        self.assertIn("DB_STRICT = False", cli)
-        self.assertIn("raise RuntimeError('psql not found for required research DB persistence')", cli)
-        self.assertIn("DB_STRICT = True", cli)
-        self.assertIn("DB_RUN_PERSIST_FAILED", cli)
-        self.assertIn("DB_SUMMARY_PERSIST_FAILED", cli)
+    def test_db_persistence_is_strict_for_mutating_commands_without_psql(self):
+        script = SCRIPTS / "earnings-qc-research"
+        empty_path = pathlib.Path(tempfile.mkdtemp())
+        env = {**os.environ, "PATH": str(empty_path), "QC_FULL_CHUNK_DELAY_SECONDS": "0"}
+        commands = [
+            ["run", "--no-end-to-end", "--max-chunks", "0"],
+            ["retry-failed", "--no-end-to-end"],
+            ["historical", "--years", "1"],
+            ["decision", "add", "--type", "test_decision", "--rationale", "psql absent"],
+            ["cleanup", "--dry-run"],
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                p = subprocess.run([sys.executable, str(script), *command], env=env, text=True, capture_output=True, timeout=10)
+                self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
 
     def test_db_latest_orders_by_updated_at_for_resumed_runs(self):
         cli = (SCRIPTS / "earnings-qc-research").read_text()
