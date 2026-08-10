@@ -37,6 +37,7 @@ DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "sudo -n /
 DEFAULT_REVIEW_AGENT_CMD = os.environ.get("TRADING_REVIEW_AGENT_CMD", "sudo -n /usr/local/sbin/trading-dispatch-review-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
 DEFAULT_REVIEW_APP_SLUG = os.environ.get("TRADING_REVIEW_APP_SLUG", "trading-review-agent")
+FAILED_REVIEW_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required"}
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
 
 SCHEMA = """
@@ -687,10 +688,14 @@ def append_label_json(labels_json: str | None, label: str) -> str:
 
 
 def fetch_check_runs(owner: str, repo: str, sha: str, token: str) -> list[dict[str, Any]]:
-    query = urllib.parse.urlencode({"per_page": "100"})
-    url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
-    data, _ = github_api_get(url, token)
-    return data.get("check_runs", [])
+    query = urllib.parse.urlencode({"per_page": "100", "filter": "all"})
+    url: str | None = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
+    check_runs: list[dict[str, Any]] = []
+    while url:
+        data, headers = github_api_get(url, token)
+        check_runs.extend(data.get("check_runs", []))
+        url = parse_next_link(headers.get("link"))
+    return check_runs
 
 
 def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: str | None = None) -> dict[str, Any] | None:
@@ -699,7 +704,35 @@ def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: st
         matches = [check for check in matches if ((check.get("app") or {}).get("slug") == app_slug)]
     if not matches:
         return None
-    return sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+    latest = sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+    if latest.get("status") == "completed" and latest.get("conclusion") == "success":
+        failed_runs = [check for check in matches if check is not latest and check.get("conclusion") in FAILED_REVIEW_CONCLUSIONS]
+        if failed_runs:
+            failed_run = sorted(failed_runs, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+            latest = dict(latest)
+            latest["_has_failed_run_for_check_name"] = True
+            latest["_failed_run_for_check_name"] = failed_run
+    return latest
+
+
+def failed_review_check_for_routing(review_check: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not review_check:
+        return None
+    if review_check.get("conclusion") in FAILED_REVIEW_CONCLUSIONS:
+        return review_check
+    failed_run = review_check.get("_failed_run_for_check_name")
+    if isinstance(failed_run, dict) and failed_run.get("conclusion") in FAILED_REVIEW_CONCLUSIONS:
+        return failed_run
+    return None
+
+
+def is_clean_review_success(review_check: dict[str, Any] | None) -> bool:
+    return bool(
+        review_check
+        and review_check.get("status") == "completed"
+        and review_check.get("conclusion") == "success"
+        and not review_check.get("_has_failed_run_for_check_name")
+    )
 
 
 def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token: str) -> None:
@@ -808,7 +841,9 @@ def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | No
         return False, "blocked"
     if not review_check:
         return False, "missing_review_check"
-    if review_check.get("status") != "completed" or review_check.get("conclusion") != "success":
+    if review_check.get("_has_failed_run_for_check_name"):
+        return False, "review_check_had_failed_run"
+    if not is_clean_review_success(review_check):
         return False, "review_not_successful"
     return True, "ok"
 
@@ -924,7 +959,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                 )
                 results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "untrusted_pr", "event": event_id})
                 continue
-            if (review_check or {}).get("status") == "completed" and (review_check or {}).get("conclusion") == "success" and "agent:needs-fix" in labels:
+            if is_clean_review_success(review_check) and "agent:needs-fix" in labels:
                 try:
                     remove_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)
                 except urllib.error.HTTPError as exc:
@@ -1032,9 +1067,10 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 results.append({"pr": pr_number, "routed": False, "reason": "missing_head_sha", "event": event_id})
                 continue
             check = latest_named_check(fetch_check_runs(args.owner, args.repo, sha, token), args.review_check_name, args.review_app_slug)
-            conclusion = (check or {}).get("conclusion")
-            status = (check or {}).get("status")
-            if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            failed_check = failed_review_check_for_routing(check)
+            conclusion = (failed_check or check or {}).get("conclusion")
+            status = (failed_check or check or {}).get("status")
+            if not failed_check:
                 results.append(
                     {
                         "pr": pr_number,
@@ -1057,7 +1093,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 (row["external_id"], f'%"head_sha": "{sha}"%'),
             ).fetchone()
             if previous_success:
-                results.append({"pr": pr_number, "routed": False, "reason": "already_routed_failed_review", "check": check})
+                results.append({"pr": pr_number, "routed": False, "reason": "already_routed_failed_review", "check": failed_check})
                 continue
             if not branch.startswith("agent/issue-") or "agent:pr-opened" not in labels:
                 event_id = record_event(
@@ -1169,7 +1205,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                 stderr = normalize_subprocess_output(exc.stderr) + "\nCommand timed out"
             finished = now_iso()
             state = "succeeded" if returncode == 0 else "failed"
-            result = {"returncode": returncode, "stdout": redact_text(stdout), "stderr": redact_text(stderr), "command": cmd, "check": check}
+            result = {"returncode": returncode, "stdout": redact_text(stdout), "stderr": redact_text(stderr), "command": cmd, "check": failed_check}
             conn.execute(
                 """
                 UPDATE attempts
@@ -1188,7 +1224,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
                     "pr": pr_number,
                     "issue": issue_number,
                     "head_sha": sha,
-                    "check": check,
+                    "check": failed_check,
                     "attempt": attempt_external_id,
                     "github_label_updated": github_label_updated,
                     "retry_count": current_retry,
