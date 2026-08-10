@@ -1030,6 +1030,33 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual(out["research_verdicts"]["BLOCKED_HISTORICAL_OPTION_PNL_GATE_NO_PASSING_SYMBOLS"], 1)
         self.assertEqual(out["suggestions"][0]["action"], "try_more_years_or_stop")
 
+    def test_derive_insights_maps_terminal_verdicts_to_conservative_actions(self):
+        mod = load_script("earnings-qc-research")
+        cases = [
+            ("research_verdict", "funnel_incomplete", "investigate_missing_data"),
+            ("research_verdict", "BLOCKED_QC_CLOUD_RATE_LIMITED", "wait_and_retry"),
+            ("research_verdict", "BLOCKED_QC_CLOUD_NO_SPARE_NODES", "wait_and_retry"),
+            ("research_verdict", "BLOCKED_QC_CLOUD_CAPACITY", "wait_and_retry"),
+            ("status", "BLOCKED_FULL_SCAN_NOT_RUN", "investigate_missing_data"),
+            ("research_verdict", "BLOCKED_HISTORICAL_OPTION_PNL_MISSING_WINDOW_EVIDENCE", "investigate_missing_data"),
+            ("research_verdict", "NO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL", "adjust_one_knob"),
+            ("research_verdict", "UNEXPECTED_TERMINAL_FAILURE", "investigate"),
+        ]
+        for field, verdict, expected_action in cases:
+            with self.subTest(verdict=verdict):
+                run = {
+                    "run_id": "run-1",
+                    "status": "completed",
+                    "research_verdict": None,
+                    "bottleneck": None,
+                    "final_candidate_count": 0,
+                    "parameters_json": {"years": 1},
+                }
+                run[field] = verdict
+                with mock.patch.object(mod, "db_history", return_value=[run]):
+                    out = mod.derive_insights("camp", 5)
+                self.assertEqual(out["suggestions"][0]["action"], expected_action)
+
     def test_run_from_historical_stage_delegates_before_new_run_dir(self):
         mod = load_script("earnings-qc-research")
         args = mod.build_parser().parse_args(["run", "--from-stage", "historical_option_pnl", "--years", "10"])
