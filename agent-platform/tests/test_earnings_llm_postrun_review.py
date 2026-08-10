@@ -33,7 +33,16 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
 
-    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04", now=None, extra_env=None):
+    def run_postrun_with_fake_psql(
+        self,
+        psql_outputs,
+        *,
+        root=None,
+        date="2026-08-04",
+        now=None,
+        extra_env=None,
+        fake_python3=None,
+    ):
         cleanup = tempfile.TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -66,6 +75,10 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             script.chmod(0o755)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
+            if fake_python3 is not None:
+                python_script = fake_bin / "python3"
+                python_script.write_text(fake_python3)
+                python_script.chmod(0o755)
             env = {
                 **os.environ,
                 "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -162,6 +175,64 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             self.assertIn("due_at=2026-08-04T11:30:00+03:00", result.stdout)
             self.assertEqual(len(result.handoff_tasks), 1)
             self.assertEqual(result.failure_handoff_markers, ["20260804-NO_FINISHED_DAILY_RUN"])
+
+    def assert_missing_daily_state_config_fails_closed(self, result):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("missing daily run", result.stderr)
+        self.assertNotIn("DAILY_RUN_NOT_DUE_YET", result.stdout)
+        self.assertNotIn("NO_FINISHED_DAILY_RUN", result.stdout)
+        self.assertEqual(result.handoff_tasks, {})
+        self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_invalid_missing_run_grace_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T23:59:00+03:00",
+                extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "abc"},
+            )
+
+            self.assert_missing_daily_state_config_fails_closed(result)
+            self.assertIn("invalid EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS", result.stderr)
+
+    def test_negative_missing_run_grace_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T23:59:00+03:00",
+                extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "-1"},
+            )
+
+            self.assert_missing_daily_state_config_fails_closed(result)
+            self.assertIn("must be non-negative", result.stderr)
+
+    def test_invalid_missing_run_scheduled_at_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T23:59:00+03:00",
+                extra_env={"EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT": "99:99"},
+            )
+
+            self.assert_missing_daily_state_config_fails_closed(result)
+            self.assertIn("invalid EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT", result.stderr)
+
+    def test_empty_missing_run_helper_output_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T23:59:00+03:00",
+                fake_python3="#!/usr/bin/env bash\nexit 0\n",
+            )
+
+            self.assert_missing_daily_state_config_fails_closed(result)
+            self.assertIn("invalid missing daily run state", result.stderr)
+            self.assertIn("state=<empty>", result.stderr)
 
     def test_finished_daily_run_before_missing_deadline_uses_normal_review_path(self):
         with tempfile.TemporaryDirectory() as tmp:
