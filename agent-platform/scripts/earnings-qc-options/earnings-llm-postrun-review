@@ -84,6 +84,43 @@ TASK
   echo "HANDOFF_TASK_WRITTEN condition=$condition task=$task_file"
 }
 
+missing_daily_run_state() {
+  python3 - "$DATE" "$DAILY_RUN_SCHEDULED_AT" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_POSTRUN_NOW:-}" <<'PY'
+import datetime as dt
+import re
+import sys
+from zoneinfo import ZoneInfo
+
+date_s, scheduled_at_s, grace_s, now_s = sys.argv[1:5]
+match = re.fullmatch(r"([01][0-9]|2[0-3]):([0-5][0-9])", scheduled_at_s)
+if not match:
+    raise SystemExit(f"invalid EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT: {scheduled_at_s!r}")
+try:
+    grace = int(grace_s)
+except ValueError:
+    raise SystemExit(f"invalid EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS: {grace_s!r}")
+if grace < 0:
+    raise SystemExit("EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS must be non-negative")
+
+tz = ZoneInfo("Asia/Jerusalem")
+run_date = dt.date.fromisoformat(date_s)
+hour, minute = (int(part) for part in match.groups())
+scheduled_at = dt.datetime.combine(run_date, dt.time(hour, minute), tzinfo=tz)
+due_at = scheduled_at + dt.timedelta(seconds=grace)
+if now_s:
+    now = dt.datetime.fromisoformat(now_s.replace("Z", "+00:00"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    else:
+        now = now.astimezone(tz)
+else:
+    now = dt.datetime.now(tz)
+
+state = "after_deadline" if now >= due_at else "pre_deadline"
+print(f"{state}|{due_at.isoformat()}")
+PY
+}
+
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -207,8 +244,13 @@ if [[ -z "$ROW" ]]; then
 fi
 
 if [[ -z "$ROW" ]]; then
+  IFS='|' read -r MISSING_ROW_STATE MISSING_RUN_DUE_AT <<< "$(missing_daily_run_state)"
+  if [[ "$MISSING_ROW_STATE" != "after_deadline" ]]; then
+    echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+    exit 0
+  fi
   write_no_finished_run_handoff_task
-  echo "NO_FINISHED_DAILY_RUN date=$DATE"
+  echo "NO_FINISHED_DAILY_RUN date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
   exit 0
 fi
 
