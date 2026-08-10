@@ -39,10 +39,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "workspace_root": "/agents/review/workspaces",
     "token_cmd": DEFAULT_TOKEN_CMD,
     "review_model": "gpt-5.5",
-    "autoreview_enabled": False,
+    "autoreview_enabled": True,
     "autoreview_cmd": "autoreview",
     "autoreview_timeout_seconds": 1800,
-    "autoreview_required": False,
+    "autoreview_required": True,
     "autoreview_max_changed_files": 12,
 }
 
@@ -128,6 +128,13 @@ def run_cmd(cmd: list[str], *, cwd: Path | None = None, timeout: int = 180, inpu
     redacted = [redact_text(part) for part in cmd]
     try:
         proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=timeout, input=input_text)
+    except OSError as exc:
+        return {
+            "command": redacted,
+            "returncode": 127,
+            "stdout": "",
+            "stderr": redact_text(str(exc)),
+        }
     except subprocess.TimeoutExpired as exc:
         return {
             "command": redacted,

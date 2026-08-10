@@ -3043,6 +3043,54 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("## Autoreview", text)
         self.assertIn("FAIL", text)
 
+    def test_review_autoreview_default_fails_closed_for_missing_or_incomplete_config(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        context = {
+            "files": [{"filename": "agent-platform/tools/trading_review_agent.py"}],
+            "pr": {"labels": [], "base": {"ref": "main"}},
+        }
+        deterministic = {"pass": True, "findings": [], "checklist": []}
+        model = {"returncode": 0, "review_text": "PASS\nLooks good"}
+        failing_autoreview = {"returncode": 1, "stdout": "finding", "stderr": "tool unavailable", "command": ["autoreview"]}
+        skipped_autoreview = {"skipped": True, "reason": "not_required_or_disabled"}
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            cases = [
+                (tmp_path / "missing.json", None, True, True),
+                (tmp_path / "incomplete.json", {"agent": "review"}, True, True),
+                (tmp_path / "explicit-false.json", {"autoreview_required": False}, True, False),
+            ]
+            for config_path, payload, expected_enabled, expected_required in cases:
+                if payload is not None:
+                    config_path.write_text(json.dumps(payload), encoding="utf-8")
+                config, _ = review.load_config(config_path)
+                self.assertIs(config["autoreview_enabled"], expected_enabled)
+                self.assertIs(config["autoreview_required"], expected_required)
+                self.assertTrue(review.should_run_autoreview(context, config, deterministic, model, False))
+
+                _, text, passed = review.write_review(
+                    tmp_path,
+                    23,
+                    deterministic,
+                    model,
+                    failing_autoreview,
+                    bool(config.get("autoreview_required")),
+                )
+                self.assertIs(passed, not expected_required)
+                self.assertIn("FAIL" if expected_required else "Non-blocking failure", text)
+
+                _, skipped_text, skipped_passed = review.write_review(
+                    tmp_path,
+                    24,
+                    deterministic,
+                    model,
+                    skipped_autoreview,
+                    bool(config.get("autoreview_required")),
+                )
+                self.assertTrue(skipped_passed)
+                self.assertIn("Skipped: not_required_or_disabled", skipped_text)
+
     def test_review_required_check_fails_when_model_review_missing(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         with TemporaryDirectory() as tmp:
@@ -3079,6 +3127,28 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertEqual(result["returncode"], 124)
         self.assertNotIn("ghs_TIMEOUTSECRET", rendered)
         self.assertIn("Command timed out", rendered)
+
+    def test_agent_command_launch_failure_is_reportable(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        with TemporaryDirectory() as tmp:
+            result = review.run_autoreview(
+                Path(tmp),
+                {"base_ref": "main"},
+                {"autoreview_cmd": str(Path(tmp) / "missing-autoreview")},
+                1,
+            )
+            _, text, passed = review.write_review(
+                Path(tmp),
+                25,
+                {"pass": True, "findings": [], "checklist": []},
+                {"returncode": 0, "review_text": "PASS\nLooks good"},
+                result,
+                True,
+            )
+        self.assertEqual(result["returncode"], 127)
+        self.assertFalse(passed)
+        self.assertIn("Result: FAIL", text)
+        self.assertIn("## Autoreview", text)
 
     def test_token_helper_enforces_role_linux_user(self):
         token = load("trading_agent_token", "agent-platform/tools/trading_agent_token.py")
