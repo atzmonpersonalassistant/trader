@@ -1756,7 +1756,7 @@ def add_stage_parameter_args(sp):
 def add_historical_parameter_args(sp):
     sp.add_argument('--entry-window', default='21:28', help='Days before earnings allowed for historical entry, e.g. 21:28')
     sp.add_argument('--exit-days-before', default='1', help='Comma-separated pre-earnings exits to evaluate, e.g. 1,3,7')
-    sp.add_argument('--exit-policy', default='before-earnings', choices=['before-earnings','after-market-report-day-close'])
+    sp.add_argument('--exit-policy', default='sell_before_earnings_no_hold_through', choices=['sell_before_earnings_no_hold_through','sell-before-earnings-no-hold-through'])
     sp.add_argument('--historical-resolution', default='daily', choices=['daily','hour','minute'])
     sp.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute'])
     sp.add_argument('--quote-resolution', choices=['hour','minute'], help='Reserved for intraday validation stage')
