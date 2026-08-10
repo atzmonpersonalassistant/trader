@@ -101,9 +101,19 @@ def hist_params(params:dict|None) -> dict:
     exit_days_before = int(p.get('exit_days_before') if p.get('exit_days_before') is not None else 1)
     if exit_days_before < 1:
         raise SystemExit(f"invalid exit_days_before {exit_days_before!r}; expected integer >= 1")
-    exit_policy = str(p.get('exit_policy') or 'before-earnings').strip().lower().replace('_', '-')
-    if exit_policy not in {'before-earnings', 'after-market-report-day-close', 'sell-before-earnings-no-hold-through'}:
-        raise SystemExit(f"invalid exit_policy {exit_policy!r}; expected before-earnings")
+    exit_policy_raw = p.get('exit_policy')
+    exit_policy = str(exit_policy_raw).strip().lower().replace('_', '-') if exit_policy_raw is not None else ''
+    implemented_exit_policy = 'sell-before-earnings-no-hold-through'
+    unimplemented_exit_policies = {'before-earnings', 'after-market-report-day-close'}
+    if not exit_policy:
+        exit_policy = implemented_exit_policy
+    if exit_policy in unimplemented_exit_policies:
+        raise SystemExit(
+            f"exit_policy {exit_policy!r} is accepted by older artifacts but is not implemented; "
+            f"only {implemented_exit_policy} is implemented"
+        )
+    if exit_policy != implemented_exit_policy:
+        raise SystemExit(f"invalid exit_policy {exit_policy!r}; expected {implemented_exit_policy}")
     return {
         'historical_resolution': qc_resolution_key(p.get('historical_resolution'), 'daily'),
         'option_right': option_right,
@@ -554,7 +564,7 @@ def run_backtest(run_dir:pathlib.Path, years:int, params:dict|None=None):
 def main(argv):
     ap=argparse.ArgumentParser(); ap.add_argument('--run-dir'); ap.add_argument('--years',type=int,default=8)
     ap.add_argument('--entry-window', default='21:28'); ap.add_argument('--exit-days-before', default='1')
-    ap.add_argument('--exit-policy', default='before-earnings'); ap.add_argument('--historical-resolution', default='daily')
+    ap.add_argument('--exit-policy', default='sell_before_earnings_no_hold_through'); ap.add_argument('--historical-resolution', default='daily')
     ap.add_argument('--option-resolution', choices=['tick','second','minute','hour','daily'])
     ap.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute']); ap.add_argument('--max-contracts', type=int)
     ap.add_argument('--max-premium', type=float); ap.add_argument('--min-bid', type=float); ap.add_argument('--max-spread', type=float); ap.add_argument('--max-spread-pct', type=float)

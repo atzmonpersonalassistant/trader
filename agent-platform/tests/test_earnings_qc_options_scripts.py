@@ -2463,18 +2463,43 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         args = full.build_parser().parse_args(["run", "--stop-loss-max-loss-pct", "50"])
         self.assertEqual(full.current_parameters(args)["stop_loss_max_loss_pct"], -50.0)
 
-    def test_multiyear_exit_policy_accepts_public_alias_and_rejects_zero_days(self):
+    def test_multiyear_exit_policy_only_accepts_implemented_policy_and_rejects_zero_days(self):
         multi = load_script("earnings-qc-multiyear-backtest")
         self.assertEqual(
-            multi.hist_params({"exit_policy": "after-market-report-day-close"})["exit_policy"],
+            multi.hist_params({})["exit_policy"],
+            "sell_before_earnings_no_hold_through",
+        )
+        self.assertEqual(
+            multi.hist_params({"exit_policy": "sell-before-earnings-no-hold-through"})["exit_policy"],
             "sell_before_earnings_no_hold_through",
         )
         self.assertEqual(
             multi.hist_params({"exit_policy": "sell_before_earnings_no_hold_through"})["exit_policy"],
             "sell_before_earnings_no_hold_through",
         )
+        for policy in ("before-earnings", "after-market-report-day-close"):
+            with self.subTest(policy=policy):
+                with self.assertRaises(SystemExit) as cm:
+                    multi.hist_params({"exit_policy": policy})
+                self.assertIn("not implemented", str(cm.exception))
+                self.assertNotIn("invalid exit_policy", str(cm.exception))
+        with self.assertRaises(SystemExit) as cm:
+            multi.hist_params({"exit_policy": "garbage"})
+        self.assertIn("invalid exit_policy", str(cm.exception))
+        self.assertNotIn("not implemented", str(cm.exception))
         with self.assertRaises(SystemExit):
             multi.hist_params({"exit_days_before": 0})
+
+    def test_research_exit_policy_parser_only_accepts_implemented_policy(self):
+        full = load_script("earnings-qc-research")
+        args = full.build_parser().parse_args(["run"])
+        self.assertEqual(args.exit_policy, "sell_before_earnings_no_hold_through")
+        args = full.build_parser().parse_args(["run", "--exit-policy", "sell-before-earnings-no-hold-through"])
+        self.assertEqual(args.exit_policy, "sell-before-earnings-no-hold-through")
+        for policy in ("before-earnings", "after-market-report-day-close"):
+            with self.subTest(policy=policy):
+                with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                    full.build_parser().parse_args(["run", "--exit-policy", policy])
 
     def test_multiyear_stop_loss_fill_variants_mid_window_breach(self):
         alg = self.build_multiyear_algorithm({"stop_loss_max_loss_pct": 50})
@@ -3398,7 +3423,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         fake.chmod(0o755)
         mod.MULTIYEAR = fake
         chunk = {"_chunk_offset": 0, "candidate_details": [{"symbol": "OPEN", "earnings_date": "2026-08-04", "contracts": []}], "funnel": {}}
-        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="before-earnings", historical_resolution="minute", option_resolution="hour", option_right="put", delta_target=0.25, max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
+        args = argparse.Namespace(entry_window="14:28", exit_days_before="2", exit_policy="sell_before_earnings_no_hold_through", historical_resolution="minute", option_resolution="hour", option_right="put", delta_target=0.25, max_contracts=3, path_metrics="intraday", max_premium=0.25, min_bid=0.01, max_spread=0.35, max_spread_pct=0.7, min_relative_spread=0.2, vol_spread_factor=0.8, expected_move_spread_fraction=0.3, min_open_interest=11, min_volume=4, strike_range="-20:100", min_expiration_days=5, max_expiration_days=45, max_expiry_after_earnings_days=10, stop_loss_max_loss_pct=-50)
         out = mod.run_chunk_multiyear(tmp, chunk, years=9, args=args)
         argv = out["argv"]
         self.assertIn("--entry-window", argv)
