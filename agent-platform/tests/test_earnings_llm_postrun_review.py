@@ -42,6 +42,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         now=None,
         extra_env=None,
         fake_python3=None,
+        fake_systemctl=None,
     ):
         cleanup = tempfile.TemporaryDirectory() if root is None else None
         try:
@@ -75,6 +76,10 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             script.chmod(0o755)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
+            if fake_systemctl is not None:
+                systemctl_script = fake_bin / "systemctl"
+                systemctl_script.write_text(fake_systemctl)
+                systemctl_script.chmod(0o755)
             if fake_python3 is not None:
                 python_script = fake_bin / "python3"
                 python_script.write_text(fake_python3)
@@ -125,9 +130,29 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("condition: NO_FINISHED_DAILY_RUN", task_text)
         self.assertIn("date: 2026-08-04", task_text)
         self.assertIn("scheduled_at: 10:30", task_text)
+        self.assertIn("schedule_source: fallback", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
 
-    def test_default_missing_run_deadline_is_1330_local(self):
+    def test_empty_systemd_timer_falls_back_to_default_schedule_with_source_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T10:29:59+03:00",
+                fake_systemctl="#!/usr/bin/env bash\nexit 0\n",
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+            self.assertIn("scheduled_at=10:30", result.stdout)
+            self.assertIn("schedule_source=fallback", result.stdout)
+            self.assertIn("grace_seconds=10800", result.stdout)
+            self.assertIn("due_at=2026-08-04T13:30:00+03:00", result.stdout)
+            self.assertNotIn("NO_FINISHED_DAILY_RUN", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_no_finished_daily_run_within_grace_does_not_write_handoff(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.run_postrun_with_fake_psql(
                 ["", "", ""],
@@ -136,11 +161,71 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0)
-            self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+            self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
             self.assertIn("scheduled_at=10:30", result.stdout)
             self.assertIn("grace_seconds=10800", result.stdout)
             self.assertIn("due_at=2026-08-04T13:30:00+03:00", result.stdout)
             self.assertNotIn("NO_FINISHED_DAILY_RUN", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_systemd_timer_changes_missing_run_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T12:44:59+03:00",
+                fake_systemctl=(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' 'OnCalendar=*-*-* 09:45:00 Asia/Jerusalem'\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
+            self.assertIn("scheduled_at=09:45", result.stdout)
+            self.assertIn("schedule_source=systemd", result.stdout)
+            self.assertIn("due_at=2026-08-04T12:45:00+03:00", result.stdout)
+            self.assertNotIn("scheduled_at=10:30", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_env_schedule_override_wins_over_systemd_timer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T08:59:59+03:00",
+                extra_env={"EARNINGS_POSTRUN_DAILY_SCHEDULE": "06:00"},
+                fake_systemctl=(
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' 'OnCalendar=*-*-* 09:45:00 Asia/Jerusalem'\n"
+                ),
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
+            self.assertIn("scheduled_at=06:00", result.stdout)
+            self.assertIn("schedule_source=env", result.stdout)
+            self.assertIn("due_at=2026-08-04T09:00:00+03:00", result.stdout)
+            self.assertNotIn("scheduled_at=09:45", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_watchdog_grace_env_applies_when_postrun_grace_env_is_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T10:59:59+03:00",
+                extra_env={"EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS": "1800"},
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_MISSING_WITHIN_GRACE date=2026-08-04", result.stdout)
+            self.assertIn("scheduled_at=10:30", result.stdout)
+            self.assertIn("grace_seconds=1800", result.stdout)
+            self.assertIn("due_at=2026-08-04T11:00:00+03:00", result.stdout)
             self.assertEqual(result.handoff_tasks, {})
             self.assertEqual(result.failure_handoff_markers, [])
 
@@ -149,7 +234,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             result = self.run_postrun_with_fake_psql(
                 ["", "", ""],
                 root=tmp,
-                now="2026-08-04T08:29:59Z",
+                now="2026-08-04T07:29:59Z",
                 extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600"},
             )
 
@@ -215,11 +300,11 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
                 ["", "", ""],
                 root=tmp,
                 now="2026-08-04T23:59:00+03:00",
-                extra_env={"EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT": "99:99"},
+                extra_env={"EARNINGS_POSTRUN_DAILY_SCHEDULE": "99:99"},
             )
 
             self.assert_missing_daily_state_config_fails_closed(result)
-            self.assertIn("invalid EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT", result.stderr)
+            self.assertIn("invalid EARNINGS_POSTRUN_DAILY_SCHEDULE", result.stderr)
 
     def test_empty_missing_run_helper_output_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
