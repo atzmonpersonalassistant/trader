@@ -3210,6 +3210,58 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("ghs_ABC123SECRET", rendered)
         self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([url_fixture])) + coding.redact_text(url_fixture))
 
+    def test_review_and_coding_redactors_cover_same_secret_forms(self):
+        review = load("trading_review_agent_redaction_parity", "agent-platform/tools/trading_review_agent.py")
+        coding = load("trading_coding_agent_redaction_parity", "agent-platform/tools/trading_coding_agent.py")
+        def fixture(*parts):
+            return "".join(parts)
+
+        bare_assignment = fixture("tok", "en", "=", "bare", "-secret", "-value")
+        colon_assignment = fixture("pass", "word", ":", " colon", "-form", "-secret", "-value")
+        quoted_assignment = fixture("tok", "en", "=", '"', "quoted", "-secret", "-value", '"')
+        api_assignment = fixture("api", "_key", "=", "'", "quoted", "-secret", "-value", "'")
+        backtick_assignment = fixture("tok", "en", "=", "`", "backtick", "-secret", "-value", "`")
+        spaced_quoted_assignment = fixture("pass", "word", "=", '"', "two", " words", " secret", '"')
+        spaced_backtick_assignment = fixture("tok", "en", "=", "`", "two", " words", " secret", "`")
+        fake_github_token = fixture("ghp", "_", "abcdefghijklmnopqrstuvwxyz123456")
+        fake_fine_grained_github_token = fixture("github", "_pat", "_", "abcdefghijklmnopqrstuvwxyz_1234567890")
+        fake_openai_token = fixture("sk", "-", "abcdefghijklmnopqrstuvwxyz123456")
+        corpus = "\n".join([
+            bare_assignment,
+            colon_assignment,
+            quoted_assignment,
+            api_assignment,
+            backtick_assignment,
+            spaced_quoted_assignment,
+            spaced_backtick_assignment,
+            fake_github_token,
+            fake_openai_token,
+            fake_fine_grained_github_token,
+            "os.environ[\"K\"]",
+            "mint_github_token(\"x\")",
+        ])
+
+        review_redacted = review.redact_text(corpus)
+        coding_redacted = coding.redact_text(corpus)
+
+        self.assertEqual(review_redacted, coding_redacted)
+        self.assertEqual(review_redacted.count("<redacted>"), 7)
+        self.assertIn("<github-token-redacted>", review_redacted)
+        self.assertIn("<openai-token-redacted>", review_redacted)
+        for secret in [
+            fixture("bare", "-secret", "-value"),
+            fixture("colon", "-form", "-secret", "-value"),
+            fixture("quoted", "-secret", "-value"),
+            fixture("backtick", "-secret", "-value"),
+            fixture("two", " words", " secret"),
+            fake_github_token,
+            fake_openai_token,
+            fake_fine_grained_github_token,
+        ]:
+            self.assertNotIn(secret, review_redacted)
+        self.assertIn("os.environ[\"K\"]", review_redacted)
+        self.assertIn("mint_github_token(\"x\")", review_redacted)
+
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         safe = review.deterministic_review({
