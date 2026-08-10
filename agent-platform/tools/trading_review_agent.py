@@ -338,7 +338,24 @@ def should_run_autoreview(context: dict[str, Any], config: dict[str, Any], deter
     labels = {label.get("name") for label in context.get("pr", {}).get("labels", [])}
     if len(files) > int(config.get("autoreview_max_changed_files") or 12):
         return True
-    sensitive_terms = ("auth", "secret", "deploy", "workflow", "risk", "trading", "ibkr", "orchestrator", "coding_agent", "review_agent")
+    sensitive_terms = (
+        "auth",
+        "secret",
+        "deploy",
+        "workflow",
+        "risk",
+        "trading",
+        "ibkr",
+        "orchestrator",
+        "coding_agent",
+        "review_agent",
+        "earnings",
+        "research",
+        "watchdog",
+        "postrun",
+        "multiyear",
+        "funnel",
+    )
     if any(any(term in filename.lower() for term in sensitive_terms) for filename in files):
         return True
     if "needs:human-approval" in labels or "human:approved" in labels:

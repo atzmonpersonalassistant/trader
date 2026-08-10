@@ -3043,6 +3043,40 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("## Autoreview", text)
         self.assertIn("FAIL", text)
 
+    def test_review_autoreview_selects_earnings_qc_pipeline_terms(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        deterministic = {"pass": True, "findings": [], "checklist": []}
+        model = {"returncode": 0, "review_text": "PASS\nLooks good"}
+        config = {"autoreview_enabled": True, "autoreview_max_changed_files": 12}
+        filenames_by_term = {
+            "earnings": "agent-platform/scripts/earnings-qc-research",
+            "research": "agent-platform/tools/trading_research_agent.py",
+            "watchdog": "agent-platform/scripts/earnings-llm-research-watchdog",
+            "postrun": "agent-platform/scripts/earnings-llm-postrun-review",
+            "multiyear": "agent-platform/scripts/earnings-qc-multiyear-backtest",
+            "funnel": "agent-platform/docs/earnings-qc-options/funnel-notes.md",
+        }
+
+        for term, filename in filenames_by_term.items():
+            with self.subTest(term=term):
+                context = {
+                    "files": [{"filename": filename}],
+                    "pr": {"labels": [], "base": {"ref": "main"}},
+                }
+                self.assertTrue(review.should_run_autoreview(context, config, deterministic, model, False))
+
+    def test_review_autoreview_still_skips_unrelated_docs_change(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        context = {
+            "files": [{"filename": "docs/operator-notes.md"}],
+            "pr": {"labels": [], "base": {"ref": "main"}},
+        }
+        deterministic = {"pass": True, "findings": [], "checklist": []}
+        model = {"returncode": 0, "review_text": "PASS\nLooks good"}
+        config = {"autoreview_enabled": True, "autoreview_max_changed_files": 12}
+
+        self.assertFalse(review.should_run_autoreview(context, config, deterministic, model, False))
+
     def test_review_autoreview_default_fails_closed_for_missing_or_incomplete_config(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         context = {
