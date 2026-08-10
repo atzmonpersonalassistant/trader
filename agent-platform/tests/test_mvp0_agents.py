@@ -770,6 +770,23 @@ class MVP0AgentTests(unittest.TestCase):
         naked_short_strangle["thesis"] = "Sell options premium on both tails."
         naked_short_strangle["structure"] = "Sell naked call and put options."
         self.assertIsNone(research.normalize_candidate_payload(naked_short_strangle, priority_floor=20))
+        naked_short_straddle = dict(parsed[0])
+        naked_short_straddle["family"] = "Straddle"
+        naked_short_straddle["thesis"] = "Write options premium around a volatility event."
+        naked_short_straddle["structure"] = "Write a call option and a put option at the same strike."
+        self.assertIsNone(research.normalize_candidate_payload(naked_short_straddle, priority_floor=20))
+        ratio_spread = dict(parsed[0])
+        ratio_spread["family"] = "Ratio Spread"
+        ratio_spread["thesis"] = "Options skew setup with attractive premium."
+        ratio_spread["structure"] = "Buy 1 call option and sell 2 higher-strike call options with the same expiry."
+        self.assertIsNone(research.normalize_candidate_payload(ratio_spread, priority_floor=20))
+        long_put = dict(parsed[0])
+        long_put["family"] = "Long Put"
+        long_put["thesis"] = "Options directional downside setup with defined max premium."
+        long_put["structure"] = "Buy one put option before expiry."
+        normalized_long_put = research.normalize_candidate_payload(long_put, priority_floor=20)
+        self.assertIsNotNone(normalized_long_put)
+        self.assertEqual(normalized_long_put.family, "long_put")
         option_butterfly = dict(parsed[0])
         option_butterfly["family"] = "Butterfly"
         option_butterfly["thesis"] = "Range-bound payoff with favorable volatility."
@@ -798,6 +815,20 @@ class MVP0AgentTests(unittest.TestCase):
         normalized_long_strangle = research.normalize_candidate_payload(long_strangle, priority_floor=20)
         self.assertIsNotNone(normalized_long_strangle)
         self.assertEqual(normalized_long_strangle.family, "strangle")
+        call_backspread = dict(parsed[0])
+        call_backspread["family"] = "Call Backspread"
+        call_backspread["thesis"] = "Options convex upside setup with defined debit risk."
+        call_backspread["structure"] = "Sell one lower-strike call option and buy two higher-strike call options with the same expiry."
+        normalized_call_backspread = research.normalize_candidate_payload(call_backspread, priority_floor=20)
+        self.assertIsNotNone(normalized_call_backspread)
+        self.assertEqual(normalized_call_backspread.family, "call_backspread")
+        put_backspread = dict(parsed[0])
+        put_backspread["family"] = "Put Backspread"
+        put_backspread["thesis"] = "Options convex downside setup with defined debit risk."
+        put_backspread["structure"] = "Sell one higher-strike put option and buy two lower-strike put options with the same expiry."
+        normalized_put_backspread = research.normalize_candidate_payload(put_backspread, priority_floor=20)
+        self.assertIsNotNone(normalized_put_backspread)
+        self.assertEqual(normalized_put_backspread.family, "put_backspread")
         self.assertNotIn("trading-research-idea-codex", Path("agent-platform/scripts/bootstrap-new-vps.sh").read_text())
         self.assertIn("call_openai_responses_api", Path("agent-platform/tools/trading_research_agent.py").read_text())
         self.assertNotIn('"--sandbox", "workspace-write"', Path("agent-platform/tools/trading_research_agent.py").read_text())
