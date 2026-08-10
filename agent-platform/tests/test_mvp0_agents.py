@@ -3210,6 +3210,43 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("ghs_ABC123SECRET", rendered)
         self.assertNotIn("ghs_ABC123SECRET", " ".join(coding.redact_command([url_fixture])) + coding.redact_text(url_fixture))
 
+    def test_review_and_coding_redactors_cover_same_secret_forms(self):
+        review = load("trading_review_agent_redaction_parity", "agent-platform/tools/trading_review_agent.py")
+        coding = load("trading_coding_agent_redaction_parity", "agent-platform/tools/trading_coding_agent.py")
+        fake_github_token = "ghp_" + "abcdefghijklmnopqrstuvwxyz123456"
+        fake_fine_grained_github_token = "github_pat_" + "abcdefghijklmnopqrstuvwxyz_1234567890"
+        fake_openai_token = "sk-" + "abcdefghijklmnopqrstuvwxyz123456"
+        corpus = "\n".join([
+            "token=bare-secret-value",
+            "password: colon-form-secret-value",
+            "token=\"quoted-secret-value\"",
+            "api_key='quoted-secret-value'",
+            fake_github_token,
+            fake_openai_token,
+            fake_fine_grained_github_token,
+            "os.environ[\"K\"]",
+            "mint_github_token(\"x\")",
+        ])
+
+        review_redacted = review.redact_text(corpus)
+        coding_redacted = coding.redact_text(corpus)
+
+        self.assertEqual(review_redacted, coding_redacted)
+        self.assertEqual(review_redacted.count("<redacted>"), 4)
+        self.assertIn("<github-token-redacted>", review_redacted)
+        self.assertIn("<openai-token-redacted>", review_redacted)
+        for secret in [
+            "bare-secret-value",
+            "colon-form-secret-value",
+            "quoted-secret-value",
+            fake_github_token,
+            fake_openai_token,
+            fake_fine_grained_github_token,
+        ]:
+            self.assertNotIn(secret, review_redacted)
+        self.assertIn("os.environ[\"K\"]", review_redacted)
+        self.assertIn("mint_github_token(\"x\")", review_redacted)
+
     def test_review_secret_detector_allows_secret_path_docs_but_blocks_literal_key(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         safe = review.deterministic_review({
