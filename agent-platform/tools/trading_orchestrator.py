@@ -37,6 +37,7 @@ DEFAULT_CODING_AGENT_CMD = os.environ.get("TRADING_CODING_AGENT_CMD", "sudo -n /
 DEFAULT_REVIEW_AGENT_CMD = os.environ.get("TRADING_REVIEW_AGENT_CMD", "sudo -n /usr/local/sbin/trading-dispatch-review-agent")
 DEFAULT_REVIEW_CHECK_NAME = os.environ.get("TRADING_REVIEW_CHECK_NAME", "review-agent/pass")
 DEFAULT_REVIEW_APP_SLUG = os.environ.get("TRADING_REVIEW_APP_SLUG", "trading-review-agent")
+FAILED_REVIEW_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required"}
 DEFAULT_MAX_REVIEW_FIX_RETRIES = int(os.environ.get("TRADING_MAX_REVIEW_FIX_RETRIES", "50"))
 
 SCHEMA = """
@@ -701,7 +702,7 @@ def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: st
         return None
     latest = sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
     if latest.get("status") == "completed" and latest.get("conclusion") == "success":
-        failed_runs = [check for check in matches if check is not latest and check.get("conclusion") == "failure"]
+        failed_runs = [check for check in matches if check is not latest and check.get("conclusion") in FAILED_REVIEW_CONCLUSIONS]
         if failed_runs:
             latest = dict(latest)
             latest["_has_failed_run_for_check_name"] = True
@@ -1051,7 +1052,7 @@ def cmd_route_review_failures(args: argparse.Namespace) -> int:
             check = latest_named_check(fetch_check_runs(args.owner, args.repo, sha, token), args.review_check_name, args.review_app_slug)
             conclusion = (check or {}).get("conclusion")
             status = (check or {}).get("status")
-            if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            if conclusion not in FAILED_REVIEW_CONCLUSIONS:
                 results.append(
                     {
                         "pr": pr_number,

@@ -2186,15 +2186,8 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("per_page=100", url)
         self.assertIn("filter=all", url)
 
-    def test_orchestrator_auto_merge_rejects_review_check_rerun_after_failure(self):
+    def test_orchestrator_auto_merge_rejects_review_check_rerun_after_failed_conclusion(self):
         orch = load("trading_orchestrator_rerun_check_gate", "agent-platform/tools/trading_orchestrator.py")
-        failed_first = {
-            "name": "review-agent/pass",
-            "status": "completed",
-            "conclusion": "failure",
-            "started_at": "2026-08-10T10:00:00Z",
-            "app": {"slug": "trading-review-agent"},
-        }
         passed_second = {
             "name": "review-agent/pass",
             "status": "completed",
@@ -2203,13 +2196,22 @@ class MVP0AgentTests(unittest.TestCase):
             "app": {"slug": "trading-review-agent"},
         }
 
-        selected = orch.latest_named_check([failed_first, passed_second], "review-agent/pass", "trading-review-agent")
+        for conclusion in ["failure", "timed_out", "cancelled", "action_required"]:
+            with self.subTest(conclusion=conclusion):
+                failed_first = {
+                    "name": "review-agent/pass",
+                    "status": "completed",
+                    "conclusion": conclusion,
+                    "started_at": "2026-08-10T10:00:00Z",
+                    "app": {"slug": "trading-review-agent"},
+                }
+                selected = orch.latest_named_check([failed_first, passed_second], "review-agent/pass", "trading-review-agent")
 
-        self.assertEqual(selected["conclusion"], "success")
-        self.assertEqual(
-            orch.is_auto_merge_candidate(["agent:pr-opened"], selected, "agent/issue-5-docs"),
-            (False, "review_check_had_failed_run"),
-        )
+                self.assertEqual(selected["conclusion"], "success")
+                self.assertEqual(
+                    orch.is_auto_merge_candidate(["agent:pr-opened"], selected, "agent/issue-5-docs"),
+                    (False, "review_check_had_failed_run"),
+                )
 
     def test_orchestrator_auto_merge_preserves_needs_fix_after_review_rerun_failure(self):
         orch = load("trading_orchestrator_rerun_label_cleanup", "agent-platform/tools/trading_orchestrator.py")
@@ -2238,10 +2240,10 @@ class MVP0AgentTests(unittest.TestCase):
                 conn.row_factory = sqlite3.Row
                 orch.upsert_pr(conn, pr, None)
 
-            failed_first = {
+            timed_out_first = {
                 "name": "review-agent/pass",
                 "status": "completed",
-                "conclusion": "failure",
+                "conclusion": "timed_out",
                 "started_at": "2026-08-10T10:00:00Z",
                 "app": {"slug": "trading-review-agent"},
             }
@@ -2265,7 +2267,7 @@ class MVP0AgentTests(unittest.TestCase):
             orch.mint_github_token = lambda cmd: "test-auth"
             orch.fetch_pr = lambda owner, repo, number, token: pr
             orch.fetch_issue_labels = lambda owner, repo, number, token: ["agent:pr-opened", "agent:needs-fix", "review-failed"]
-            orch.fetch_check_runs = lambda owner, repo, sha, token: [failed_first, passed_second]
+            orch.fetch_check_runs = lambda owner, repo, sha, token: [timed_out_first, passed_second]
             orch.remove_issue_label = lambda owner, repo, number, label, token: removed_labels.append(label)
             orch.github_graphql = lambda token, query, variables: graphql_calls.append(variables)
             args = argparse.Namespace(**{
