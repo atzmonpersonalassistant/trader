@@ -33,7 +33,7 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("POSTRUN_ALREADY_REVIEWED", text)
         self.assertIn("completed-runs", text)
 
-    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04", now=None):
+    def run_postrun_with_fake_psql(self, psql_outputs, *, root=None, date="2026-08-04", now=None, extra_env=None):
         cleanup = tempfile.TemporaryDirectory() if root is None else None
         try:
             root = Path(cleanup.name) if cleanup is not None else Path(root)
@@ -66,20 +66,20 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             script.chmod(0o755)
             (fake_bin / "flock").write_text("#!/usr/bin/env bash\nexit 0\n")
             (fake_bin / "flock").chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:/usr/bin:/bin",
+                "EARNINGS_POSTRUN_PATH_PREFIX": str(fake_bin),
+                "EARNINGS_POSTRUN_STATE_DIR": str(state_dir),
+                "EARNINGS_POSTRUN_HANDOFF_DIR": str(handoff_dir),
+                "EARNINGS_POSTRUN_REPORT_ROOT": str(report_root),
+                "EARNINGS_POSTRUN_SKILL_FILE": str(skill),
+                **({"EARNINGS_POSTRUN_NOW": now} if now is not None else {}),
+                **(extra_env or {}),
+            }
             result = subprocess.run(
                 [str(SCRIPT), "--date", date, "--dry-run"],
-                env={
-                    **os.environ,
-                    "PATH": f"{fake_bin}:/usr/bin:/bin",
-                    "EARNINGS_POSTRUN_PATH_PREFIX": str(fake_bin),
-                    "EARNINGS_POSTRUN_STATE_DIR": str(state_dir),
-                    "EARNINGS_POSTRUN_HANDOFF_DIR": str(handoff_dir),
-                    "EARNINGS_POSTRUN_REPORT_ROOT": str(report_root),
-                    "EARNINGS_POSTRUN_SKILL_FILE": str(skill),
-                    "EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600",
-                    "EARNINGS_POSTRUN_STALE_RUNNING_SECONDS": "3600",
-                    **({"EARNINGS_POSTRUN_NOW": now} if now is not None else {}),
-                },
+                env=env,
                 text=True,
                 capture_output=True,
                 check=False,
@@ -88,13 +88,22 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
                 path.name: path.read_text()
                 for path in handoff_dir.glob("*-task.txt")
             }
+            result.failure_handoff_markers = sorted(
+                path.name for path in (state_dir / "failure-handoffs").glob("*")
+            )
             return result
         finally:
             if cleanup is not None:
                 cleanup.cleanup()
 
     def test_no_finished_daily_run_writes_handoff_task(self):
-        result = self.run_postrun_with_fake_psql(["", "", ""])
+        result = self.run_postrun_with_fake_psql(
+            ["", "", ""],
+            extra_env={
+                "EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600",
+                "EARNINGS_POSTRUN_STALE_RUNNING_SECONDS": "3600",
+            },
+        )
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("NO_FINISHED_DAILY_RUN date=2026-08-04", result.stdout)
@@ -104,6 +113,80 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
         self.assertIn("date: 2026-08-04", task_text)
         self.assertIn("scheduled_at: 10:30", task_text)
         self.assertIn("grace_seconds: 3600", task_text)
+
+    def test_default_missing_run_deadline_is_1330_local(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T13:29:59+03:00",
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+            self.assertIn("scheduled_at=10:30", result.stdout)
+            self.assertIn("grace_seconds=10800", result.stdout)
+            self.assertIn("due_at=2026-08-04T13:30:00+03:00", result.stdout)
+            self.assertNotIn("NO_FINISHED_DAILY_RUN", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_no_finished_daily_run_before_deadline_does_not_write_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T08:29:59Z",
+                extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600"},
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("DAILY_RUN_NOT_DUE_YET date=2026-08-04", result.stdout)
+            self.assertIn("due_at=2026-08-04T11:30:00+03:00", result.stdout)
+            self.assertNotIn("HANDOFF_TASK_", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
+
+    def test_no_finished_daily_run_after_deadline_writes_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.run_postrun_with_fake_psql(
+                ["", "", ""],
+                root=tmp,
+                now="2026-08-04T11:30:00+03:00",
+                extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600"},
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("HANDOFF_TASK_WRITTEN condition=NO_FINISHED_DAILY_RUN", result.stdout)
+            self.assertIn("NO_FINISHED_DAILY_RUN date=2026-08-04", result.stdout)
+            self.assertIn("due_at=2026-08-04T11:30:00+03:00", result.stdout)
+            self.assertEqual(len(result.handoff_tasks), 1)
+            self.assertEqual(result.failure_handoff_markers, ["20260804-NO_FINISHED_DAILY_RUN"])
+
+    def test_finished_daily_run_before_missing_deadline_uses_normal_review_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            (run_dir / "full_summary.json").write_text("{}\n")
+            row = (
+                "earnings-qc-options-scan-full-20260804-073000-attempt-1\t"
+                "completed\tNO_FINAL_CANDIDATES_AFTER_HISTORICAL_OPTION_PNL\t"
+                f"2026-08-04 07:35:00+00\t{run_dir}\t0\tliquidity\t\n"
+            )
+            result = self.run_postrun_with_fake_psql(
+                ["", "", row],
+                root=tmp,
+                now="2026-08-04T09:29:59Z",
+                extra_env={"EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS": "3600"},
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("WOULD_RUN run_id=earnings-qc-options-scan-full-20260804-073000-attempt-1", result.stdout)
+            self.assertNotIn("DAILY_RUN_NOT_DUE_YET", result.stdout)
+            self.assertNotIn("NO_FINISHED_DAILY_RUN", result.stdout)
+            self.assertEqual(result.handoff_tasks, {})
+            self.assertEqual(result.failure_handoff_markers, [])
 
     def test_retry_waiting_daily_run_blocks_transient_failed_attempt_review(self):
         result = self.run_postrun_with_fake_psql([
@@ -119,9 +202,9 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
 
     def test_no_finished_daily_run_handoff_is_deduped_by_date_and_condition(self):
         with tempfile.TemporaryDirectory() as tmp:
-            first = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
-            second = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
-            third = self.run_postrun_with_fake_psql(["", "", ""], root=tmp)
+            first = self.run_postrun_with_fake_psql(["", "", ""], root=tmp, now="2026-08-04T13:30:00+03:00")
+            second = self.run_postrun_with_fake_psql(["", "", ""], root=tmp, now="2026-08-04T13:30:00+03:00")
+            third = self.run_postrun_with_fake_psql(["", "", ""], root=tmp, now="2026-08-04T13:30:00+03:00")
             next_day = self.run_postrun_with_fake_psql(["", "", ""], root=tmp, date="2026-08-05")
 
             self.assertEqual(first.returncode, 0)
