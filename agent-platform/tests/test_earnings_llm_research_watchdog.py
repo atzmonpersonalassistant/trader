@@ -274,6 +274,26 @@ class EarningsLlmResearchWatchdogTests(unittest.TestCase):
         self.assertIn("schedule_source=env", result.stdout)
         self.assertNotIn("value too great for base", result.stderr)
 
+    def test_missing_daily_row_rejects_loose_env_schedule(self):
+        for schedule in ("10", "10:3", "9:5"):
+            with self.subTest(schedule=schedule):
+                result = self.run_watchdog_with_fake_psql(
+                    ["", ""],
+                    now="2026-08-04T08:00:00+00:00",
+                    schedule=schedule,
+                    schedule_zone="UTC",
+                    timer_calendar="{ OnCalendar=*-*-* 07:30:00 Europe/London ; next_elapse=Tue 2026-08-04 06:30:00 UTC }",
+                )
+
+                self.assertEqual(result.returncode, 70)
+                self.assertIn("invalid EARNINGS_WATCHDOG_DAILY_SCHEDULE", result.stderr)
+                self.assertIn("failed to compute watchdog daily run schedule", result.stderr)
+                self.assertNotIn("DAILY_RUN_NOT_DUE_YET", result.stdout)
+                self.assertNotIn("DAILY_RUN_MISSING_WITHIN_GRACE", result.stdout)
+                self.assertNotIn("DAILY_RUN_MISSING_AFTER_DEADLINE", result.stderr)
+                self.assertEqual(result.systemctl_call_count, 0)
+                self.assertEqual(result.handoff_tasks, {})
+
     def test_missing_daily_row_default_schedule_matches_managed_timer_zone(self):
         result = self.run_watchdog_with_fake_psql(
             ["", ""],
