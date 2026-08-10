@@ -689,9 +689,13 @@ def append_label_json(labels_json: str | None, label: str) -> str:
 
 def fetch_check_runs(owner: str, repo: str, sha: str, token: str) -> list[dict[str, Any]]:
     query = urllib.parse.urlencode({"per_page": "100", "filter": "all"})
-    url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
-    data, _ = github_api_get(url, token)
-    return data.get("check_runs", [])
+    url: str | None = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
+    check_runs: list[dict[str, Any]] = []
+    while url:
+        data, headers = github_api_get(url, token)
+        check_runs.extend(data.get("check_runs", []))
+        url = parse_next_link(headers.get("link"))
+    return check_runs
 
 
 def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: str | None = None) -> dict[str, Any] | None:

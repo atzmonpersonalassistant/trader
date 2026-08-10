@@ -2178,13 +2178,23 @@ class MVP0AgentTests(unittest.TestCase):
 
     def test_orchestrator_fetch_check_runs_requests_all_runs(self):
         orch = load("trading_orchestrator_fetch_all_check_runs", "agent-platform/tools/trading_orchestrator.py")
-        with mock.patch.object(orch, "github_api_get", return_value=({"check_runs": []}, {})) as github_get:
-            self.assertEqual(orch.fetch_check_runs("owner", "repo", "abc123", "token"), [])
+        page_2 = "https://api.github.com/repos/owner/repo/commits/abc123/check-runs?page=2"
+        with mock.patch.object(
+            orch,
+            "github_api_get",
+            side_effect=[
+                ({"check_runs": [{"id": 1}]}, {"link": f'<{page_2}>; rel="next"'}),
+                ({"check_runs": [{"id": 2}]}, {}),
+            ],
+        ) as github_get:
+            self.assertEqual(orch.fetch_check_runs("owner", "repo", "abc123", "token"), [{"id": 1}, {"id": 2}])
 
         url = github_get.call_args.args[0]
-        self.assertIn("/repos/owner/repo/commits/abc123/check-runs?", url)
-        self.assertIn("per_page=100", url)
-        self.assertIn("filter=all", url)
+        first_url = github_get.call_args_list[0].args[0]
+        self.assertIn("/repos/owner/repo/commits/abc123/check-runs?", first_url)
+        self.assertIn("per_page=100", first_url)
+        self.assertIn("filter=all", first_url)
+        self.assertEqual(url, page_2)
 
     def test_orchestrator_auto_merge_rejects_review_check_rerun_after_failed_conclusion(self):
         orch = load("trading_orchestrator_rerun_check_gate", "agent-platform/tools/trading_orchestrator.py")
