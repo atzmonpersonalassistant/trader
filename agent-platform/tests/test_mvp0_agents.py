@@ -2309,6 +2309,109 @@ class MVP0AgentTests(unittest.TestCase):
                     orch.github_graphql,
                 ) = originals
 
+    def test_orchestrator_routes_historical_failed_review_rerun(self):
+        orch = load("trading_orchestrator_rerun_failure_route", "agent-platform/tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import sqlite3
+
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            issue = {"id": 5900, "number": 59, "state": "open", "title": "Fix routed PR", "labels": [{"name": "agent:ready"}]}
+            pr = {
+                "id": 5901,
+                "node_id": "PR_node_59",
+                "number": 59,
+                "state": "open",
+                "title": "Rerun Agent PR",
+                "head": {
+                    "ref": "agent/issue-59-test",
+                    "sha": "abc123",
+                    "repo": {"full_name": "atzmonpersonalassistant/trader"},
+                },
+                "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            }
+            with sqlite3.connect(db) as conn:
+                conn.row_factory = sqlite3.Row
+                orch.upsert_issue(conn, issue)
+                orch.upsert_pr(conn, pr, str(issue["id"]))
+
+            timed_out_first = {
+                "name": "review-agent/pass",
+                "status": "completed",
+                "conclusion": "timed_out",
+                "started_at": "2026-08-10T10:00:00Z",
+                "app": {"slug": "trading-review-agent"},
+            }
+            passed_second = {
+                "name": "review-agent/pass",
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "2026-08-10T10:05:00Z",
+                "app": {"slug": "trading-review-agent"},
+            }
+            added_labels = []
+            commands = []
+
+            class Proc:
+                returncode = 0
+                stdout = "fix dispatched"
+                stderr = ""
+
+            originals = (
+                orch.mint_github_token,
+                orch.fetch_issue_labels,
+                orch.fetch_check_runs,
+                orch.add_issue_label,
+                orch.subprocess.run,
+            )
+            orch.mint_github_token = lambda cmd: "test-auth"
+            orch.fetch_issue_labels = lambda owner, repo, number, token: ["agent:pr-opened"]
+            orch.fetch_check_runs = lambda owner, repo, sha, token: [timed_out_first, passed_second]
+            orch.add_issue_label = lambda owner, repo, number, label, token: added_labels.append(label)
+
+            def fake_run(cmd, text, capture_output, timeout):
+                commands.append(cmd)
+                return Proc()
+
+            orch.subprocess.run = fake_run
+            args = argparse.Namespace(**{
+                "db": db,
+                "token_cmd": "test-auth-command",
+                "owner": "atzmonpersonalassistant",
+                "repo": "trader",
+                "review_check_name": "review-agent/pass",
+                "review_app_slug": "trading-review-agent",
+                "coding_agent_cmd": "coding-wrapper",
+                "max_review_fix_retries": 3,
+                "timeout_seconds": 10,
+            })
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_route_review_failures(args), 0)
+                result = json.loads(out.getvalue())
+                self.assertTrue(result["results"][0]["routed"])
+                self.assertEqual(added_labels, ["agent:needs-fix"])
+                self.assertEqual(commands, [["coding-wrapper", "run", "--issue", "59", "--fix-pr", "59"]])
+                with sqlite3.connect(db) as conn:
+                    labels_json = conn.execute("SELECT labels FROM pull_requests WHERE number=59").fetchone()[0]
+                    event_payload = conn.execute(
+                        "SELECT payload_json FROM events WHERE event_type='review_failure_routed'"
+                    ).fetchone()[0]
+                self.assertEqual(set(json.loads(labels_json)), {"agent:needs-fix", "agent:pr-opened", "review-failed"})
+                self.assertEqual(json.loads(event_payload)["check"]["conclusion"], "timed_out")
+            finally:
+                (
+                    orch.mint_github_token,
+                    orch.fetch_issue_labels,
+                    orch.fetch_check_runs,
+                    orch.add_issue_label,
+                    orch.subprocess.run,
+                ) = originals
+
     def test_coding_agent_fix_prompt_includes_review_context(self):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
         prompt = agent.build_prompt(
