@@ -1657,12 +1657,17 @@ SELECT json_build_object(
             freed += size_before
             deleted.append(item)
     cleanup_error = json.dumps(failed, ensure_ascii=False) if failed else None
+    audit_policy = dict(policy)
     audit_deleted = deleted
     audit_freed = freed
+    if not args.dry_run:
+        audit_policy.update({'planned_paths': deleted, 'planned_bytes': freed})
+        audit_deleted = []
+        audit_freed = 0
     audit_error = cleanup_error if args.dry_run else 'CLEANUP_IN_PROGRESS'
     try:
         db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes,error)
-VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(policy)}, {sql_lit(json.dumps(audit_deleted, ensure_ascii=False))}::jsonb, {audit_freed}, {sql_lit(audit_error)});""")
+VALUES ({sql_lit(cid)}, now(), {'TRUE' if args.dry_run else 'FALSE'}, {sql_json(audit_policy)}, {sql_lit(json.dumps(audit_deleted, ensure_ascii=False))}::jsonb, {audit_freed}, {sql_lit(audit_error)});""")
     except Exception:
         for original, staged_path, _size_before in reversed(staged):
             if staged_path.exists() and not original.exists():
