@@ -859,9 +859,14 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         insert_sql = calls[1]
         self.assertIn("INSERT INTO earnings_cache.cleanup_runs", insert_sql)
         self.assertIn(str(old_scan), insert_sql)
+        self.assertIn("planned_paths", insert_sql)
+        self.assertIn("planned_bytes", insert_sql)
         self.assertIn('"bytes": 3', insert_sql)
+        self.assertIn("'[]'::jsonb, 0, 'CLEANUP_IN_PROGRESS'", insert_sql)
         self.assertIn("CLEANUP_IN_PROGRESS", insert_sql)
         self.assertIn("UPDATE earnings_cache.cleanup_runs", calls[2])
+        self.assertIn(str(old_scan), calls[2])
+        self.assertIn("freed_bytes = 3", calls[2])
 
     def test_cleanup_error_column_has_additive_migration(self):
         mod = load_script("earnings-qc-research")
