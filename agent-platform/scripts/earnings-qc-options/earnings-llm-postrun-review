@@ -60,6 +60,8 @@ Earnings postrun review could not find a finished deterministic daily run.
 condition: $condition
 date: $DATE
 scheduled_at: ${DAILY_RUN_SCHEDULED_AT:-unknown}
+schedule_zone: ${DAILY_RUN_ZONE:-unknown}
+schedule_source: ${DAILY_RUN_SOURCE:-unknown}
 grace_seconds: ${MISSING_RUN_GRACE_SECONDS:-unknown}
 threshold_seconds: ${STALE_RUNNING_SECONDS:-unknown}
 
@@ -85,16 +87,12 @@ TASK
 }
 
 missing_daily_run_state() {
-  python3 - "$DATE" "$DAILY_RUN_SCHEDULED_AT" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_POSTRUN_NOW:-}" <<'PY'
+  python3 - "$DATE" "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE" "$DAILY_RUN_ZONE" "$MISSING_RUN_GRACE_SECONDS" "${EARNINGS_POSTRUN_NOW:-}" <<'PY'
 import datetime as dt
-import re
 import sys
 from zoneinfo import ZoneInfo
 
-date_s, scheduled_at_s, grace_s, now_s = sys.argv[1:5]
-match = re.fullmatch(r"([01][0-9]|2[0-3]):([0-5][0-9])", scheduled_at_s)
-if not match:
-    raise SystemExit(f"invalid EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT: {scheduled_at_s!r}")
+date_s, hour_s, minute_s, zone_s, grace_s, now_s = sys.argv[1:7]
 try:
     grace = int(grace_s)
 except ValueError:
@@ -102,11 +100,10 @@ except ValueError:
 if grace < 0:
     raise SystemExit("EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS must be non-negative")
 
-tz = ZoneInfo("Asia/Jerusalem")
+tz = ZoneInfo(zone_s)
 run_date = dt.date.fromisoformat(date_s)
-hour, minute = (int(part) for part in match.groups())
-scheduled_at = dt.datetime.combine(run_date, dt.time(hour, minute), tzinfo=tz)
-due_at = scheduled_at + dt.timedelta(seconds=grace)
+due_at = dt.datetime.combine(run_date, dt.time(int(hour_s), int(minute_s)), tzinfo=tz)
+deadline = due_at + dt.timedelta(seconds=grace)
 if now_s:
     now = dt.datetime.fromisoformat(now_s.replace("Z", "+00:00"))
     if now.tzinfo is None:
@@ -116,9 +113,64 @@ if now_s:
 else:
     now = dt.datetime.now(tz)
 
-state = "after_deadline" if now >= due_at else "pre_deadline"
-print(f"{state}|{due_at.isoformat()}")
+if now < due_at:
+    state = "not_due"
+elif now < deadline:
+    state = "within_grace"
+else:
+    state = "after_deadline"
+print(f"{state}|{deadline.isoformat()}")
 PY
+}
+
+daily_run_schedule() {
+  local schedule minute hour minute_i hour_i zone timer_calendar parsed
+  zone="${EARNINGS_POSTRUN_DAILY_SCHEDULE_ZONE:-$DAILY_RUN_DEFAULT_ZONE}"
+  if [[ -n "${EARNINGS_POSTRUN_DAILY_SCHEDULE:-${EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT:-}}" ]]; then
+    schedule="${EARNINGS_POSTRUN_DAILY_SCHEDULE:-${EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT:-}}"
+    minute="${schedule##*:}"
+    hour="${schedule%%:*}"
+    if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ ]]; then
+      minute_i=$((10#$minute))
+      hour_i=$((10#$hour))
+      if (( minute_i <= 59 && hour_i <= 23 )); then
+        printf '%s|%s|%s|%s\n' "$minute_i" "$hour_i" "$zone" "env"
+        return
+      fi
+    fi
+    echo "ERROR: invalid EARNINGS_POSTRUN_DAILY_SCHEDULE for missing daily run schedule: $schedule" >&2
+    return 70
+  fi
+
+  if command -v systemctl >/dev/null 2>&1; then
+    timer_calendar="$(systemctl show trader-earnings-otm-daily.timer -p TimersCalendar --value 2>/dev/null || true)"
+    if [[ -n "$timer_calendar" ]]; then
+      parsed="$(python3 - "$timer_calendar" <<'PY'
+import re
+import sys
+
+text = sys.argv[1]
+match = re.search(r'(?:OnCalendar=)?[^;\n]*?\b([0-9]{1,2}):([0-9]{2})(?::[0-9]{2})?\s+([A-Za-z_]+/[A-Za-z_]+)\b', text)
+if match:
+    hour, minute, zone = match.groups()
+    print(f"{int(minute)}|{int(hour)}|{zone}")
+PY
+)"
+      if [[ -n "$parsed" ]]; then
+        IFS='|' read -r minute hour zone <<< "$parsed"
+        if [[ "$minute" =~ ^[0-9]+$ && "$hour" =~ ^[0-9]+$ ]]; then
+          minute_i=$((10#$minute))
+          hour_i=$((10#$hour))
+          if (( minute_i <= 59 && hour_i <= 23 )) && [[ -n "$zone" ]]; then
+            printf '%s|%s|%s|%s\n' "$minute_i" "$hour_i" "$zone" "systemd"
+            return
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  printf '%s|%s|%s|%s\n' "$DAILY_RUN_DEFAULT_MINUTE" "$DAILY_RUN_DEFAULT_HOUR" "$DAILY_RUN_DEFAULT_ZONE" "fallback"
 }
 
 
@@ -145,10 +197,19 @@ STATE_DIR="${EARNINGS_POSTRUN_STATE_DIR:-/agents/research/state/earnings-qc-rese
 HANDOFF_DIR="${EARNINGS_POSTRUN_HANDOFF_DIR:-/agents/research/handoff}"
 REPORT_ROOT="${EARNINGS_POSTRUN_REPORT_ROOT:-/agents/research/reports}"
 SKILL_FILE="${EARNINGS_POSTRUN_SKILL_FILE:-/agents/research/skills/trader-research-system/SKILL.md}"
-DAILY_RUN_SCHEDULED_AT="${EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT:-10:30}"
-MISSING_RUN_GRACE_SECONDS="${EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS:-10800}"
+MISSING_RUN_GRACE_SECONDS="${EARNINGS_POSTRUN_MISSING_RUN_GRACE_SECONDS:-${EARNINGS_WATCHDOG_MISSING_RUN_GRACE_SECONDS:-10800}}"
 STALE_RUNNING_SECONDS="${EARNINGS_POSTRUN_STALE_RUNNING_SECONDS:-10800}"
 LOCK="${STATE_DIR}/earnings-llm-postrun-review.lock"
+# Fallback for the managed systemd timer in .github/workflows/vps-deploy.yml:
+# OnCalendar=*-*-* 10:30:00 Asia/Jerusalem
+DAILY_RUN_DEFAULT_MINUTE=30
+DAILY_RUN_DEFAULT_HOUR=10
+DAILY_RUN_DEFAULT_ZONE="Asia/Jerusalem"
+if ! DAILY_RUN_SCHEDULE_RAW="$(daily_run_schedule)"; then
+  exit 70
+fi
+IFS='|' read -r DAILY_RUN_MINUTE DAILY_RUN_HOUR DAILY_RUN_ZONE DAILY_RUN_SOURCE <<< "$DAILY_RUN_SCHEDULE_RAW"
+DAILY_RUN_SCHEDULED_AT="$(printf '%02d:%02d' "$DAILY_RUN_HOUR" "$DAILY_RUN_MINUTE")"
 mkdir -p "$STATE_DIR" "$HANDOFF_DIR" "$REPORT_ROOT"
 
 # User-requested behavior: if a postrun review is already running, do nothing.
@@ -245,18 +306,22 @@ fi
 
 if [[ -z "$ROW" ]]; then
   if ! MISSING_ROW_RAW="$(missing_daily_run_state)"; then
-    echo "ERROR: failed to compute missing daily run deadline date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
+    echo "ERROR: failed to compute missing daily run deadline date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
     exit 70
   fi
   IFS='|' read -r MISSING_ROW_STATE MISSING_RUN_DUE_AT <<< "$MISSING_ROW_RAW"
   case "$MISSING_ROW_STATE" in
-    pre_deadline)
-      echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+    not_due)
+      echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+      exit 0
+      ;;
+    within_grace)
+      echo "DAILY_RUN_MISSING_WITHIN_GRACE date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
       exit 0
       ;;
     after_deadline)
       write_no_finished_run_handoff_task
-      echo "NO_FINISHED_DAILY_RUN date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+      echo "NO_FINISHED_DAILY_RUN date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=$DAILY_RUN_ZONE schedule_source=$DAILY_RUN_SOURCE grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
       exit 0
       ;;
     *)
