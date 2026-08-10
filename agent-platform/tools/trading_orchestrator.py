@@ -687,7 +687,7 @@ def append_label_json(labels_json: str | None, label: str) -> str:
 
 
 def fetch_check_runs(owner: str, repo: str, sha: str, token: str) -> list[dict[str, Any]]:
-    query = urllib.parse.urlencode({"per_page": "100"})
+    query = urllib.parse.urlencode({"per_page": "100", "filter": "all"})
     url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}/check-runs?{query}"
     data, _ = github_api_get(url, token)
     return data.get("check_runs", [])
@@ -699,7 +699,22 @@ def latest_named_check(check_runs: list[dict[str, Any]], name: str, app_slug: st
         matches = [check for check in matches if ((check.get("app") or {}).get("slug") == app_slug)]
     if not matches:
         return None
-    return sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+    latest = sorted(matches, key=lambda c: c.get("started_at") or c.get("created_at") or "", reverse=True)[0]
+    if latest.get("status") == "completed" and latest.get("conclusion") == "success":
+        failed_runs = [check for check in matches if check is not latest and check.get("conclusion") == "failure"]
+        if failed_runs:
+            latest = dict(latest)
+            latest["_has_failed_run_for_check_name"] = True
+    return latest
+
+
+def is_clean_review_success(review_check: dict[str, Any] | None) -> bool:
+    return bool(
+        review_check
+        and review_check.get("status") == "completed"
+        and review_check.get("conclusion") == "success"
+        and not review_check.get("_has_failed_run_for_check_name")
+    )
 
 
 def add_issue_label(owner: str, repo: str, issue_number: int, label: str, token: str) -> None:
@@ -808,7 +823,9 @@ def is_auto_merge_candidate(labels: list[str], review_check: dict[str, Any] | No
         return False, "blocked"
     if not review_check:
         return False, "missing_review_check"
-    if review_check.get("status") != "completed" or review_check.get("conclusion") != "success":
+    if review_check.get("_has_failed_run_for_check_name"):
+        return False, "review_check_had_failed_run"
+    if not is_clean_review_success(review_check):
         return False, "review_not_successful"
     return True, "ok"
 
@@ -924,7 +941,7 @@ def cmd_enable_auto_merge(args: argparse.Namespace) -> int:
                 )
                 results.append({"pr": pr_number, "enabled": False, "skipped": True, "reason": "untrusted_pr", "event": event_id})
                 continue
-            if (review_check or {}).get("status") == "completed" and (review_check or {}).get("conclusion") == "success" and "agent:needs-fix" in labels:
+            if is_clean_review_success(review_check) and "agent:needs-fix" in labels:
                 try:
                     remove_issue_label(args.owner, args.repo, pr_number, "agent:needs-fix", token)
                 except urllib.error.HTTPError as exc:

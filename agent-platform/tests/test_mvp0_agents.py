@@ -2168,13 +2168,134 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertTrue(orch.is_trusted_agent_pr(same_repo_pr))
         self.assertFalse(orch.is_trusted_agent_pr(fork_pr))
         self.assertFalse(orch.is_trusted_agent_pr({"head": {"ref": "docs/manual-pr"}}))
+        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None, "agent/issue-5-docs"), (False, "missing_review_check"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "agent/issue-5-docs"), (True, "ok"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], passing, "docs/manual-pr"), (False, "untrusted_branch"))
         self.assertEqual(orch.is_auto_merge_candidate([], passing, "agent/issue-5-docs"), (False, "missing_agent_pr_opened"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:needs-fix"], passing, "agent/issue-5-docs"), (False, "needs_fix"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened", "agent:blocked"], passing, "agent/issue-5-docs"), (False, "blocked"))
         self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], failing, "agent/issue-5-docs"), (False, "review_not_successful"))
-        self.assertEqual(orch.is_auto_merge_candidate(["agent:pr-opened"], None, "agent/issue-5-docs"), (False, "missing_review_check"))
+
+    def test_orchestrator_fetch_check_runs_requests_all_runs(self):
+        orch = load("trading_orchestrator_fetch_all_check_runs", "agent-platform/tools/trading_orchestrator.py")
+        with mock.patch.object(orch, "github_api_get", return_value=({"check_runs": []}, {})) as github_get:
+            self.assertEqual(orch.fetch_check_runs("owner", "repo", "abc123", "token"), [])
+
+        url = github_get.call_args.args[0]
+        self.assertIn("/repos/owner/repo/commits/abc123/check-runs?", url)
+        self.assertIn("per_page=100", url)
+        self.assertIn("filter=all", url)
+
+    def test_orchestrator_auto_merge_rejects_review_check_rerun_after_failure(self):
+        orch = load("trading_orchestrator_rerun_check_gate", "agent-platform/tools/trading_orchestrator.py")
+        failed_first = {
+            "name": "review-agent/pass",
+            "status": "completed",
+            "conclusion": "failure",
+            "started_at": "2026-08-10T10:00:00Z",
+            "app": {"slug": "trading-review-agent"},
+        }
+        passed_second = {
+            "name": "review-agent/pass",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-08-10T10:05:00Z",
+            "app": {"slug": "trading-review-agent"},
+        }
+
+        selected = orch.latest_named_check([failed_first, passed_second], "review-agent/pass", "trading-review-agent")
+
+        self.assertEqual(selected["conclusion"], "success")
+        self.assertEqual(
+            orch.is_auto_merge_candidate(["agent:pr-opened"], selected, "agent/issue-5-docs"),
+            (False, "review_check_had_failed_run"),
+        )
+
+    def test_orchestrator_auto_merge_preserves_needs_fix_after_review_rerun_failure(self):
+        orch = load("trading_orchestrator_rerun_label_cleanup", "agent-platform/tools/trading_orchestrator.py")
+        import argparse
+        import contextlib
+        import io
+        import sqlite3
+
+        with TemporaryDirectory() as tmp:
+            db = Path(tmp) / "state.db"
+            orch.init_db(db)
+            pr = {
+                "id": 5800,
+                "node_id": "PR_node_58",
+                "number": 58,
+                "state": "open",
+                "title": "Rerun Agent PR",
+                "head": {
+                    "ref": "agent/issue-58-test",
+                    "sha": "abc123",
+                    "repo": {"full_name": "atzmonpersonalassistant/trader"},
+                },
+                "base": {"repo": {"full_name": "atzmonpersonalassistant/trader"}},
+            }
+            with sqlite3.connect(db) as conn:
+                conn.row_factory = sqlite3.Row
+                orch.upsert_pr(conn, pr, None)
+
+            failed_first = {
+                "name": "review-agent/pass",
+                "status": "completed",
+                "conclusion": "failure",
+                "started_at": "2026-08-10T10:00:00Z",
+                "app": {"slug": "trading-review-agent"},
+            }
+            passed_second = {
+                "name": "review-agent/pass",
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "2026-08-10T10:05:00Z",
+                "app": {"slug": "trading-review-agent"},
+            }
+            removed_labels = []
+            graphql_calls = []
+            originals = (
+                orch.mint_github_token,
+                orch.fetch_pr,
+                orch.fetch_issue_labels,
+                orch.fetch_check_runs,
+                orch.remove_issue_label,
+                orch.github_graphql,
+            )
+            orch.mint_github_token = lambda cmd: "test-auth"
+            orch.fetch_pr = lambda owner, repo, number, token: pr
+            orch.fetch_issue_labels = lambda owner, repo, number, token: ["agent:pr-opened", "agent:needs-fix", "review-failed"]
+            orch.fetch_check_runs = lambda owner, repo, sha, token: [failed_first, passed_second]
+            orch.remove_issue_label = lambda owner, repo, number, label, token: removed_labels.append(label)
+            orch.github_graphql = lambda token, query, variables: graphql_calls.append(variables)
+            args = argparse.Namespace(**{
+                "db": db,
+                "token_cmd": "test-auth-command",
+                "owner": "atzmonpersonalassistant",
+                "repo": "trader",
+                "review_check_name": "review-agent/pass",
+                "review_app_slug": "trading-review-agent",
+            })
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(orch.cmd_enable_auto_merge(args), 0)
+                result = json.loads(out.getvalue())
+                self.assertEqual(result["results"][0]["reason"], "needs_fix")
+                self.assertEqual(removed_labels, [])
+                self.assertEqual(graphql_calls, [])
+                with sqlite3.connect(db) as conn:
+                    labels_json = conn.execute("SELECT labels FROM pull_requests WHERE number=58").fetchone()[0]
+                self.assertEqual(set(json.loads(labels_json)), {"agent:needs-fix", "agent:pr-opened", "review-failed"})
+            finally:
+                (
+                    orch.mint_github_token,
+                    orch.fetch_pr,
+                    orch.fetch_issue_labels,
+                    orch.fetch_check_runs,
+                    orch.remove_issue_label,
+                    orch.github_graphql,
+                ) = originals
 
     def test_coding_agent_fix_prompt_includes_review_context(self):
         agent = load("trading_coding_agent", "agent-platform/tools/trading_coding_agent.py")
