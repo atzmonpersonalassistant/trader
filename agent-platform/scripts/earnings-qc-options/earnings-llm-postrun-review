@@ -244,14 +244,26 @@ if [[ -z "$ROW" ]]; then
 fi
 
 if [[ -z "$ROW" ]]; then
-  IFS='|' read -r MISSING_ROW_STATE MISSING_RUN_DUE_AT <<< "$(missing_daily_run_state)"
-  if [[ "$MISSING_ROW_STATE" != "after_deadline" ]]; then
-    echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
-    exit 0
+  if ! MISSING_ROW_RAW="$(missing_daily_run_state)"; then
+    echo "ERROR: failed to compute missing daily run deadline date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS" >&2
+    exit 70
   fi
-  write_no_finished_run_handoff_task
-  echo "NO_FINISHED_DAILY_RUN date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
-  exit 0
+  IFS='|' read -r MISSING_ROW_STATE MISSING_RUN_DUE_AT <<< "$MISSING_ROW_RAW"
+  case "$MISSING_ROW_STATE" in
+    pre_deadline)
+      echo "DAILY_RUN_NOT_DUE_YET date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+      exit 0
+      ;;
+    after_deadline)
+      write_no_finished_run_handoff_task
+      echo "NO_FINISHED_DAILY_RUN date=$DATE scheduled_at=$DAILY_RUN_SCHEDULED_AT schedule_zone=Asia/Jerusalem grace_seconds=$MISSING_RUN_GRACE_SECONDS due_at=$MISSING_RUN_DUE_AT"
+      exit 0
+      ;;
+    *)
+      echo "ERROR: invalid missing daily run state date=$DATE state=${MISSING_ROW_STATE:-<empty>} due_at=${MISSING_RUN_DUE_AT:-<empty>}" >&2
+      exit 70
+      ;;
+  esac
 fi
 
 IFS=$'\t' read -r RUN_ID RUN_STATUS RESEARCH_VERDICT FINISHED_AT RUN_DIR FINAL_COUNT BOTTLENECK RUN_ERROR <<< "$ROW"
