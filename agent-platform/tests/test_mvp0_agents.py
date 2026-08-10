@@ -2223,6 +2223,33 @@ class MVP0AgentTests(unittest.TestCase):
                     (False, "review_check_had_failed_run"),
                 )
 
+    def test_orchestrator_auto_merge_allows_neutral_and_skipped_review_reruns(self):
+        orch = load("trading_orchestrator_rerun_allowed_controls", "agent-platform/tools/trading_orchestrator.py")
+        passed_second = {
+            "name": "review-agent/pass",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-08-10T10:05:00Z",
+            "app": {"slug": "trading-review-agent"},
+        }
+
+        for conclusion in ["neutral", "skipped"]:
+            with self.subTest(conclusion=conclusion):
+                allowed_first = {
+                    "name": "review-agent/pass",
+                    "status": "completed",
+                    "conclusion": conclusion,
+                    "started_at": "2026-08-10T10:00:00Z",
+                    "app": {"slug": "trading-review-agent"},
+                }
+                selected = orch.latest_named_check([allowed_first, passed_second], "review-agent/pass", "trading-review-agent")
+
+                self.assertEqual(selected["conclusion"], "success")
+                self.assertEqual(
+                    orch.is_auto_merge_candidate(["agent:pr-opened"], selected, "agent/issue-5-docs"),
+                    (True, "ok"),
+                )
+
     def test_orchestrator_auto_merge_preserves_needs_fix_after_review_rerun_failure(self):
         orch = load("trading_orchestrator_rerun_label_cleanup", "agent-platform/tools/trading_orchestrator.py")
         import argparse
