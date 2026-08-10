@@ -155,7 +155,7 @@ def slugify(text: str, max_len: int = 40) -> str:
 def redact_text(text: str) -> str:
     text = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", text)
     text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", "<private-key-redacted>", text, flags=re.S)
-    text = re.sub(r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*(?:['\"][^'\"\s]+['\"]|`[^`\s]+`|[^\s`'\"]+)", r"\1=<redacted>", text)
+    text = re.sub(r"(?i)(api[_-]?key|password|secret|token)\s*[:=]\s*(?:['\"][^'\"\r\n]+['\"]|`[^`\r\n]+`|[^\s`'\"]+)", r"\1=<redacted>", text)
     text = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "<github-token-redacted>", text)
     text = re.sub(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b", "<github-token-redacted>", text)
     text = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}\b", "<openai-token-redacted>", text)

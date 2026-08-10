@@ -3221,6 +3221,8 @@ class MVP0AgentTests(unittest.TestCase):
         quoted_assignment = fixture("tok", "en", "=", '"', "quoted", "-secret", "-value", '"')
         api_assignment = fixture("api", "_key", "=", "'", "quoted", "-secret", "-value", "'")
         backtick_assignment = fixture("tok", "en", "=", "`", "backtick", "-secret", "-value", "`")
+        spaced_quoted_assignment = fixture("pass", "word", "=", '"', "two", " words", " secret", '"')
+        spaced_backtick_assignment = fixture("tok", "en", "=", "`", "two", " words", " secret", "`")
         fake_github_token = fixture("ghp", "_", "abcdefghijklmnopqrstuvwxyz123456")
         fake_fine_grained_github_token = fixture("github", "_pat", "_", "abcdefghijklmnopqrstuvwxyz_1234567890")
         fake_openai_token = fixture("sk", "-", "abcdefghijklmnopqrstuvwxyz123456")
@@ -3230,6 +3232,8 @@ class MVP0AgentTests(unittest.TestCase):
             quoted_assignment,
             api_assignment,
             backtick_assignment,
+            spaced_quoted_assignment,
+            spaced_backtick_assignment,
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
@@ -3241,7 +3245,7 @@ class MVP0AgentTests(unittest.TestCase):
         coding_redacted = coding.redact_text(corpus)
 
         self.assertEqual(review_redacted, coding_redacted)
-        self.assertEqual(review_redacted.count("<redacted>"), 5)
+        self.assertEqual(review_redacted.count("<redacted>"), 7)
         self.assertIn("<github-token-redacted>", review_redacted)
         self.assertIn("<openai-token-redacted>", review_redacted)
         for secret in [
@@ -3249,6 +3253,7 @@ class MVP0AgentTests(unittest.TestCase):
             fixture("colon", "-form", "-secret", "-value"),
             fixture("quoted", "-secret", "-value"),
             fixture("backtick", "-secret", "-value"),
+            fixture("two", " words", " secret"),
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
