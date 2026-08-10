@@ -52,6 +52,19 @@ class VpsDeployWorkflowTests(unittest.TestCase):
     def test_workflow_parses(self):
         yaml.safe_load(WORKFLOW.read_text())
 
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is required to parse workflow YAML")
+    def test_deploy_queue_does_not_cancel_in_progress_installs(self):
+        workflow = yaml.safe_load(WORKFLOW.read_text())
+
+        self.assertFalse(
+            workflow["concurrency"]["cancel-in-progress"],
+            "VPS deploys mutate a live host; queue deploys instead of cancelling mid-install.",
+        )
+        self.assertIn(
+            "cancelled install can leave mixed state",
+            WORKFLOW.read_text(),
+        )
+
     def test_deploy_ensures_review_agent_yaml_parser_dependency(self):
         workflow = workflow_text()
 
