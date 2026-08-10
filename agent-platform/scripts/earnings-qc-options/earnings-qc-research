@@ -42,6 +42,7 @@ BOTTLENECK_FUNNEL_STAGES = [
     ('05_qc_liquidity_greeks_quality_pass', 'liquidity'),
 ]
 FUNNEL_INCOMPLETE_BOTTLENECK = 'funnel_incomplete'
+TERMINAL_STAGE_STATUSES = {'completed', 'failed', 'skipped'}
 
 FUNNEL_SYMBOL_SOURCES = {
     '01_nasdaq_earnings_21_28d_universe': ('symbols',),
@@ -295,9 +296,10 @@ ON CONFLICT (run_id) DO UPDATE SET status=EXCLUDED.status, finished_at=COALESCE(
 def upsert_stage(campaign_id: str, run_id: str, stage_name: str, status: str, input_json=None, output_json=None, artifact_path: str | None = None, params=None, passed=None, failed=None, blocker=None, error=None) -> None:
     if not ensure_research_db(): return
     sid = stable_id('stage', run_id, stage_name); ih = hashlib.sha256(json.dumps(input_json or {}, sort_keys=True).encode()).hexdigest()
+    finished_sql = 'now()' if status in TERMINAL_STAGE_STATUSES else 'NULL'
     db_exec(f"""INSERT INTO {PG_SCHEMA}.research_stages(stage_id,campaign_id,run_id,stage_name,status,started_at,finished_at,input_json,input_hash,output_json,artifact_path,parameters_json,passed_count,failed_count,blocker,error,updated_at)
-VALUES ({sql_lit(sid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(stage_name)}, {sql_lit(status)}, now(), now(), {sql_json(input_json or {})}, {sql_lit(ih)}, {sql_json(output_json or {})}, {sql_lit(artifact_path)}, {sql_json(params or {})}, {sql_int_or_null(passed)}, {sql_int_or_null(failed)}, {sql_lit(blocker)}, {sql_lit(error)}, now())
-ON CONFLICT (run_id, stage_name) DO UPDATE SET status=EXCLUDED.status, finished_at=now(), input_json=EXCLUDED.input_json, input_hash=EXCLUDED.input_hash, output_json=EXCLUDED.output_json, artifact_path=EXCLUDED.artifact_path, parameters_json=COALESCE({PG_SCHEMA}.research_stages.parameters_json, '{{}}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{{}}'::jsonb), passed_count=EXCLUDED.passed_count, failed_count=EXCLUDED.failed_count, blocker=EXCLUDED.blocker, error=EXCLUDED.error, updated_at=now();""")
+VALUES ({sql_lit(sid)}, {sql_lit(campaign_id)}, {sql_lit(run_id)}, {sql_lit(stage_name)}, {sql_lit(status)}, now(), {finished_sql}, {sql_json(input_json or {})}, {sql_lit(ih)}, {sql_json(output_json or {})}, {sql_lit(artifact_path)}, {sql_json(params or {})}, {sql_int_or_null(passed)}, {sql_int_or_null(failed)}, {sql_lit(blocker)}, {sql_lit(error)}, now())
+ON CONFLICT (run_id, stage_name) DO UPDATE SET status=EXCLUDED.status, finished_at=EXCLUDED.finished_at, input_json=EXCLUDED.input_json, input_hash=EXCLUDED.input_hash, output_json=EXCLUDED.output_json, artifact_path=EXCLUDED.artifact_path, parameters_json=COALESCE({PG_SCHEMA}.research_stages.parameters_json, '{{}}'::jsonb) || COALESCE(EXCLUDED.parameters_json, '{{}}'::jsonb), passed_count=EXCLUDED.passed_count, failed_count=EXCLUDED.failed_count, blocker=EXCLUDED.blocker, error=EXCLUDED.error, updated_at=now();""")
 
 
 def insert_artifact(stage_name: str, run_id: str, path: pathlib.Path, keep: bool=False, artifact_type: str='file', metadata=None) -> None:

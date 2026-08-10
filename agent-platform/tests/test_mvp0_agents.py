@@ -1823,6 +1823,83 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertNotIn("set -x", text)
         self.assertNotIn("--live", text)
 
+    def test_research_qc_smoke_emits_transient_failure_details_to_stderr(self):
+        script = ROOT / "agent-platform/scripts/trading-research-qc-smoke"
+        source = script.read_text()
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            env_file = root / "qc.env"
+            env_file.write_text(
+                "QUANTCONNECT_USER_ID=test-user\nQUANTCONNECT_API_TOKEN=test-token\n",
+                encoding="utf-8",
+            )
+            smoke = root / "trading-research-qc-smoke"
+            smoke.write_text(
+                source.replace(
+                    "export PATH=/usr/local/bin:/usr/bin:/bin",
+                    f"export PATH={bin_dir}:/usr/local/bin:/usr/bin:/bin",
+                ).replace("/usr/bin/timeout", "timeout"),
+                encoding="utf-8",
+            )
+            smoke.chmod(0o755)
+            (bin_dir / "getent").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            (bin_dir / "python3").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            (bin_dir / "timeout").write_text("#!/usr/bin/env bash\nshift\nexec \"$@\"\n", encoding="utf-8")
+            for helper in ("getent", "python3", "timeout"):
+                (bin_dir / helper).chmod(0o755)
+
+            lean = bin_dir / "lean"
+            lean.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == \"login\" ]]; then\n"
+                "  echo \"login diagnostic for test-user with test-token\"\n"
+                "  exit \"${LEAN_LOGIN_RC:-0}\"\n"
+                "fi\n"
+                "if [[ \"${1:-}\" == \"whoami\" ]]; then\n"
+                "  echo \"whoami diagnostic for test-user with test-token\"\n"
+                "  exit \"${LEAN_WHOAMI_RC:-0}\"\n"
+                "fi\n"
+                "exit 2\n",
+                encoding="utf-8",
+            )
+            lean.chmod(0o755)
+
+            base_env = {
+                **os.environ,
+                "TRADING_QUANTCONNECT_ENV_FILE": str(env_file),
+                "TRADING_RESEARCH_RUNNER_HOME": str(root / "home"),
+                "TRADING_RESEARCH_LEAN_WORKSPACE": str(root / "lean-workspace"),
+            }
+            Path(base_env["TRADING_RESEARCH_RUNNER_HOME"]).mkdir()
+
+            login_failed = subprocess.run(
+                [str(smoke), "--json"],
+                env={**base_env, "LEAN_LOGIN_RC": "9"},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(login_failed.returncode, 0)
+            self.assertIn("ERROR: lean login failed", login_failed.stderr)
+            self.assertIn("login diagnostic for [REDACTED_QUANTCONNECT_USER_ID] with [REDACTED_QUANTCONNECT_API_TOKEN]", login_failed.stderr)
+            self.assertNotIn("test-token", login_failed.stderr)
+
+            whoami_failed = subprocess.run(
+                [str(smoke), "--json"],
+                env={**base_env, "LEAN_WHOAMI_RC": "7"},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(whoami_failed.returncode, 0)
+            self.assertIn("ERROR: lean whoami failed", whoami_failed.stderr)
+            self.assertIn("whoami diagnostic for [REDACTED_QUANTCONNECT_USER_ID] with [REDACTED_QUANTCONNECT_API_TOKEN]", whoami_failed.stderr)
+            self.assertNotIn("test-token", whoami_failed.stderr)
+
     def test_research_agent_qc_prompt_is_lean_cloud_diagnostics_first(self):
         research = load("trading_research_agent_prompt", "agent-platform/tools/trading_research_agent.py")
         self.assertIn("Prefer Lean CLI", research.QC_RESEARCH_PROMPT)
