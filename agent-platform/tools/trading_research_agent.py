@@ -580,7 +580,7 @@ def normalize_candidate_payload(item: dict[str, Any], *, priority_floor: int) ->
         "call_calendar_spread", "put_calendar_spread", "call_diagonal_spread",
         "put_diagonal_spread", "iron_butterfly", "call_calendar", "put_calendar",
         "call_butterfly", "put_butterfly", "long_straddle", "long_strangle",
-        "call_backspread", "put_backspread", "ratio_spread",
+        "call_backspread", "put_backspread",
     }
     option_text = " ".join([payload["thesis"], payload["structure"], payload["family"]]).lower().replace("_", " ")
     option_evidence_patterns = [
