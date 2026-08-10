@@ -295,16 +295,18 @@ class EarningsLlmPostrunReviewTests(unittest.TestCase):
             self.assertIn("must be non-negative", result.stderr)
 
     def test_invalid_missing_run_scheduled_at_fails_closed(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.run_postrun_with_fake_psql(
-                ["", "", ""],
-                root=tmp,
-                now="2026-08-04T23:59:00+03:00",
-                extra_env={"EARNINGS_POSTRUN_DAILY_SCHEDULE": "99:99"},
-            )
+        for schedule in ("10", "10:3", "9:5", "99:99"):
+            with self.subTest(schedule=schedule):
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = self.run_postrun_with_fake_psql(
+                        ["", "", ""],
+                        root=tmp,
+                        now="2026-08-04T23:59:00+03:00",
+                        extra_env={"EARNINGS_POSTRUN_DAILY_SCHEDULE": schedule},
+                    )
 
-            self.assert_missing_daily_state_config_fails_closed(result)
-            self.assertIn("invalid EARNINGS_POSTRUN_DAILY_SCHEDULE", result.stderr)
+                    self.assert_missing_daily_state_config_fails_closed(result)
+                    self.assertIn("invalid EARNINGS_POSTRUN_DAILY_SCHEDULE", result.stderr)
 
     def test_empty_missing_run_helper_output_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
