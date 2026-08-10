@@ -3220,6 +3220,7 @@ class MVP0AgentTests(unittest.TestCase):
         colon_assignment = fixture("pass", "word", ":", " colon", "-form", "-secret", "-value")
         quoted_assignment = fixture("tok", "en", "=", '"', "quoted", "-secret", "-value", '"')
         api_assignment = fixture("api", "_key", "=", "'", "quoted", "-secret", "-value", "'")
+        backtick_assignment = fixture("tok", "en", "=", "`", "backtick", "-secret", "-value", "`")
         fake_github_token = fixture("ghp", "_", "abcdefghijklmnopqrstuvwxyz123456")
         fake_fine_grained_github_token = fixture("github", "_pat", "_", "abcdefghijklmnopqrstuvwxyz_1234567890")
         fake_openai_token = fixture("sk", "-", "abcdefghijklmnopqrstuvwxyz123456")
@@ -3228,6 +3229,7 @@ class MVP0AgentTests(unittest.TestCase):
             colon_assignment,
             quoted_assignment,
             api_assignment,
+            backtick_assignment,
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
@@ -3239,13 +3241,14 @@ class MVP0AgentTests(unittest.TestCase):
         coding_redacted = coding.redact_text(corpus)
 
         self.assertEqual(review_redacted, coding_redacted)
-        self.assertEqual(review_redacted.count("<redacted>"), 4)
+        self.assertEqual(review_redacted.count("<redacted>"), 5)
         self.assertIn("<github-token-redacted>", review_redacted)
         self.assertIn("<openai-token-redacted>", review_redacted)
         for secret in [
             fixture("bare", "-secret", "-value"),
             fixture("colon", "-form", "-secret", "-value"),
             fixture("quoted", "-secret", "-value"),
+            fixture("backtick", "-secret", "-value"),
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
