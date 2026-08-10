@@ -874,19 +874,29 @@ def aggregate(chunks: list[dict]) -> dict:
     first = chunks[0] if chunks else {}
     universe = first.get('calendar_universe_count') or first.get('calendar_row_count') or 0
     calendar_rows = first.get('calendar_row_count') or universe
+    def is_stale_empty_batch_chunk(d: dict) -> bool:
+        offset = d.get('_chunk_offset')
+        return bool(
+            calendar_rows
+            and offset is not None
+            and int(offset) >= int(calendar_rows)
+            and d.get('status') == 'BLOCKED_QC_BATCH_FAILED'
+            and ((d.get('qc_checks') or {}).get('qc_option_chain_batch_diagnostic') or {}).get('reason') == 'empty_batch'
+        )
+    effective_chunks = [d for d in chunks if not is_stale_empty_batch_chunk(d)]
     agg = {
         '01_nasdaq_earnings_21_28d_universe': universe,
-        '01_nasdaq_earnings_21_28d_universe_symbols': aggregate_funnel_symbols(chunks, '01_nasdaq_earnings_21_28d_universe'),
+        '01_nasdaq_earnings_21_28d_universe_symbols': aggregate_funnel_symbols(effective_chunks, '01_nasdaq_earnings_21_28d_universe'),
         '07_multi_year_backtest_status': 'NOT_IMPLEMENTED_IN_RUNNER_YET_QC_EODHD_APPROVED',
     }
     for k in INT_FUNNEL_KEYS:
-        vals = [(d.get('funnel') or {}).get(k) for d in chunks]
-        agg[k] = sum(v for v in vals if isinstance(v, int))
-        agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(chunks, k)
+        vals = [(d.get('funnel') or {}).get(k) for d in effective_chunks]
+        int_vals = [v for v in vals if isinstance(v, int)]
+        agg[k] = sum(int_vals) if len(int_vals) == len(vals) else None
+        agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(effective_chunks, k)
     forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]; historical_result_symbols=set(); historical_results_by_symbol={}
     for d in chunks:
-        offset = d.get('_chunk_offset')
-        if calendar_rows and offset is not None and int(offset) >= int(calendar_rows) and (d.get('status') == 'BLOCKED_QC_BATCH_FAILED') and ((d.get('qc_checks') or {}).get('qc_option_chain_batch_diagnostic') or {}).get('reason') == 'empty_batch':
+        if is_stale_empty_batch_chunk(d):
             continue
         scanned += int(d.get('qc_processed_row_count') or d.get('qc_batch_count') or 0)
         if not d.get('ok'):

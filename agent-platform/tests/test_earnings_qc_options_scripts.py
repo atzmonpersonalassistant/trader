@@ -3996,11 +3996,19 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
     def test_aggregate_ignores_stale_empty_batch_chunks_beyond_calendar_rows(self):
         mod = load_script("earnings-qc-research")
         out = mod.aggregate([
-            {"_chunk_offset": 0, "ok": True, "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 185, "candidate_details": [], "funnel": {}},
+            {"_chunk_offset": 0, "ok": True, "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 185, "candidate_details": [], "funnel": {
+                "02_qc_option_chain_available": 185,
+                "03_qc_expiry_within_0_7d_after_earnings": 100,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 100,
+                "04_qc_calls_ask_under_max_premium": 25,
+                "05_qc_liquidity_greeks_quality_pass": 0,
+            }},
             {"_chunk_offset": 650, "ok": False, "status": "BLOCKED_QC_BATCH_FAILED", "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 0, "qc_checks": {"qc_option_chain_batch_diagnostic": {"ok": False, "reason": "empty_batch"}}, "funnel": {}},
         ])
         self.assertEqual(out["failed_chunk_count"], 0)
         self.assertTrue(out["ok"])
+        self.assertEqual(out["aggregate_funnel"]["02_qc_option_chain_available"], 185)
+        self.assertEqual(mod.derive_funnel_bottleneck(out), "liquidity")
 
     def test_aggregate_complete_scan_with_no_forward_candidates_is_terminal_ok(self):
         mod = load_script("earnings-qc-research")
@@ -4108,6 +4116,106 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(funnel[key], 0)
                 self.assertEqual(funnel[f"{key}_symbols"], [])
+
+    def test_aggregate_missing_funnel_counts_yields_incomplete_bottleneck(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": {},
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": {},
+            },
+        ])
+
+        funnel = out["aggregate_funnel"]
+        for key in mod.INT_FUNNEL_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNone(funnel[key])
+        self.assertEqual(mod.derive_funnel_bottleneck(out), mod.FUNNEL_INCOMPLETE_BOTTLENECK)
+
+    def test_aggregate_partial_funnel_counts_yields_incomplete_bottleneck(self):
+        mod = load_script("earnings-qc-research")
+        complete_funnel = {
+            "02_qc_option_chain_available": 2,
+            "03_qc_expiry_within_0_7d_after_earnings": 2,
+            "035_qc_otm_expiry_within_0_7d_after_earnings": 2,
+            "04_qc_calls_ask_under_max_premium": 2,
+            "05_qc_liquidity_greeks_quality_pass": 2,
+        }
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": complete_funnel,
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": {},
+            },
+        ])
+
+        funnel = out["aggregate_funnel"]
+        for key in mod.INT_FUNNEL_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNone(funnel[key])
+        self.assertEqual(mod.derive_funnel_bottleneck(out), mod.FUNNEL_INCOMPLETE_BOTTLENECK)
+
+    def test_aggregate_all_zero_funnel_counts_keeps_real_stage_bottleneck(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 0,
+                    "03_qc_expiry_within_0_7d_after_earnings": 0,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
+                    "04_qc_calls_ask_under_max_premium": 0,
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 6,
+                "calendar_universe_count": 6,
+                "qc_processed_row_count": 3,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 0,
+                    "03_qc_expiry_within_0_7d_after_earnings": 0,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
+                    "04_qc_calls_ask_under_max_premium": 0,
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+        ])
+
+        funnel = out["aggregate_funnel"]
+        for key in mod.INT_FUNNEL_KEYS:
+            with self.subTest(key=key):
+                self.assertEqual(funnel[key], 0)
+        self.assertEqual(mod.derive_funnel_bottleneck(out), "option_chain")
 
     def test_serial_chunk_runner_records_exceptions_and_continues(self):
         mod = load_script("earnings-qc-research")
