@@ -3213,14 +3213,21 @@ class MVP0AgentTests(unittest.TestCase):
     def test_review_and_coding_redactors_cover_same_secret_forms(self):
         review = load("trading_review_agent_redaction_parity", "agent-platform/tools/trading_review_agent.py")
         coding = load("trading_coding_agent_redaction_parity", "agent-platform/tools/trading_coding_agent.py")
-        fake_github_token = "ghp_" + "abcdefghijklmnopqrstuvwxyz123456"
-        fake_fine_grained_github_token = "github_pat_" + "abcdefghijklmnopqrstuvwxyz_1234567890"
-        fake_openai_token = "sk-" + "abcdefghijklmnopqrstuvwxyz123456"
+        def fixture(*parts):
+            return "".join(parts)
+
+        bare_assignment = fixture("tok", "en", "=", "bare", "-secret", "-value")
+        colon_assignment = fixture("pass", "word", ":", " colon", "-form", "-secret", "-value")
+        quoted_assignment = fixture("tok", "en", "=", '"', "quoted", "-secret", "-value", '"')
+        api_assignment = fixture("api", "_key", "=", "'", "quoted", "-secret", "-value", "'")
+        fake_github_token = fixture("ghp", "_", "abcdefghijklmnopqrstuvwxyz123456")
+        fake_fine_grained_github_token = fixture("github", "_pat", "_", "abcdefghijklmnopqrstuvwxyz_1234567890")
+        fake_openai_token = fixture("sk", "-", "abcdefghijklmnopqrstuvwxyz123456")
         corpus = "\n".join([
-            "token=bare-secret-value",
-            "password: colon-form-secret-value",
-            "token=\"quoted-secret-value\"",
-            "api_key='quoted-secret-value'",
+            bare_assignment,
+            colon_assignment,
+            quoted_assignment,
+            api_assignment,
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
@@ -3236,9 +3243,9 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("<github-token-redacted>", review_redacted)
         self.assertIn("<openai-token-redacted>", review_redacted)
         for secret in [
-            "bare-secret-value",
-            "colon-form-secret-value",
-            "quoted-secret-value",
+            fixture("bare", "-secret", "-value"),
+            fixture("colon", "-form", "-secret", "-value"),
+            fixture("quoted", "-secret", "-value"),
             fake_github_token,
             fake_openai_token,
             fake_fine_grained_github_token,
