@@ -1657,8 +1657,8 @@ SELECT json_build_object(
             freed += size_before
             deleted.append(item)
     cleanup_error = json.dumps(failed, ensure_ascii=False) if failed else None
-    audit_deleted = deleted if args.dry_run else []
-    audit_freed = freed if args.dry_run else 0
+    audit_deleted = deleted
+    audit_freed = freed
     audit_error = cleanup_error if args.dry_run else 'CLEANUP_IN_PROGRESS'
     try:
         db_exec(f"""INSERT INTO {PG_SCHEMA}.cleanup_runs(cleanup_id,finished_at,dry_run,policy_json,deleted_paths_json,freed_bytes,error)

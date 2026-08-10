@@ -828,6 +828,41 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertTrue(payload.exists())
         self.assertEqual(len(calls), 2)
 
+    def test_cleanup_final_audit_update_failure_leaves_intent_auditable(self):
+        mod = load_script("earnings-qc-research")
+        reports = pathlib.Path(tempfile.mkdtemp())
+        old_scan = reports / "earnings-qc-options-scan-full-old"
+        old_scan.mkdir()
+        payload = old_scan / "payload.txt"
+        payload.write_text("old")
+        os.utime(old_scan, (1, 1))
+        os.utime(payload, (1, 1))
+        args = argparse.Namespace(older_than_days=3, keep_last=0, dry_run=False)
+        calls = []
+
+        def fake_db_exec(sql, fetch=False):
+            calls.append(sql)
+            if fetch:
+                return "{}"
+            if sql.lstrip().startswith("UPDATE"):
+                raise RuntimeError("final audit update failed")
+            return ""
+
+        with mock.patch.object(mod, "REPORT_ROOT", reports), \
+             mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=fake_db_exec):
+            with self.assertRaises(RuntimeError):
+                mod.cmd_cleanup(args)
+
+        self.assertFalse(old_scan.exists())
+        self.assertEqual(len(calls), 3)
+        insert_sql = calls[1]
+        self.assertIn("INSERT INTO earnings_cache.cleanup_runs", insert_sql)
+        self.assertIn(str(old_scan), insert_sql)
+        self.assertIn('"bytes": 3', insert_sql)
+        self.assertIn("CLEANUP_IN_PROGRESS", insert_sql)
+        self.assertIn("UPDATE earnings_cache.cleanup_runs", calls[2])
+
     def test_cleanup_error_column_has_additive_migration(self):
         mod = load_script("earnings-qc-research")
         calls = []
