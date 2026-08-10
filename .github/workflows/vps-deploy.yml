@@ -25,7 +25,8 @@ permissions:
 
 concurrency:
   group: vps-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  # Deploys mutate a live host; a cancelled install can leave mixed state, so queue rather than cancel.
+  cancel-in-progress: false
 
 jobs:
   deploy:
