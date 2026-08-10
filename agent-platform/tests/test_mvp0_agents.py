@@ -1855,6 +1855,7 @@ class MVP0AgentTests(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "if [[ \"${1:-}\" == \"login\" ]]; then\n"
                 "  echo \"login diagnostic for test-user with test-token\"\n"
+                "  printf '%s' \"unterminated fatal for test-user with test-token\"\n"
                 "  exit \"${LEAN_LOGIN_RC:-0}\"\n"
                 "fi\n"
                 "if [[ \"${1:-}\" == \"whoami\" ]]; then\n"
@@ -1885,6 +1886,7 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertNotEqual(login_failed.returncode, 0)
             self.assertIn("ERROR: lean login failed", login_failed.stderr)
             self.assertIn("login diagnostic for [REDACTED_QUANTCONNECT_USER_ID] with [REDACTED_QUANTCONNECT_API_TOKEN]", login_failed.stderr)
+            self.assertIn("unterminated fatal for [REDACTED_QUANTCONNECT_USER_ID] with [REDACTED_QUANTCONNECT_API_TOKEN]", login_failed.stderr)
             self.assertNotIn("test-token", login_failed.stderr)
 
             whoami_failed = subprocess.run(
