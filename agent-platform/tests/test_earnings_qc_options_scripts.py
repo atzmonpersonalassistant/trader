@@ -528,6 +528,42 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertEqual({**existing, **{"to_stage": "candidate_scan"}}["to_stage"], "candidate_scan")
         self.assertEqual({**{}, **{"years": 10}}, {"years": 10})
 
+    def test_upsert_stage_running_insert_leaves_finished_at_absent_for_stuck_stage_query(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.upsert_stage("camp", "run-a", "historical_option_pnl_years_1", "running", params={"years": 1})
+
+        insert_sql = "\n".join(calls)
+        self.assertIn("'historical_option_pnl_years_1', 'running', now(), NULL", insert_sql)
+        running_row = {"status": "running", "finished_at": None}
+        self.assertTrue(running_row["status"] == "running" and running_row["finished_at"] is None)
+
+    def test_upsert_stage_running_then_completed_sets_finished_at_and_preserves_started_at(self):
+        mod = load_script("earnings-qc-research")
+        calls = []
+        with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+             mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+            mod.upsert_stage("camp", "run-a", "historical_option_pnl_years_1", "running", params={"years": 1})
+            mod.upsert_stage("camp", "run-a", "historical_option_pnl_years_1", "completed", params={"years": 1})
+
+        running_sql, completed_sql = calls
+        self.assertIn("'historical_option_pnl_years_1', 'running', now(), NULL", running_sql)
+        self.assertIn("'historical_option_pnl_years_1', 'completed', now(), now()", completed_sql)
+        self.assertIn("finished_at=EXCLUDED.finished_at", completed_sql)
+        self.assertNotIn("started_at=", completed_sql)
+
+    def test_upsert_stage_terminal_statuses_insert_with_finished_at_set(self):
+        mod = load_script("earnings-qc-research")
+        for status in ("completed", "failed", "skipped"):
+            with self.subTest(status=status):
+                calls = []
+                with mock.patch.object(mod, "ensure_research_db", return_value=True), \
+                     mock.patch.object(mod, "db_exec", side_effect=lambda sql: calls.append(sql) or ""):
+                    mod.upsert_stage("camp", f"run-{status}", "historical_option_pnl_years_1", status)
+                self.assertIn(f"'historical_option_pnl_years_1', '{status}', now(), now()", "\n".join(calls))
+
     def test_derive_funnel_bottleneck_uses_proportional_collapse(self):
         mod = load_script("earnings-qc-research")
         for status in [

@@ -24,6 +24,19 @@ status() {
   fi
 }
 
+emit_failure_log() {
+  local path="$1"
+  local line
+  if [[ ! -s "$path" ]]; then
+    return 0
+  fi
+  while IFS= read -r line; do
+    line=${line//"$QUANTCONNECT_API_TOKEN"/"[REDACTED_QUANTCONNECT_API_TOKEN]"}
+    line=${line//"$QUANTCONNECT_USER_ID"/"[REDACTED_QUANTCONNECT_USER_ID]"}
+    printf '%s\n' "$line" >&2
+  done <"$path"
+}
+
 require_env() {
   local key="$1"
   if [[ -z "${!key:-}" ]]; then
@@ -82,10 +95,12 @@ whoami_log=$(mktemp)
 trap 'rm -f "$login_log" "$whoami_log"' EXIT
 if ! printf "%s\n" "$QUANTCONNECT_API_TOKEN" | /usr/bin/timeout 60s lean login --user-id "$QUANTCONNECT_USER_ID" >"$login_log" 2>&1; then
   echo "ERROR: lean login failed" >&2
+  emit_failure_log "$login_log"
   exit 1
 fi
 if ! /usr/bin/timeout 60s lean whoami >"$whoami_log" 2>&1; then
   echo "ERROR: lean whoami failed" >&2
+  emit_failure_log "$whoami_log"
   exit 1
 fi
 unset QUANTCONNECT_USER_ID QUANTCONNECT_API_TOKEN
