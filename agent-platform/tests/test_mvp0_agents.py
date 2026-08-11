@@ -3256,6 +3256,77 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("raw diff was not sent to the model", review_text)
 
+    def test_review_risk_sensitive_guard_matches_prose_and_identifiers(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        terms = [
+            "live trading",
+            "ibkr",
+            "position sizing",
+            "position size",
+            "risk limit",
+            "sell to open",
+            "short call",
+            "short put",
+            "naked",
+            "credit spread",
+            "debit spread",
+            "premium sell",
+            "option assignment",
+            "assignment risk",
+            "early assignment",
+            "margin requirement",
+            "margin call",
+            "buying power",
+            "reg t",
+            "uncovered call",
+            "uncovered put",
+            "uncovered option",
+            "write call",
+            "write put",
+        ]
+        for term in terms:
+            for spelling in (term, term.replace(" ", "_")):
+                with self.subTest(term=term, spelling=spelling):
+                    result = review.deterministic_review({
+                        "diff": f"+changed = {spelling!r}\n",
+                        "pr": {"labels": []},
+                    })
+                    self.assertFalse(result["pass"])
+                    self.assertIn("Potential trading/risk-sensitive change lacks human:approved label.", result["findings"])
+
+    def test_review_risk_sensitive_guard_allows_human_approved_and_unrelated_diff(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        approved = review.deterministic_review({
+            "diff": "+ENABLE_LIVE_TRADING = True\n",
+            "pr": {"labels": [{"name": "human:approved"}]},
+        })
+        self.assertTrue(approved["pass"])
+
+        unrelated = review.deterministic_review({
+            "diff": "+scanner_batch_size = 25\n+report_title = 'daily scan'\n",
+            "pr": {"labels": []},
+        })
+        self.assertTrue(unrelated["pass"])
+
+    def test_review_risk_sensitive_guard_ignores_ordinary_collisions(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        collisions = [
+            "+# variable assignment moved above the loop\n",
+            "+self.assignment = compute(x)\n",
+            "+assignment_date = row['date']\n",
+            "+margin = layout.margin + 2\n",
+            "+# this leaves the error margin unchanged\n",
+            "+# uncovered branch in the test suite\n",
+            "+coverage = '3 uncovered lines remain'\n",
+        ]
+        for diff in collisions:
+            with self.subTest(diff=diff):
+                result = review.deterministic_review({
+                    "diff": diff,
+                    "pr": {"labels": []},
+                })
+                self.assertTrue(result["pass"])
+
 
 
 class ResearchIdeaQualityPromptTests(unittest.TestCase):

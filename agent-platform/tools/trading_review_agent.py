@@ -31,6 +31,32 @@ DEFAULT_LOG_DIR = Path(os.environ.get("TRADING_REVIEW_LOG_DIR", "/agents/review/
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 CHECK_NAME = "review-agent/pass"
 MAX_WORKFLOW_YAML_BYTES = 1_000_000
+RISK_SENSITIVE_TERMS = (
+    "live trading",
+    "ibkr",
+    "position sizing",
+    "position size",
+    "risk limit",
+    "sell to open",
+    "short call",
+    "short put",
+    "naked",
+    "credit spread",
+    "debit spread",
+    "premium sell",
+    "option assignment",
+    "assignment risk",
+    "early assignment",
+    "margin requirement",
+    "margin call",
+    "buying power",
+    "reg t",
+    "uncovered call",
+    "uncovered put",
+    "uncovered option",
+    "write call",
+    "write put",
+)
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "agent": "review",
@@ -237,13 +263,21 @@ def has_secret_like_text(diff: str) -> bool:
     return False
 
 
+def normalize_risk_sensitive_text(text: str) -> str:
+    return re.sub(r"[_-]+", " ", text.casefold())
+
+
+def has_risk_sensitive_change(diff: str) -> bool:
+    normalized = normalize_risk_sensitive_text(diff)
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", normalized) for term in RISK_SENSITIVE_TERMS)
+
+
 def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
     diff = context["diff"]
-    lower = diff.lower()
     findings: list[str] = []
     if has_secret_like_text(diff):
         findings.append("Potential secret-like text found in diff.")
-    if any(term in lower for term in ["live trading", "ibkr", "position sizing", "risk limit"]):
+    if has_risk_sensitive_change(diff):
         labels = [label.get("name") for label in context["pr"].get("labels", [])]
         if "human:approved" not in labels:
             findings.append("Potential trading/risk-sensitive change lacks human:approved label.")
