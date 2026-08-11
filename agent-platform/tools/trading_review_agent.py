@@ -243,10 +243,12 @@ def deterministic_review(context: dict[str, Any]) -> dict[str, Any]:
     findings: list[str] = []
     if has_secret_like_text(diff):
         findings.append("Potential secret-like text found in diff.")
-    if any(term in lower for term in ["live trading", "ibkr", "position sizing", "risk limit"]):
+    matched_terms = [term for term in ["live trading", "ibkr", "position sizing", "risk limit"] if term in lower]
+    if matched_terms:
         labels = [label.get("name") for label in context["pr"].get("labels", [])]
         if "human:approved" not in labels:
-            findings.append("Potential trading/risk-sensitive change lacks human:approved label.")
+            matched = ", ".join(repr(term) for term in matched_terms)
+            findings.append(f"Diff mentions risk-sensitive vocabulary ({matched}); requires human:approved label.")
     passed = not findings
     return {"pass": passed, "findings": findings, "checklist": CHECKLIST}
 
@@ -386,8 +388,8 @@ def write_review(workspace: Path, pr_number: int, deterministic: dict[str, Any],
         normalized = text.strip().upper()
         if normalized.startswith("FAIL"):
             passed = False
-        elif normalized.startswith("PASS") and passed:
-            passed = True
+        elif normalized.startswith("PASS"):
+            pass
         else:
             passed = False
             model_findings.append("Model review did not start with PASS or FAIL; required check cannot pass.")
