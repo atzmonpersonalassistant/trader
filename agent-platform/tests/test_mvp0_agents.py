@@ -1684,6 +1684,52 @@ class MVP0AgentTests(unittest.TestCase):
             result = subprocess.run(["bash", str(harness), str(report)], check=True, text=True, capture_output=True)
             self.assertEqual(result.stdout.strip(), "candidate_for_validator_review")
 
+    def test_research_loop_completion_status_uses_last_report_verdict(self):
+        script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
+        text = script.read_text()
+        verdict_match = re.search(r"extract_final_report_verdict\(\) \{\n(?P<body>.*?)\n\}", text, re.S)
+        status_match = re.search(
+            r"(?P<body>STATUS=done\n    if \[ \"\$RC\" != \"0\" \]; then\n.*?\n    fi)\n    trading-research-agent --queue",
+            text,
+            re.S,
+        )
+        self.assertIsNotNone(verdict_match)
+        self.assertIsNotNone(status_match)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            (run_dir / "final_report.md").write_text(
+                "\n".join([
+                    "# report",
+                    "Verdict options:",
+                    "discard",
+                    "refine",
+                    "retest_after_technical_fix",
+                    "candidate_for_validator_review",
+                    "Final verdict:",
+                    "candidate_for_validator_review",
+                    "",
+                ])
+            )
+            status_block = "\n".join(
+                line[4:] if line.startswith("    ") else line
+                for line in status_match.group("body").splitlines()
+            )
+            harness = root / "harness.sh"
+            harness.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "extract_final_report_verdict() {\n"
+                f"{verdict_match.group('body')}\n"
+                "}\n"
+                'RC=0\nRUN_DIR="$1"\n'
+                f"{status_block}\n"
+                'echo "$STATUS"\n'
+            )
+            result = subprocess.run(["bash", str(harness), str(run_dir)], check=True, text=True, capture_output=True)
+            self.assertEqual(result.stdout.strip(), "done")
+
 
 
     def test_research_qc_run_is_manifest_guarded(self):
