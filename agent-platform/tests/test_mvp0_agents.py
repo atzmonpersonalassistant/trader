@@ -6,6 +6,7 @@ import importlib.machinery
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1296,6 +1297,45 @@ class MVP0AgentTests(unittest.TestCase):
             self.assertEqual(items["b"]["status"], "blocked")
             self.assertEqual(items["c"]["status"], "queued")
 
+    def test_research_agent_reconcile_stale_uses_last_report_verdict(self):
+        research = load("trading_research_agent_reconcile_last_verdict", "agent-platform/tools/trading_research_agent.py")
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            queue = root / "strategy-queue.json"
+            reports = root / "reports"
+            reports.mkdir()
+            queue.write_text(json.dumps([
+                {"id": "a", "priority": 1, "status": "in_progress", "active_run_id": "run-a"},
+                {"id": "b", "priority": 2, "status": "in_progress", "active_run_id": "run-b"},
+                {"id": "c", "priority": 3, "status": "in_progress", "active_run_id": "run-c"},
+            ]))
+            rubric = "\n".join([
+                "discard",
+                "refine",
+                "retest_after_technical_fix",
+                "candidate_for_validator_review",
+            ])
+            for run_id, final_verdict in (
+                ("run-a", "candidate_for_validator_review"),
+                ("run-b", "discard"),
+                ("run-c", "refine"),
+            ):
+                (reports / run_id).mkdir()
+                (reports / run_id / "final_report.md").write_text(
+                    f"# report\n\nVerdict options:\n{rubric}\n\nFinal verdict:\n{final_verdict}\n"
+                )
+            import contextlib
+            import io
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = research.cmd_reconcile_stale(argparse.Namespace(queue=str(queue), reports_dir=str(reports), stale_seconds=1))
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out.getvalue())["changed_count"], 3)
+            items = {item["id"]: item for item in research.load_queue(queue)}
+            self.assertEqual(items["a"]["status"], "done")
+            self.assertEqual(items["b"]["status"], "done")
+            self.assertEqual(items["c"]["status"], "refine")
+
     def test_research_loop_uses_runner_without_raw_qc_secret_access(self):
         script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
         subprocess.run(["bash", "-n", str(script)], check=True)
@@ -1333,6 +1373,7 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn("idea-generation-*-task.txt", bootstrap_text)
         self.assertIn("research-watchdog-*-task.txt", bootstrap_text)
         self.assertIn("trading-research-watchdog-codex", bootstrap_text)
+
         self.assertIn("agent-research ALL=(agent-research-watchdog) NOPASSWD: /usr/local/bin/trading-research-watchdog-codex *", bootstrap_text)
         self.assertIn("/agents/research/reports/idea-generation-*", bootstrap_text)
         self.assertIn("/agents/research/reports/research-watchdog-*", bootstrap_text)
@@ -1616,6 +1657,78 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertIn('> "$RUN_DIR/final_report.md"', text)
         self.assertIn('The loop claimed a candidate and prepared handoff artifacts', text)
         self.assertIn('retest_after_technical_fix', text)
+
+    def test_research_loop_extracts_last_report_verdict(self):
+        script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
+        text = script.read_text()
+        match = re.search(r"extract_final_report_verdict\(\) \{\n(?P<body>.*?)\n\}", text, re.S)
+        self.assertIsNotNone(match)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = root / "final_report.md"
+            report.write_text(
+                "\n".join([
+                    "# report",
+                    "Verdict options:",
+                    "discard",
+                    "refine",
+                    "retest_after_technical_fix",
+                    "candidate_for_validator_review",
+                    "Final verdict:",
+                    "candidate_for_validator_review",
+                    "",
+                ])
+            )
+            harness = root / "harness.sh"
+            harness.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\nextract_final_report_verdict() {{\n{match.group('body')}\n}}\nextract_final_report_verdict \"$1\"\n")
+            result = subprocess.run(["bash", str(harness), str(report)], check=True, text=True, capture_output=True)
+            self.assertEqual(result.stdout.strip(), "candidate_for_validator_review")
+
+    def test_research_loop_completion_status_uses_last_report_verdict(self):
+        script = ROOT / "agent-platform/scripts/trading-research-agent-loop"
+        text = script.read_text()
+        verdict_match = re.search(r"extract_final_report_verdict\(\) \{\n(?P<body>.*?)\n\}", text, re.S)
+        status_match = re.search(
+            r"(?P<body>STATUS=done\n    if \[ \"\$RC\" != \"0\" \]; then\n.*?\n    fi)\n    trading-research-agent --queue",
+            text,
+            re.S,
+        )
+        self.assertIsNotNone(verdict_match)
+        self.assertIsNotNone(status_match)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            (run_dir / "final_report.md").write_text(
+                "\n".join([
+                    "# report",
+                    "Verdict options:",
+                    "discard",
+                    "refine",
+                    "retest_after_technical_fix",
+                    "candidate_for_validator_review",
+                    "Final verdict:",
+                    "candidate_for_validator_review",
+                    "",
+                ])
+            )
+            status_block = "\n".join(
+                line[4:] if line.startswith("    ") else line
+                for line in status_match.group("body").splitlines()
+            )
+            harness = root / "harness.sh"
+            harness.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "extract_final_report_verdict() {\n"
+                f"{verdict_match.group('body')}\n"
+                "}\n"
+                'RC=0\nRUN_DIR="$1"\n'
+                f"{status_block}\n"
+                'echo "$STATUS"\n'
+            )
+            result = subprocess.run(["bash", str(harness), str(run_dir)], check=True, text=True, capture_output=True)
+            self.assertEqual(result.stdout.strip(), "done")
 
 
 

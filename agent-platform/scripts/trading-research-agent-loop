@@ -39,6 +39,10 @@ make_runner_task_inputs_readable() {
   done
 }
 
+extract_final_report_verdict() {
+  awk '/^(discard|refine|retest_after_technical_fix|candidate_for_validator_review)$/ { verdict=$0 } END { if (verdict != "") print verdict; else exit 1 }' "$1"
+}
+
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "$(date -u +%FT%TZ) another research loop already running"
@@ -156,11 +160,11 @@ PY
       STATUS=failed
     elif [ ! -s "$RUN_DIR/final_report.md" ]; then
       STATUS=failed
-    elif ! grep -Eq "^(discard|refine|retest_after_technical_fix|candidate_for_validator_review)$" "$RUN_DIR/final_report.md"; then
+    elif ! VERDICT=$(extract_final_report_verdict "$RUN_DIR/final_report.md"); then
       STATUS=failed
-    elif grep -Eq "^retest_after_technical_fix$" "$RUN_DIR/final_report.md"; then
+    elif [ "$VERDICT" = "retest_after_technical_fix" ]; then
       STATUS=blocked
-    elif grep -Eq "^refine$" "$RUN_DIR/final_report.md"; then
+    elif [ "$VERDICT" = "refine" ]; then
       STATUS=refine
     fi
     trading-research-agent --queue "$QUEUE" complete --candidate-id "$CANDIDATE_ID" --run-id "$RUN_ID" --status "$STATUS" >> "$LOG_DIR/loop.log" 2>&1 || true
