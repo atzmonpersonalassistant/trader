@@ -35,6 +35,13 @@ DEFAULT_IDEA_CONTEXT_CHARS = int(os.environ.get("TRADING_RESEARCH_IDEA_CONTEXT_C
 DEFAULT_RUNNER_HANDOFF_DIR = Path(os.environ.get("TRADING_RESEARCH_RUNNER_HANDOFF_DIR", "/agents/research/handoff"))
 DEFAULT_RUNNER_USER = os.environ.get("TRADING_RESEARCH_RUNNER_USER", "agent-research-runner")
 LEAN_CLI_VERSION = "1.0.225"
+REPORT_VERDICT_PATTERN = r"(?m)^(discard|refine|retest_after_technical_fix|candidate_for_validator_review)$"
+REPORT_VERDICT_STATUS = {
+    "discard": "done",
+    "refine": "refine",
+    "retest_after_technical_fix": "blocked",
+    "candidate_for_validator_review": "done",
+}
 
 
 
@@ -486,7 +493,7 @@ def collect_idea_context(reports_dir: Path, *, limit: int = DEFAULT_IDEA_CONTEXT
             try:
                 text = report_path.read_text(errors="replace")
                 item["final_report_excerpt"] = safe_text_excerpt(text)
-                verdicts = re.findall(r"(?m)^(discard|refine|retest_after_technical_fix|candidate_for_validator_review)$", text)
+                verdicts = re.findall(REPORT_VERDICT_PATTERN, text)
                 if verdicts:
                     item["verdict"] = verdicts[-1]
             except Exception:
@@ -1167,9 +1174,9 @@ def _run_dir_has_terminal_report(reports_dir: Path, run_id: str | None) -> tuple
     if not final.exists() or final.stat().st_size == 0:
         return False, None
     text = final.read_text(errors="replace")
-    for status, verdict in (("blocked", "retest_after_technical_fix"), ("refine", "refine"), ("done", "discard"), ("done", "candidate_for_validator_review")):
-        if re.search(rf"^{re.escape(verdict)}$", text, re.M):
-            return True, status
+    verdicts = re.findall(REPORT_VERDICT_PATTERN, text)
+    if verdicts:
+        return True, REPORT_VERDICT_STATUS[verdicts[-1]]
     return False, None
 
 
