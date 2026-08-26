@@ -120,6 +120,7 @@ def hist_params(params:dict|None) -> dict:
         'exit_days_before': exit_days_before,
         'exit_policy': 'sell_before_earnings_no_hold_through',
         'max_premium': float(p.get('max_premium') if p.get('max_premium') is not None else 0.50),
+        'max_required_move_pct': float(p.get('max_required_move_pct')) if p.get('max_required_move_pct') is not None else None,
         'max_days_after_earnings': int(p.get('max_expiry_after_earnings_days') if p.get('max_expiry_after_earnings_days') is not None else 7),
         'min_expiration_days': int(p.get('min_expiration_days') if p.get('min_expiration_days') is not None else 1),
         'max_expiration_days': int(p.get('max_expiration_days') if p.get('max_expiration_days') is not None else 60),
@@ -219,6 +220,10 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
         + option_right_helper_marker,
         1,
     )
+    required_move_setting_marker = f"        self.max_premium = {hp['max_premium']:.6f}\n"
+    if required_move_setting_marker not in code:
+        raise RuntimeError('generated multiyear required-move setting marker not found')
+    code = code.replace(required_move_setting_marker, required_move_setting_marker + f"        self.max_required_move_pct = {repr(hp['max_required_move_pct'])}\n", 1)
     call_only_marker = "                    if c.right != OptionRight.CALL: continue"
     if call_only_marker not in code:
         raise RuntimeError('generated multiyear call-only option filter marker not found')
@@ -231,6 +236,18 @@ def write_project(project_dir:pathlib.Path, candidates:list[dict], years:int, pa
     if call_required_move_marker not in code:
         raise RuntimeError('generated multiyear call-only required-move marker not found')
     code = code.replace(call_required_move_marker, "                        req=self.required_move_pct(q, strike, spot)", 1)
+    required_move_filter_marker = "                        qq=self.qdict(q); qq['required_move_pct']=round(req,2); qq.update(self.liquidity_metrics(q, spot, dte))\n                        eligible.append(qq)"
+    if required_move_filter_marker not in code:
+        raise RuntimeError('generated multiyear required-move filter marker not found')
+    code = code.replace(
+        required_move_filter_marker,
+        "                        max_required_move_pct=self.max_required_move_pct if hasattr(self,'max_required_move_pct') else None\n"
+        "                        if max_required_move_pct is not None and (req is None or req > max_required_move_pct):\n"
+        "                            blockers['required_move_above_ceiling']=blockers.get('required_move_above_ceiling',0)+1; continue\n"
+        "                        qq=self.qdict(q); qq['required_move_pct']=round(req,2); qq.update(self.liquidity_metrics(q, spot, dte))\n"
+        "                        eligible.append(qq)",
+        1,
+    )
     liquidity_pass_marker = "    def nearest_snapshot_date(self, sym, target, latest):"
     if liquidity_pass_marker not in code:
         raise RuntimeError('generated multiyear liquidity-blocker insertion marker not found')
@@ -567,7 +584,7 @@ def main(argv):
     ap.add_argument('--exit-policy', default='sell_before_earnings_no_hold_through'); ap.add_argument('--historical-resolution', default='daily')
     ap.add_argument('--option-resolution', choices=['tick','second','minute','hour','daily'])
     ap.add_argument('--path-metrics', default='daily', choices=['none','daily','hour','minute']); ap.add_argument('--max-contracts', type=int)
-    ap.add_argument('--max-premium', type=float); ap.add_argument('--min-bid', type=float); ap.add_argument('--max-spread', type=float); ap.add_argument('--max-spread-pct', type=float)
+    ap.add_argument('--max-premium', type=float); ap.add_argument('--max-required-move-pct', type=float); ap.add_argument('--min-bid', type=float); ap.add_argument('--max-spread', type=float); ap.add_argument('--max-spread-pct', type=float)
     ap.add_argument('--min-relative-spread', type=float); ap.add_argument('--vol-spread-factor', type=float); ap.add_argument('--expected-move-spread-fraction', type=float)
     ap.add_argument('--min-open-interest', type=int); ap.add_argument('--min-volume', type=int); ap.add_argument('--strike-range', default='-50:300')
     ap.add_argument('--min-expiration-days', type=int); ap.add_argument('--max-expiration-days', type=int); ap.add_argument('--max-expiry-after-earnings-days', type=int)
@@ -575,6 +592,6 @@ def main(argv):
     ap.add_argument('--delta-target', type=float)
     ap.add_argument('--stop-loss-max-loss-pct', type=float)
     args=ap.parse_args(argv); rd=pathlib.Path(args.run_dir) if args.run_dir else latest_run_dir()
-    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','option_resolution','path_metrics','max_contracts','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','option_right','delta_target','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
+    params={k:getattr(args,k) for k in ['entry_window','exit_days_before','exit_policy','historical_resolution','option_resolution','path_metrics','max_contracts','max_premium','max_required_move_pct','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','min_open_interest','min_volume','strike_range','min_expiration_days','max_expiration_days','max_expiry_after_earnings_days','option_right','delta_target','stop_loss_max_loss_pct'] if getattr(args,k) is not None}
     summary=run_backtest(rd,args.years,params=params); print(json.dumps(summary,ensure_ascii=False,indent=2,sort_keys=True)); return 0 if summary.get('ok') else 2
 if __name__=='__main__': raise SystemExit(main(__import__('sys').argv[1:]))
