@@ -681,7 +681,7 @@ def stage_runtime_params(args) -> dict:
         'from_stage','to_stage','as_of_date','calendar_from_days','calendar_to_days','calendar_source',
         'qc_resolution','option_resolution','min_expiry_after_earnings_days','max_expiry_after_earnings_days',
         'min_expiration_days','max_expiration_days','strike_range','option_right','delta_range','iv_range',
-        'min_open_interest','min_volume','max_premium','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','entry_window','exit_days_before','exit_policy','delta_target','stop_loss_max_loss_pct',
+        'min_open_interest','min_volume','max_premium','max_required_move_pct','min_bid','max_spread','max_spread_pct','min_relative_spread','vol_spread_factor','expected_move_spread_fraction','entry_window','exit_days_before','exit_policy','delta_target','stop_loss_max_loss_pct',
         'historical_resolution','quote_resolution','entry_time_policy','exit_time_policy','slippage_model',
         'max_contracts','path_metrics'
     ]
@@ -802,6 +802,7 @@ def run_chunk_multiyear(run_dir: pathlib.Path, chunk: dict, years: int, args=Non
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
         ('max_premium', '--max-premium'),
+        ('max_required_move_pct', '--max-required-move-pct'),
         ('min_bid', '--min-bid'),
         ('max_spread', '--max-spread'),
         ('max_spread_pct', '--max-spread-pct'),
@@ -1102,6 +1103,7 @@ def run_multiyear_if_requested(run_dir: pathlib.Path, args) -> dict | None:
         ('max_contracts', '--max-contracts'),
         ('path_metrics', '--path-metrics'),
         ('max_premium', '--max-premium'),
+        ('max_required_move_pct', '--max-required-move-pct'),
         ('min_bid', '--min-bid'),
         ('max_spread', '--max-spread'),
         ('max_spread_pct', '--max-spread-pct'),
@@ -1755,6 +1757,7 @@ def add_qc_parameter_args(sp, *, default_stage_values=True):
     sp.add_argument('--min-open-interest', type=int, help='Candidate gate; omit to keep current diagnostic-only OI behavior')
     sp.add_argument('--min-volume', type=int, help='Candidate gate; omit to keep current diagnostic-only volume behavior')
     sp.add_argument('--max-premium', type=float, help='Max option ask premium gate; default/env QC_MAX_PREMIUM is 0.50, allowed 0.01..5.00')
+    sp.add_argument('--max-required-move-pct', type=float, default=None, help='Max required underlying move percent gate; omit to keep scanner/env default')
     sp.add_argument('--min-bid', type=float, help='Min option bid gate; default/env QC_MIN_BID is 0.05')
     sp.add_argument('--max-spread', type=float, help='Max absolute bid/ask spread gate for historical option-PnL validation; default is 0.25')
     sp.add_argument('--max-spread-pct', type=float, help='Max relative bid/ask spread gate; default/env QC_MAX_SPREAD_PCT is 0.60')
