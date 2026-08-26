@@ -435,6 +435,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "03_qc_expiry_within_0_7d_after_earnings": 26,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                 "04_qc_calls_ask_under_max_premium": 26,
+                "045_qc_required_move_under_ceiling": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -448,6 +449,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "03_qc_expiry_within_0_7d_after_earnings": 26,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                 "04_qc_calls_ask_under_max_premium": 26,
+                "045_qc_required_move_under_ceiling": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -460,6 +462,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "02_qc_option_chain_available": 73,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                 "04_qc_calls_ask_under_max_premium": 26,
+                "045_qc_required_move_under_ceiling": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -473,6 +476,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                 "03_qc_expiry_within_0_7d_after_earnings": 26,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                 "04_qc_calls_ask_under_max_premium": 26,
+                "045_qc_required_move_under_ceiling": 26,
                 "05_qc_liquidity_greeks_quality_pass": 1,
             },
         }
@@ -582,6 +586,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                             "03_qc_expiry_within_0_7d_after_earnings": 26,
                             "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                             "04_qc_calls_ask_under_max_premium": 26,
+                            "045_qc_required_move_under_ceiling": 26,
                             "05_qc_liquidity_greeks_quality_pass": 1,
                         },
                     }),
@@ -596,6 +601,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 26,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                     "04_qc_calls_ask_under_max_premium": 26,
+                    "045_qc_required_move_under_ceiling": 26,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -610,6 +616,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 26,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 26,
                     "04_qc_calls_ask_under_max_premium": 26,
+                    "045_qc_required_move_under_ceiling": 26,
                     "05_qc_liquidity_greeks_quality_pass": 0,
                 },
             }),
@@ -624,6 +631,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 0,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
                     "04_qc_calls_ask_under_max_premium": 0,
+                    "045_qc_required_move_under_ceiling": 0,
                     "05_qc_liquidity_greeks_quality_pass": 0,
                 },
             }),
@@ -638,6 +646,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 20,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 20,
                     "04_qc_calls_ask_under_max_premium": 20,
+                    "045_qc_required_move_under_ceiling": 20,
                     "05_qc_liquidity_greeks_quality_pass": 18,
                 },
             }),
@@ -652,6 +661,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
                     "04_qc_calls_ask_under_max_premium": 10,
+                    "045_qc_required_move_under_ceiling": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -666,6 +676,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 90,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 90,
                     "04_qc_calls_ask_under_max_premium": 1,
+                    "045_qc_required_move_under_ceiling": 1,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -681,6 +692,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
                     "04_qc_calls_ask_under_max_premium": 10,
+                    "045_qc_required_move_under_ceiling": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             })
@@ -695,6 +707,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 10,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 10,
                     "04_qc_calls_ask_under_max_premium": 10,
+                    "045_qc_required_move_under_ceiling": 10,
                     "05_qc_liquidity_greeks_quality_pass": 1,
                 },
             }),
@@ -4120,6 +4133,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                 "03_qc_expiry_within_0_7d_after_earnings": 100,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 100,
                 "04_qc_calls_ask_under_max_premium": 25,
+                "045_qc_required_move_under_ceiling": 25,
                 "05_qc_liquidity_greeks_quality_pass": 0,
             }},
             {"_chunk_offset": 650, "ok": False, "status": "BLOCKED_QC_BATCH_FAILED", "calendar_row_count": 185, "calendar_universe_count": 185, "qc_processed_row_count": 0, "qc_checks": {"qc_option_chain_batch_diagnostic": {"ok": False, "reason": "empty_batch"}}, "funnel": {}},
@@ -4305,6 +4319,137 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                 self.assertIsNone(funnel[key])
         self.assertEqual(mod.derive_funnel_bottleneck(out), mod.FUNNEL_INCOMPLETE_BOTTLENECK)
 
+    def test_aggregate_mixed_required_move_chunks_stays_unknown_in_both_orders(self):
+        mod = load_script("earnings-qc-research")
+        old_chunk = {
+            "ok": True,
+            "calendar_row_count": 6,
+            "calendar_universe_count": 6,
+            "qc_processed_row_count": 3,
+            "candidate_details": [],
+            "funnel": {
+                "02_qc_option_chain_available": 1,
+                "03_qc_expiry_within_0_7d_after_earnings": 1,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                "04_qc_calls_ask_under_max_premium": 1,
+                "04_qc_calls_ask_under_max_premium_symbols": ["AAA"],
+                "05_qc_liquidity_greeks_quality_pass": 0,
+                "05_qc_liquidity_greeks_quality_pass_symbols": [],
+            },
+        }
+        new_chunk = {
+            "ok": True,
+            "calendar_row_count": 6,
+            "calendar_universe_count": 6,
+            "qc_processed_row_count": 3,
+            "candidate_details": [],
+            "funnel": {
+                "02_qc_option_chain_available": 1,
+                "03_qc_expiry_within_0_7d_after_earnings": 1,
+                "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                "04_qc_calls_ask_under_max_premium": 1,
+                "04_qc_calls_ask_under_max_premium_symbols": ["CCC"],
+                "045_qc_required_move_under_ceiling": 1,
+                "045_qc_required_move_under_ceiling_symbols": ["CCC"],
+                "05_qc_liquidity_greeks_quality_pass": 0,
+                "05_qc_liquidity_greeks_quality_pass_symbols": [],
+            },
+        }
+
+        for chunks in ([old_chunk, new_chunk], [new_chunk, old_chunk]):
+            with self.subTest(order=[c["funnel"].get("045_qc_required_move_under_ceiling") for c in chunks]):
+                out = mod.aggregate(chunks)
+                funnel = out["aggregate_funnel"]
+                self.assertIsNone(funnel["045_qc_required_move_under_ceiling"])
+                self.assertEqual(funnel["045_qc_required_move_under_ceiling_symbols"], ["CCC"])
+                self.assertEqual(mod.derive_funnel_bottleneck(out), mod.FUNNEL_INCOMPLETE_BOTTLENECK)
+
+    def test_aggregate_all_old_required_move_chunks_do_not_backfill_from_premium(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 4,
+                "calendar_universe_count": 4,
+                "qc_processed_row_count": 2,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["AAA"],
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 4,
+                "calendar_universe_count": 4,
+                "qc_processed_row_count": 2,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["BBB"],
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+        ])
+
+        funnel = out["aggregate_funnel"]
+        self.assertEqual(funnel["04_qc_calls_ask_under_max_premium"], 2)
+        self.assertEqual(funnel["04_qc_calls_ask_under_max_premium_symbols"], ["AAA", "BBB"])
+        self.assertIsNone(funnel["045_qc_required_move_under_ceiling"])
+        self.assertEqual(funnel["045_qc_required_move_under_ceiling_symbols"], [])
+        self.assertEqual(mod.derive_funnel_bottleneck(out), mod.FUNNEL_INCOMPLETE_BOTTLENECK)
+
+    def test_aggregate_required_move_present_zero_is_not_absent(self):
+        mod = load_script("earnings-qc-research")
+        out = mod.aggregate([
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["AAA"],
+                    "045_qc_required_move_under_ceiling": 0,
+                    "045_qc_required_move_under_ceiling_symbols": [],
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+            {
+                "ok": True,
+                "calendar_row_count": 2,
+                "calendar_universe_count": 2,
+                "qc_processed_row_count": 1,
+                "candidate_details": [],
+                "funnel": {
+                    "02_qc_option_chain_available": 1,
+                    "03_qc_expiry_within_0_7d_after_earnings": 1,
+                    "035_qc_otm_expiry_within_0_7d_after_earnings": 1,
+                    "04_qc_calls_ask_under_max_premium": 1,
+                    "04_qc_calls_ask_under_max_premium_symbols": ["BBB"],
+                    "045_qc_required_move_under_ceiling": 0,
+                    "045_qc_required_move_under_ceiling_symbols": [],
+                    "05_qc_liquidity_greeks_quality_pass": 0,
+                },
+            },
+        ])
+
+        funnel = out["aggregate_funnel"]
+        self.assertEqual(funnel["045_qc_required_move_under_ceiling"], 0)
+        self.assertEqual(funnel["045_qc_required_move_under_ceiling_symbols"], [])
+        self.assertEqual(mod.derive_funnel_bottleneck(out), "required_move")
+
     def test_aggregate_all_zero_funnel_counts_keeps_real_stage_bottleneck(self):
         mod = load_script("earnings-qc-research")
         out = mod.aggregate([
@@ -4319,6 +4464,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 0,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
                     "04_qc_calls_ask_under_max_premium": 0,
+                    "045_qc_required_move_under_ceiling": 0,
                     "05_qc_liquidity_greeks_quality_pass": 0,
                 },
             },
@@ -4333,6 +4479,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                     "03_qc_expiry_within_0_7d_after_earnings": 0,
                     "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
                     "04_qc_calls_ask_under_max_premium": 0,
+                    "045_qc_required_move_under_ceiling": 0,
                     "05_qc_liquidity_greeks_quality_pass": 0,
                 },
             },

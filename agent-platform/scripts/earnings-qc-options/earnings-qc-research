@@ -259,12 +259,7 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
     final_count = int_or_none(summary.get('final_candidate_count') or summary.get('candidate_count')) or 0
     if final_count > 0:
         return None
-    funnel = dict(summary.get('aggregate_funnel') or summary.get('funnel') or {})
-    if (
-        funnel.get('045_qc_required_move_under_ceiling') is None
-        and funnel.get('04_qc_calls_ask_under_max_premium') is not None
-    ):
-        funnel['045_qc_required_move_under_ceiling'] = funnel.get('04_qc_calls_ask_under_max_premium')
+    funnel = summary.get('aggregate_funnel') or summary.get('funnel') or {}
     for key in INT_FUNNEL_KEYS:
         if int_or_none(funnel.get(key)) is None:
             return FUNNEL_INCOMPLETE_BOTTLENECK
@@ -902,19 +897,10 @@ def aggregate(chunks: list[dict]) -> dict:
         vals = []
         for d in effective_chunks:
             f = d.get('funnel') or {}
-            value = f.get(k)
-            if k == '045_qc_required_move_under_ceiling' and value is None:
-                value = f.get('04_qc_calls_ask_under_max_premium')
-            vals.append(value)
+            vals.append(f.get(k))
         int_vals = [v for v in vals if isinstance(v, int)]
         agg[k] = sum(int_vals) if len(int_vals) == len(vals) else None
-        if k == '045_qc_required_move_under_ceiling':
-            symbols = aggregate_funnel_symbols(effective_chunks, k)
-            if not symbols and agg[k] is not None:
-                symbols = aggregate_funnel_symbols(effective_chunks, '04_qc_calls_ask_under_max_premium')
-            agg[funnel_symbol_list_key(k)] = symbols
-        else:
-            agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(effective_chunks, k)
+        agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(effective_chunks, k)
     forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]; historical_result_symbols=set(); historical_results_by_symbol={}
     for d in chunks:
         if is_stale_empty_batch_chunk(d):
