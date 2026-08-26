@@ -30,6 +30,7 @@ INT_FUNNEL_KEYS = [
     '03_qc_expiry_within_0_7d_after_earnings',
     '035_qc_otm_expiry_within_0_7d_after_earnings',
     '04_qc_calls_ask_under_max_premium',
+    '045_qc_required_move_under_ceiling',
     '05_qc_liquidity_greeks_quality_pass',
 ]
 
@@ -39,6 +40,7 @@ BOTTLENECK_FUNNEL_STAGES = [
     ('03_qc_expiry_within_0_7d_after_earnings', 'expiry'),
     ('035_qc_otm_expiry_within_0_7d_after_earnings', 'otm_expiry'),
     ('04_qc_calls_ask_under_max_premium', 'premium'),
+    ('045_qc_required_move_under_ceiling', 'required_move'),
     ('05_qc_liquidity_greeks_quality_pass', 'liquidity'),
 ]
 FUNNEL_INCOMPLETE_BOTTLENECK = 'funnel_incomplete'
@@ -50,6 +52,7 @@ FUNNEL_SYMBOL_SOURCES = {
     '03_qc_expiry_within_0_7d_after_earnings': ('expiry_within_0_7d_after_earnings', '03_qc_expiry_within_0_7d_after_earnings_symbols'),
     '035_qc_otm_expiry_within_0_7d_after_earnings': ('otm_expiry_within_0_7d_after_earnings', '035_qc_otm_expiry_within_0_7d_after_earnings_symbols'),
     '04_qc_calls_ask_under_max_premium': ('calls_under_max_premium', '04_qc_calls_ask_under_max_premium_symbols'),
+    '045_qc_required_move_under_ceiling': ('required_move_under_ceiling', '045_qc_required_move_under_ceiling_symbols'),
     '05_qc_liquidity_greeks_quality_pass': ('liquidity_pass', '05_qc_liquidity_greeks_quality_pass_symbols'),
 }
 
@@ -256,7 +259,12 @@ def derive_funnel_bottleneck(summary: dict | None) -> str | None:
     final_count = int_or_none(summary.get('final_candidate_count') or summary.get('candidate_count')) or 0
     if final_count > 0:
         return None
-    funnel = summary.get('aggregate_funnel') or summary.get('funnel') or {}
+    funnel = dict(summary.get('aggregate_funnel') or summary.get('funnel') or {})
+    if (
+        funnel.get('045_qc_required_move_under_ceiling') is None
+        and funnel.get('04_qc_calls_ask_under_max_premium') is not None
+    ):
+        funnel['045_qc_required_move_under_ceiling'] = funnel.get('04_qc_calls_ask_under_max_premium')
     for key in INT_FUNNEL_KEYS:
         if int_or_none(funnel.get(key)) is None:
             return FUNNEL_INCOMPLETE_BOTTLENECK
@@ -713,6 +721,7 @@ def run_chunk(run_dir: pathlib.Path, offset: int, batch_size: int, symbols: list
             ('min_open_interest', '--min-open-interest'),
             ('min_volume', '--min-volume'),
             ('max_premium', '--max-premium'),
+            ('max_required_move_pct', '--max-required-move-pct'),
             ('min_bid', '--min-bid'),
             ('max_spread_pct', '--max-spread-pct'),
             ('min_relative_spread', '--min-relative-spread'),
@@ -890,10 +899,22 @@ def aggregate(chunks: list[dict]) -> dict:
         '07_multi_year_backtest_status': 'NOT_IMPLEMENTED_IN_RUNNER_YET_QC_EODHD_APPROVED',
     }
     for k in INT_FUNNEL_KEYS:
-        vals = [(d.get('funnel') or {}).get(k) for d in effective_chunks]
+        vals = []
+        for d in effective_chunks:
+            f = d.get('funnel') or {}
+            value = f.get(k)
+            if k == '045_qc_required_move_under_ceiling' and value is None:
+                value = f.get('04_qc_calls_ask_under_max_premium')
+            vals.append(value)
         int_vals = [v for v in vals if isinstance(v, int)]
         agg[k] = sum(int_vals) if len(int_vals) == len(vals) else None
-        agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(effective_chunks, k)
+        if k == '045_qc_required_move_under_ceiling':
+            symbols = aggregate_funnel_symbols(effective_chunks, k)
+            if not symbols and agg[k] is not None:
+                symbols = aggregate_funnel_symbols(effective_chunks, '04_qc_calls_ask_under_max_premium')
+            agg[funnel_symbol_list_key(k)] = symbols
+        else:
+            agg[funnel_symbol_list_key(k)] = aggregate_funnel_symbols(effective_chunks, k)
     forward_candidates=[]; final_candidates=[]; seen=set(); final_seen=set(); failed=[]; scanned=0; multiyear_statuses=[]; historical_result_symbols=set(); historical_results_by_symbol={}
     for d in chunks:
         if is_stale_empty_batch_chunk(d):
@@ -1011,6 +1032,7 @@ def hebrew_report(summary: dict, batch_size: int) -> str:
         f'- פקיעה עד 7 ימים אחרי הדוח: {f.get("03_qc_expiry_within_0_7d_after_earnings")}',
         f'- OTM בתוך חלון הפקיעה: {f.get("035_qc_otm_expiry_within_0_7d_after_earnings")}',
         f'- calls עם ask <= max premium: {f.get("04_qc_calls_ask_under_max_premium")}',
+        f'- required_move <= ceiling: {f.get("045_qc_required_move_under_ceiling")}',
         f'- liquidity/Greeks quality pass: {f.get("05_qc_liquidity_greeks_quality_pass")}',
         f'- multi-year backtest: {f.get("07_multi_year_backtest_status")}',
         f'- forward candidates לפני historical PnL: {summary.get("forward_candidate_count")}',

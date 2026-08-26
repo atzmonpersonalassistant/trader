@@ -216,6 +216,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "expiry_within_0_7d_after_earnings": 0,
             "otm_expiry_within_0_7d_after_earnings": 0,
             "calls_under_max_premium": 0,
+            "required_move_under_ceiling": 0,
             "liquidity_pass": 0,
             "candidates": 0,
         }
@@ -1344,6 +1345,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "expiry_within_0_7d_after_earnings": 0,
             "otm_expiry_within_0_7d_after_earnings": 0,
             "calls_under_max_premium": 0,
+            "required_move_under_ceiling": 0,
             "liquidity_pass": 0,
             "candidates": 0,
         }
@@ -1443,6 +1445,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "expiry_within_0_7d_after_earnings": 0,
             "otm_expiry_within_0_7d_after_earnings": 0,
             "calls_under_max_premium": 0,
+            "required_move_under_ceiling": 0,
             "liquidity_pass": 0,
             "candidates": 0,
         }
@@ -1547,6 +1550,7 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             "expiry_within_0_7d_after_earnings": 0,
             "otm_expiry_within_0_7d_after_earnings": 0,
             "calls_under_max_premium": 0,
+            "required_move_under_ceiling": 0,
             "liquidity_pass": 0,
             "candidates": 0,
         }
@@ -2891,6 +2895,69 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("volatility_aware_relative_expected_move_no_absolute_spread_gate", main)
 
 
+    def test_stage2_required_move_ceiling_fails_closed_and_keeps_boundary(self):
+        alg = self.build_stage2_algorithm(
+            [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
+            datetime.date(2026, 7, 14),
+        )
+        alg.max_required_move_pct = 35.0
+        alg.securities = {"OPEN": types.SimpleNamespace(price=10.0)}
+
+        def contract(symbol, strike, required_move_pct):
+            return types.SimpleNamespace(
+                symbol=symbol,
+                right="call",
+                strike=strike,
+                expiry=datetime.datetime(2026, 8, 7),
+                bid_price=0.10,
+                ask_price=0.11,
+                last_price=0.10,
+                volume=10,
+                open_interest=100,
+                implied_volatility=0.40,
+                greeks=types.SimpleNamespace(delta=0.30),
+                required_move_pct=required_move_pct,
+            )
+
+        chain = types.SimpleNamespace(symbol="OPEN OPTION", contracts=[
+            contract("OPEN_CALL_BELOW", 12.0, 25.0),
+            contract("OPEN_CALL_ON", 13.5, 35.0),
+            contract("OPEN_CALL_ABOVE", 14.0, 40.0),
+            contract("OPEN_CALL_NULL", 12.5, None),
+        ])
+
+        alg.time = datetime.datetime(2026, 7, 13, 16)
+        alg.on_data(types.SimpleNamespace(option_chains={"OPEN OPTION": chain}))
+
+        self.assertTrue(alg.quit_called)
+        self.assertEqual(alg.funnel["calls_under_max_premium"], 1)
+        self.assertEqual(alg.funnel["required_move_under_ceiling"], 1)
+        self.assertEqual(alg.funnel["liquidity_pass"], 1)
+        self.assertEqual(alg.funnel["candidates"], 1)
+        self.assertEqual(alg.rows[0]["cheap_calls_under_max_premium"], 4)
+        self.assertEqual(alg.rows[0]["required_move_under_ceiling"], 2)
+        self.assertEqual(alg.rows[0]["liquidity_pass"], 2)
+        self.assertEqual(
+            alg.rows[0]["liquidity_fail_reason_counts"],
+            {"required_move_above_ceiling": 1, "required_move_missing": 1},
+        )
+        details = {
+            detail["contract"]: detail
+            for detail in alg.rows[0]["cheap_contract_diagnostics_sample"]
+        }
+        self.assertTrue(details["OPEN_CALL_BELOW"]["required_move_gate_pass"])
+        self.assertTrue(details["OPEN_CALL_ON"]["required_move_gate_pass"])
+        self.assertFalse(details["OPEN_CALL_ABOVE"]["required_move_gate_pass"])
+        self.assertFalse(details["OPEN_CALL_NULL"]["required_move_gate_pass"])
+        self.assertEqual(details["OPEN_CALL_ON"]["required_move_pct"], 35.0)
+        self.assertIsNone(details["OPEN_CALL_NULL"]["required_move_pct"])
+        contracts = alg.candidate_details[0]["contracts"]
+        self.assertEqual([c["contract"] for c in contracts], ["OPEN_CALL_BELOW", "OPEN_CALL_ON"])
+        tuning = json.loads(alg.runtime_statistics["trader.tuning"])
+        self.assertEqual(tuning["max_required_move_pct"], 35.0)
+        self.assertEqual(tuning["required_move_policy"], "fail_closed_max_required_move_pct")
+
+
     def test_stage2_relaxes_oi_volume_and_absolute_spread_gates_with_diagnostics(self):
         alg = self.build_stage2_algorithm(
             [{"symbol": "OPEN", "report_date": "2026-08-04", "last_year_report_date": "8/05/2025"}],
@@ -4098,6 +4165,8 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                     "035_qc_otm_expiry_within_0_7d_after_earnings_symbols": ["AAA"],
                     "04_qc_calls_ask_under_max_premium": 1,
                     "04_qc_calls_ask_under_max_premium_symbols": ["AAA"],
+                    "045_qc_required_move_under_ceiling": 1,
+                    "045_qc_required_move_under_ceiling_symbols": ["AAA"],
                     "05_qc_liquidity_greeks_quality_pass": 0,
                     "05_qc_liquidity_greeks_quality_pass_symbols": [],
                 },
@@ -4119,6 +4188,8 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                     "035_qc_otm_expiry_within_0_7d_after_earnings_symbols": ["CCC"],
                     "04_qc_calls_ask_under_max_premium": 1,
                     "04_qc_calls_ask_under_max_premium_symbols": ["CCC"],
+                    "045_qc_required_move_under_ceiling": 1,
+                    "045_qc_required_move_under_ceiling_symbols": ["CCC"],
                     "05_qc_liquidity_greeks_quality_pass": 1,
                     "05_qc_liquidity_greeks_quality_pass_symbols": ["CCC"],
                 },
@@ -4131,6 +4202,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             "03_qc_expiry_within_0_7d_after_earnings": 2,
             "035_qc_otm_expiry_within_0_7d_after_earnings": 2,
             "04_qc_calls_ask_under_max_premium": 2,
+            "045_qc_required_move_under_ceiling": 2,
             "05_qc_liquidity_greeks_quality_pass": 1,
         }
         for key, value in expected_counts.items():
@@ -4142,6 +4214,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
         self.assertEqual(funnel["03_qc_expiry_within_0_7d_after_earnings_symbols"], ["AAA", "CCC"])
         self.assertEqual(funnel["035_qc_otm_expiry_within_0_7d_after_earnings_symbols"], ["AAA", "CCC"])
         self.assertEqual(funnel["04_qc_calls_ask_under_max_premium_symbols"], ["AAA", "CCC"])
+        self.assertEqual(funnel["045_qc_required_move_under_ceiling_symbols"], ["AAA", "CCC"])
         self.assertEqual(funnel["05_qc_liquidity_greeks_quality_pass_symbols"], ["CCC"])
         self.assertIn("02_qc_option_chain_available", funnel)
         self.assertNotIn("02_qc_option_chain_available_renamed", funnel)
@@ -4160,6 +4233,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
                 "03_qc_expiry_within_0_7d_after_earnings": 0,
                 "035_qc_otm_expiry_within_0_7d_after_earnings": 0,
                 "04_qc_calls_ask_under_max_premium": 0,
+                "045_qc_required_move_under_ceiling": 0,
                 "05_qc_liquidity_greeks_quality_pass": 0,
             },
         }])
@@ -4203,6 +4277,7 @@ class EarningsQcFailedChunkClassificationTests(unittest.TestCase):
             "03_qc_expiry_within_0_7d_after_earnings": 2,
             "035_qc_otm_expiry_within_0_7d_after_earnings": 2,
             "04_qc_calls_ask_under_max_premium": 2,
+            "045_qc_required_move_under_ceiling": 2,
             "05_qc_liquidity_greeks_quality_pass": 2,
         }
         out = mod.aggregate([
