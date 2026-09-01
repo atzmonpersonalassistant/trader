@@ -93,6 +93,14 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
         self.assertIn('agent-platform/runtime/bin/trading-research-watchdog-codex', bootstrap)
         self.assertIn('agent-platform/runtime/bin/trading-workspace-cleanup', bootstrap)
 
+    def test_bootstrap_creates_research_tmp_before_chmod(self) -> None:
+        bootstrap = (ROOT / 'agent-platform/scripts/bootstrap-new-vps.sh').read_text()
+        create = 'install_dir agent-research agent-research 750 /agents/research/tmp'
+        chmod = 'chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/tmp /agents/research/lean-workspace'
+        self.assertIn(create, bootstrap)
+        self.assertIn(chmod, bootstrap)
+        self.assertLess(bootstrap.index(create), bootstrap.index(chmod))
+
     def test_deploy_smoke_verifies_coding_codex_auth_not_only_binary(self) -> None:
         workflow = WORKFLOW.read_text()
         self.assertIn("sudo -n -u agent-coding bash -lc 'test -s /home/agent-coding/.codex/auth.json && codex --version >/dev/null'", workflow)

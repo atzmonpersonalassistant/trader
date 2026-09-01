@@ -170,6 +170,7 @@ install_dir agent-research agent-research 750 /agents/research
 install_dir agent-research agent-research 750 /agents/research/state
 install_dir agent-research agent-research 750 /agents/research/logs
 install_dir agent-research agent-research 750 /agents/research/reports
+install_dir agent-research agent-research 750 /agents/research/tmp
 install_dir agent-research agent-research 750 /agents/research/lean-workspace
 chown -R agent-research:agent-research /agents/research
 chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/tmp /agents/research/lean-workspace
