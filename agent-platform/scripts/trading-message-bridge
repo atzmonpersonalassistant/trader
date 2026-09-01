@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Bridge external Agent Message Box rows into GitHub.
+
+Reads messages from the Apps Script read API, then routes each new row to either:
+- a comment on an existing PR/issue when the message mentions a GitHub issue/PR URL or `PR #123` / `issue #123`, or
+- a new GitHub issue when no target is found.
+
+State is stored as JSON with the last processed Google Sheet row so messages are not replayed.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+DEFAULT_OWNER = os.environ.get("TRADING_GITHUB_OWNER", "atzmonpersonalassistant")
+DEFAULT_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
+DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
+DEFAULT_STATE = Path(os.environ.get("TRADING_MESSAGE_BRIDGE_STATE", "/agents/orchestrator/state/message-bridge-state.json"))
+DEFAULT_LABELS = ["external:reviewer", "agent:ready"]
+TARGET_RE = re.compile(
+    r"(?:github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/(\d+))|(?:\b(?:PR|pr|Issue|issue)\s*#\s*(\d+)\b)"
+)
+
+
+def mint_github_token(token_cmd: str) -> str:
+    return subprocess.check_output([token_cmd, "orchestrator"], text=True).strip()
+
+
+def read_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"last_row": 1, "processed_rows": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name, dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, sort_keys=True, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def fetch_rows(apps_script_url: str, bridge_token: str, after_row: int, limit: int) -> dict[str, Any]:
+    query = urllib.parse.urlencode({"action": "list", "after_row": str(after_row), "limit": str(limit), "token": bridge_token})
+    url = apps_script_url + ("&" if "?" in apps_script_url else "?") + query
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        body = resp.read().decode("utf-8")
+    data = json.loads(body)
+    if not data.get("ok"):
+        raise RuntimeError(f"Apps Script returned error: {data.get('error') or data}")
+    return data
+
+
+def github_request(method: str, url: str, token: str, payload: Any | None = None) -> Any:
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        url,
+        method=method,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "trading-message-bridge",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read().decode("utf-8")
+    return json.loads(body) if body else None
+
+
+def add_labels(owner: str, repo: str, number: int, labels: list[str], token: str) -> None:
+    if not labels:
+        return
+    github_request("POST", f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/labels", token, {"labels": labels})
+
+
+def find_target_number(message: str, default_target: int | None = None) -> int | None:
+    match = TARGET_RE.search(message)
+    if not match:
+        return default_target
+    raw = match.group(1) or match.group(2)
+    return int(raw) if raw else default_target
+
+
+def bridge_comment_body(row: dict[str, Any]) -> str:
+    return (
+        f"External reviewer message from Google Sheet bridge row {row['row']}, received {row.get('created_at') or 'unknown time'}.\n\n"
+        "The bridge only routed this message; it did not edit the repo, create branches, approve, or merge.\n\n"
+        f"Sender: {row.get('sender') or 'unknown'}\n"
+        f"Source page: {row.get('page_url') or 'unknown'}\n\n"
+        "## Message\n"
+        f"{row.get('message') or ''}"
+    )[:65000]
+
+
+def issue_title(row: dict[str, Any]) -> str:
+    first = " ".join((row.get("message") or "").strip().split())[:80]
+    return f"External reviewer request from bridge row {row['row']}: {first or 'message'}"
+
+
+def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None) -> dict[str, Any]:
+    message = row.get("message") or ""
+    target = find_target_number(message, args.default_target)
+    labels = [label for label in args.labels.split(",") if label]
+
+    if target:
+        action = {
+            "row": row["row"],
+            "action": "comment",
+            "target": target,
+            "labels": ["agent:needs-fix"],
+            "dry_run": args.dry_run,
+        }
+        if not args.dry_run:
+            assert token is not None
+            github_request("POST", f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target}/comments", token, {"body": bridge_comment_body(row)})
+            add_labels(args.owner, args.repo, target, ["agent:needs-fix", "external:reviewer"], token)
+        return action
+
+    action = {
+        "row": row["row"],
+        "action": "create_issue",
+        "title": issue_title(row),
+        "labels": labels,
+        "dry_run": args.dry_run,
+    }
+    if not args.dry_run:
+        assert token is not None
+        issue = github_request(
+            "POST",
+            f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",
+            token,
+            {"title": issue_title(row), "body": bridge_comment_body(row), "labels": labels},
+        )
+        action["created_issue"] = issue.get("number")
+    return action
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apps-script-url", default=os.environ.get("TRADING_MESSAGE_BRIDGE_URL"), required=not os.environ.get("TRADING_MESSAGE_BRIDGE_URL"))
+    parser.add_argument("--bridge-token", default=os.environ.get("TRADING_MESSAGE_BRIDGE_TOKEN"), required=not os.environ.get("TRADING_MESSAGE_BRIDGE_TOKEN"))
+    parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--owner", default=DEFAULT_OWNER)
+    parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument("--token-cmd", default=DEFAULT_TOKEN_CMD)
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--default-target", type=int, default=None, help="Fallback GitHub issue/PR number when a row does not mention one.")
+    parser.add_argument("--labels", default=",".join(DEFAULT_LABELS), help="Comma-separated labels for newly created issues.")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--start-at-latest", action="store_true", help="Initialize state to current last_row without routing old messages.")
+    args = parser.parse_args(argv)
+
+    state = read_state(args.state)
+    after_row = int(state.get("last_row") or 1)
+    data = fetch_rows(args.apps_script_url, args.bridge_token, after_row, args.limit)
+
+    if args.start_at_latest:
+        state["last_row"] = int(data.get("last_row") or after_row)
+        write_state(args.state, state)
+        print(json.dumps({"ok": True, "initialized_last_row": state["last_row"]}, sort_keys=True))
+        return 0
+
+    token = None if args.dry_run else mint_github_token(args.token_cmd)
+    results = []
+    for row in data.get("messages") or []:
+        row_number = int(row.get("row") or 0)
+        if row_number <= after_row:
+            continue
+        result = process_row(args, row, token)
+        results.append(result)
+        state["last_row"] = max(int(state.get("last_row") or 1), row_number)
+        processed = list(state.get("processed_rows") or [])[-99:]
+        processed.append({"row": row_number, "action": result.get("action"), "target": result.get("target") or result.get("created_issue")})
+        state["processed_rows"] = processed
+        if not args.dry_run:
+            write_state(args.state, state)
+
+    if args.dry_run:
+        print(json.dumps({"ok": True, "dry_run": True, "after_row": after_row, "results": results}, sort_keys=True, indent=2))
+    else:
+        write_state(args.state, state)
+        print(json.dumps({"ok": True, "processed": len(results), "last_row": state.get("last_row"), "results": results}, sort_keys=True, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
