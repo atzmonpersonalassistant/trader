@@ -783,7 +783,7 @@ jobs:
             ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
           fi
           systemctl cat trading-orchestrator.timer | grep -q 'OnUnitActiveSec=10min'
-          systemctl cat trading-workspace-cleanup.timer | grep -q 'OnCalendar=*-*-* *:17:00'
+          systemctl cat trading-workspace-cleanup.timer | grep -q 'OnCalendar=daily'
           systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 10:30:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
