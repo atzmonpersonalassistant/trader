@@ -1,0 +1,9 @@
+[Unit]
+Description=Trader research artifact and database retention
+
+[Service]
+Type=oneshot
+Environment=TZ=Asia/Jerusalem
+User=agent-research
+Group=agent-research
+ExecStart=/bin/bash -lc 'set -euo pipefail; /agents/research/bin/earnings-qc-research cleanup --older-than-days 3 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'

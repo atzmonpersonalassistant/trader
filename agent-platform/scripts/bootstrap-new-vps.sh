@@ -17,7 +17,8 @@ if [[ "${1:-}" == "--install-system-packages" ]]; then
   INSTALL_TOOLS="1"
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-TOOLS_DIR="$(cd -- "${SCRIPT_DIR}/../tools" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+TOOLS_DIR="${REPO_ROOT}/agent-platform/tools"
 SCRIPTS_DIR="$SCRIPT_DIR"
 EARNINGS_DIR="${SCRIPTS_DIR}/earnings-qc-options"
 
@@ -169,9 +170,10 @@ install_dir agent-research agent-research 750 /agents/research
 install_dir agent-research agent-research 750 /agents/research/state
 install_dir agent-research agent-research 750 /agents/research/logs
 install_dir agent-research agent-research 750 /agents/research/reports
+install_dir agent-research agent-research 750 /agents/research/tmp
 install_dir agent-research agent-research 750 /agents/research/lean-workspace
 chown -R agent-research:agent-research /agents/research
-chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/lean-workspace
+chmod 750 /agents/research /agents/research/state /agents/research/logs /agents/research/reports /agents/research/tmp /agents/research/lean-workspace
 install_dir agent-research agent-research-runner 750 /agents/research/handoff
 
 install_dir agent-validator agent-validator 750 /agents/validator
@@ -239,109 +241,9 @@ SUDOERS
 chmod 440 /etc/sudoers.d/trading-agent-orchestrator-dispatch
 visudo -cf /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null
 
-cat > /usr/local/bin/trading-research-runner-codex <<'RUNNER_CODEX'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-  echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
-  exit 64
-fi
-TASK_FILE="$1"
-OUTPUT_DIR="$2"
-MODEL="${3:-gpt-5.4-mini}"
-case "$MODEL" in
-  *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
-esac
-case "$TASK_FILE" in
-  /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
-  *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
-esac
-case "$OUTPUT_DIR" in
-  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
-  *) echo "ERROR: output dir must be an approved research reports directory" >&2; exit 67 ;;
-esac
-if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
-  echo "ERROR: task/output permissions are not usable" >&2
-  exit 66
-fi
-TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
-OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
-case "$TASK_REAL" in
-  /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
-  *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
-esac
-case "$OUT_REAL" in
-  /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
-  *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
-esac
-cd "$OUT_REAL"
-export HOME=/home/agent-research-runner
-export PATH=/usr/local/bin:/usr/bin:/bin
-export PYTHONDONTWRITEBYTECODE=1
-umask 0007
-if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
-  echo "ERROR: runner user can read QuantConnect secrets" >&2
-  exit 71
-fi
-exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
-RUNNER_CODEX
-chown root:root /usr/local/bin/trading-research-runner-codex
-chmod 755 /usr/local/bin/trading-research-runner-codex
-
-cat > /usr/local/bin/trading-research-watchdog-codex <<'WATCHDOG_CODEX'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-  echo "usage: trading-research-watchdog-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
-  exit 64
-fi
-TASK_FILE="$1"
-OUTPUT_DIR="$2"
-MODEL="${3:-gpt-5.4-mini}"
-case "$MODEL" in
-  *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
-esac
-case "$TASK_FILE" in
-  /agents/research/handoff/research-watchdog-*-task.txt) ;;
-  *) echo "ERROR: task file must be an approved watchdog handoff" >&2; exit 65 ;;
-esac
-case "$OUTPUT_DIR" in
-  /agents/research/reports/research-watchdog-*) ;;
-  *) echo "ERROR: output dir must be an approved watchdog reports directory" >&2; exit 67 ;;
-esac
-if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
-  echo "ERROR: task/output permissions are not usable" >&2
-  exit 66
-fi
-TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
-OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
-case "$TASK_REAL" in
-  /agents/research/handoff/research-watchdog-*-task.txt) ;;
-  *) echo "ERROR: resolved task path escaped watchdog handoff" >&2; exit 68 ;;
-esac
-case "$OUT_REAL" in
-  /agents/research/reports/research-watchdog-*) ;;
-  *) echo "ERROR: resolved output path escaped watchdog reports" >&2; exit 69 ;;
-esac
-cd "$OUT_REAL"
-export HOME=/home/agent-research-watchdog
-export PATH=/usr/local/bin:/usr/bin:/bin
-export PYTHONDONTWRITEBYTECODE=1
-umask 0007
-if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
-  echo "ERROR: watchdog user can read QuantConnect secrets" >&2
-  exit 71
-fi
-if sudo -n -l 2>/dev/null | grep -q 'trading-research-bounded-earnings-qc'; then
-  echo "ERROR: watchdog user has bounded QC sudo access" >&2
-  exit 72
-fi
-exec /usr/bin/timeout 20m /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
-WATCHDOG_CODEX
-chown root:root /usr/local/bin/trading-research-watchdog-codex
-chmod 755 /usr/local/bin/trading-research-watchdog-codex
-
-
+install -o root -g root -m 755 "$REPO_ROOT/agent-platform/runtime/bin/trading-research-runner-codex" /usr/local/bin/trading-research-runner-codex
+install -o root -g root -m 755 "$REPO_ROOT/agent-platform/runtime/bin/trading-research-watchdog-codex" /usr/local/bin/trading-research-watchdog-codex
+install -o root -g root -m 755 "$REPO_ROOT/agent-platform/runtime/bin/trading-workspace-cleanup" /usr/local/bin/trading-workspace-cleanup
 cat > /etc/sudoers.d/trading-agent-research-runner <<'SUDOERS_RUNNER'
 # Allow the research loop to run only the offline Codex wrapper as the isolated runner user.
 agent-research ALL=(agent-research-runner) NOPASSWD: /usr/local/bin/trading-research-runner-codex *

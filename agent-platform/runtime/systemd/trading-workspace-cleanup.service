@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading MVP-0 workspace cleanup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent-orchestrator
+Group=agent-orchestrator
+ExecStart=/usr/local/bin/trading-workspace-cleanup
+WorkingDirectory=/agents/orchestrator

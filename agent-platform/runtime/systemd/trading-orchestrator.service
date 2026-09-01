@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading MVP-0 Orchestrator polling tick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agent-orchestrator
+Group=agent-orchestrator
+ExecStart=/usr/local/bin/trading-orchestrator-tick
+WorkingDirectory=/agents/orchestrator

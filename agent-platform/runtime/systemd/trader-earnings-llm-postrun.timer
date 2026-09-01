@@ -1,0 +1,9 @@
+[Unit]
+Description=Run trader earnings LLM postrun review every five minutes in Asia/Jerusalem time
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00 Asia/Jerusalem
+Persistent=false
+
+[Install]
+WantedBy=timers.target

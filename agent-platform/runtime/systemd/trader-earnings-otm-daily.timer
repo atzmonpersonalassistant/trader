@@ -1,0 +1,9 @@
+[Unit]
+Description=Run trader earnings OTM deterministic daily scan at 10:30 Asia/Jerusalem
+
+[Timer]
+OnCalendar=*-*-* 10:30:00 Asia/Jerusalem
+Persistent=false
+
+[Install]
+WantedBy=timers.target

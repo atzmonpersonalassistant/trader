@@ -1,0 +1,9 @@
+[Unit]
+Description=Run trader research retention daily before the earnings scan
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 Asia/Jerusalem
+Persistent=false
+
+[Install]
+WantedBy=timers.target

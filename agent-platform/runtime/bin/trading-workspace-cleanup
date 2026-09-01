@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+LOG_DIR=/agents/orchestrator/logs
+LOCK=/agents/orchestrator/state/workspace-cleanup.lock
+mkdir -p "$LOG_DIR" /agents/orchestrator/state
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "$(date -Is) cleanup already running"
+  exit 0
+fi
+{
+  echo "$(date -Is) cleanup start"
+  trading-orchestrator cleanup-workspaces --older-than-hours 24 --confirm-delete
+  echo "$(date -Is) cleanup end"
+} >>"$LOG_DIR/workspace-cleanup.log" 2>&1

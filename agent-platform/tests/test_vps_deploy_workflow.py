@@ -17,6 +17,7 @@ else:
 
 WORKFLOW = Path('.github/workflows/vps-deploy.yml')
 OPERATOR_RUNBOOK = Path('agent-platform/docs/mvp0/operator-runbook.md')
+RUNTIME_SYSTEMD = Path('agent-platform/runtime/systemd')
 
 
 def workflow_text():
@@ -115,7 +116,8 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertNotIn('CRON_TZ=Asia/Jerusalem', workflow)
         self.assertNotIn('0 6 * * * /agents/research/bin/earnings-otm-daily.sh', workflow)
         self.assertIn('trader-earnings-otm-daily.timer', workflow)
-        self.assertIn('OnCalendar=*-*-* 10:30:00 Asia/Jerusalem', workflow)
+        daily_timer = (RUNTIME_SYSTEMD / 'trader-earnings-otm-daily.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* 10:30:00 Asia/Jerusalem', daily_timer)
         self.assertNotIn('Timezone=Asia/Jerusalem', workflow)
         self.assertIn('/agents/research/bin/earnings-llm-postrun-review', workflow)
         self.assertIn('agent-platform/skills/trader-research-system/**', workflow)
@@ -126,19 +128,23 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('# END trader managed LLM postrun review', workflow)
         self.assertNotIn('*/5 * * * * /agents/research/bin/earnings-llm-postrun-review', workflow)
         self.assertIn('trader-earnings-llm-postrun.timer', workflow)
-        self.assertIn('OnCalendar=*-*-* *:0/5:00 Asia/Jerusalem', workflow)
+        postrun_timer = (RUNTIME_SYSTEMD / 'trader-earnings-llm-postrun.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* *:0/5:00 Asia/Jerusalem', postrun_timer)
+        postrun_service = (RUNTIME_SYSTEMD / 'trader-earnings-llm-postrun.service').read_text()
         self.assertNotIn('*/30 * * * * /agents/research/bin/earnings-llm-postrun-review', workflow)
-        self.assertIn('llm-postrun-review.log', workflow)
+        self.assertIn('llm-postrun-review.log', postrun_service)
         self.assertIn('earnings-llm-research-watchdog', workflow)
         self.assertIn('# BEGIN trader managed LLM research watchdog', workflow)
         self.assertIn('# END trader managed LLM research watchdog', workflow)
         self.assertNotIn('*/15 * * * * /agents/research/bin/earnings-llm-research-watchdog', workflow)
         self.assertIn('trader-earnings-llm-watchdog.timer', workflow)
-        self.assertIn('OnCalendar=*-*-* *:0/15:00 Asia/Jerusalem', workflow)
-        self.assertIn('EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT=10:30', workflow)
-        self.assertIn('EARNINGS_WATCHDOG_DAILY_SCHEDULE=10:30', workflow)
-        self.assertIn('EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem', workflow)
-        self.assertIn('llm-research-watchdog.log', workflow)
+        watchdog_timer = (RUNTIME_SYSTEMD / 'trader-earnings-llm-watchdog.timer').read_text()
+        self.assertIn('OnCalendar=*-*-* *:0/15:00 Asia/Jerusalem', watchdog_timer)
+        watchdog_service = (RUNTIME_SYSTEMD / 'trader-earnings-llm-watchdog.service').read_text()
+        self.assertIn('EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT=10:30', postrun_service)
+        self.assertIn('EARNINGS_WATCHDOG_DAILY_SCHEDULE=10:30', watchdog_service)
+        self.assertIn('EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem', watchdog_service)
+        self.assertIn('llm-research-watchdog.log', watchdog_service)
         self.assertNotIn('earnings-llm-postrun-review || true', workflow)
         self.assertIn('DAILY_RUN_LOCK_CONTENDED lock=$LOCK holder=$holder', workflow)
         self.assertIn('holder="$(fuser "$LOCK"', workflow)
@@ -172,30 +178,38 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\\*-\\*-\\* 10:30:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/5:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/15:00 Asia/Jerusalem'", workflow)
+        cleanup_timer = (RUNTIME_SYSTEMD / 'trading-workspace-cleanup.timer').read_text()
+        self.assertIn('OnCalendar=daily', cleanup_timer)
+        self.assertIn("systemctl cat trading-workspace-cleanup.timer | grep -q 'OnCalendar=daily'", workflow)
+        self.assertIn('! systemctl is-enabled --quiet trading-workspace-cleanup.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-otm-daily.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-postrun.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer', workflow)
 
     def test_daily_schedule_env_vars_match_managed_timer(self):
-        workflow = workflow_text()
+        daily_timer = (RUNTIME_SYSTEMD / 'trader-earnings-otm-daily.timer').read_text()
+        postrun_service = (RUNTIME_SYSTEMD / 'trader-earnings-llm-postrun.service').read_text()
+        watchdog_service = (RUNTIME_SYSTEMD / 'trader-earnings-llm-watchdog.service').read_text()
         match = re.search(
             r'OnCalendar=\*-\*-\* (?P<hour>\d{1,2}):(?P<minute>\d{2}):00 Asia/Jerusalem',
-            workflow,
+            daily_timer,
         )
         self.assertIsNotNone(match)
         daily_schedule = f"{match.group('hour')}:{match.group('minute')}"
 
-        self.assertIn(f'Environment=EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT={daily_schedule}', workflow)
-        self.assertIn(f'Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE={daily_schedule}', workflow)
+        self.assertIn(f'Environment=EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT={daily_schedule}', postrun_service)
+        self.assertIn(f'Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE={daily_schedule}', watchdog_service)
 
     def test_managed_research_retention_timer_is_verified(self):
         workflow = workflow_text()
+        retention_timer = (RUNTIME_SYSTEMD / 'trader-research-retention.timer').read_text()
+        retention_service = (RUNTIME_SYSTEMD / 'trader-research-retention.service').read_text()
 
         self.assertIn('trader-research-retention.service', workflow)
         self.assertIn('trader-research-retention.timer', workflow)
-        self.assertIn('OnCalendar=*-*-* 04:15:00 Asia/Jerusalem', workflow)
-        self.assertIn('earnings-qc-research cleanup --older-than-days 3 --keep-last 20', workflow)
-        self.assertIn('User=agent-research', workflow)
+        self.assertIn('OnCalendar=*-*-* 04:15:00 Asia/Jerusalem', retention_timer)
+        self.assertIn('earnings-qc-research cleanup --older-than-days 3 --keep-last 20', retention_service)
+        self.assertIn('User=agent-research', retention_service)
         self.assertIn("systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\\*-\\*-\\* 04:15:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 3 --keep-last 20'", workflow)
         self.assertIn('systemctl is-enabled --quiet trader-research-retention.timer', workflow)
