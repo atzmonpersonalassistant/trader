@@ -174,10 +174,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         workflow = workflow_text()
 
         self.assertIn('systemctl daemon-reload', workflow)
-        self.assertIn('systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer', workflow)
+        self.assertIn('systemctl enable --now trading-orchestrator.timer trading-workspace-cleanup.timer trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer', workflow)
         self.assertIn("systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\\*-\\*-\\* 10:30:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/5:00 Asia/Jerusalem'", workflow)
         self.assertIn("systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\\*-\\*-\\* \\*:0/15:00 Asia/Jerusalem'", workflow)
+        self.assertIn('systemctl is-enabled --quiet trading-orchestrator.timer', workflow)
+        self.assertIn('systemctl is-enabled --quiet trading-workspace-cleanup.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-otm-daily.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-postrun.timer', workflow)
         self.assertIn('systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer', workflow)

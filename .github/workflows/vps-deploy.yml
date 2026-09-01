@@ -606,7 +606,7 @@ jobs:
           sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-workspace-cleanup.timer" /etc/systemd/system/trading-workspace-cleanup.timer
           command -v systemctl >/dev/null 2>&1
           sudo systemctl daemon-reload
-          sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
+          sudo systemctl enable --now trading-orchestrator.timer trading-workspace-cleanup.timer trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
@@ -782,12 +782,16 @@ jobs:
             ! grep -q '/usr/local/bin/earnings-qc-daily-run.sh' /tmp/trader-root-crontab.txt
             ! grep -q '/usr/local/bin/earnings-otm-daily-root.sh' /tmp/trader-root-crontab.txt
           fi
+          systemctl cat trading-orchestrator.timer | grep -q 'OnUnitActiveSec=10min'
+          systemctl cat trading-workspace-cleanup.timer | grep -q 'OnCalendar=*-*-* *:17:00'
           systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 10:30:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\*-\*-\* 04:15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 3 --keep-last 20'
           systemctl cat trader-research-retention.service | grep -q 'User=agent-research'
+          systemctl is-enabled --quiet trading-orchestrator.timer
+          systemctl is-enabled --quiet trading-workspace-cleanup.timer
           systemctl is-enabled --quiet trader-earnings-otm-daily.timer
           systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
           systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer
