@@ -1,0 +1,12 @@
+[Unit]
+Description=Trader earnings LLM research watchdog
+
+[Service]
+Type=oneshot
+User=agent-research
+Group=agent-research
+Environment=TZ=Asia/Jerusalem
+Environment=HOME=/home/agent-research
+Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE=10:30
+Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem
+ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1'

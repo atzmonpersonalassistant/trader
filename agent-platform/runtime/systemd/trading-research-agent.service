@@ -1,0 +1,18 @@
+[Unit]
+Description=Trading Research Agent 24/7 loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-research
+Group=agent-research
+WorkingDirectory=/agents/research/tmp
+ExecStart=/usr/local/bin/trading-research-agent-loop
+Restart=always
+RestartSec=60
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Trader earnings OTM deterministic daily scan
+
+[Service]
+Type=oneshot
+User=agent-research
+Group=agent-research
+Environment=TZ=Asia/Jerusalem
+Environment=HOME=/home/agent-research
+ExecStart=/agents/research/bin/earnings-otm-daily.sh

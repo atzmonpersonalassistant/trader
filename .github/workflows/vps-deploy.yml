@@ -17,6 +17,7 @@ on:
       - "agent-platform/scripts/earnings-qc-options/**"
       - "agent-platform/skills/trader-research-system/**"
       - "agent-platform/scripts/trading-orchestrator-tick"
+      - "agent-platform/runtime/**"
       - ".github/workflows/vps-deploy.yml"
   workflow_dispatch:
 
@@ -130,6 +131,22 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
+            agent-platform/runtime/bin/trading-research-runner-codex \
+            agent-platform/runtime/bin/trading-research-watchdog-codex \
+            agent-platform/runtime/bin/trading-workspace-cleanup \
+            agent-platform/runtime/systemd/trading-orchestrator.service \
+            agent-platform/runtime/systemd/trading-orchestrator.timer \
+            agent-platform/runtime/systemd/trading-research-agent.service \
+            agent-platform/runtime/systemd/trading-workspace-cleanup.service \
+            agent-platform/runtime/systemd/trading-workspace-cleanup.timer \
+            agent-platform/runtime/systemd/trader-earnings-otm-daily.service \
+            agent-platform/runtime/systemd/trader-earnings-otm-daily.timer \
+            agent-platform/runtime/systemd/trader-earnings-llm-postrun.service \
+            agent-platform/runtime/systemd/trader-earnings-llm-postrun.timer \
+            agent-platform/runtime/systemd/trader-earnings-llm-watchdog.service \
+            agent-platform/runtime/systemd/trader-earnings-llm-watchdog.timer \
+            agent-platform/runtime/systemd/trader-research-retention.service \
+            agent-platform/runtime/systemd/trader-research-retention.timer \
             agent-platform/tools/trading_agent_token.py \
             agent-platform/tools/trading_orchestrator.py \
             agent-platform/tools/trading_coding_agent.py \
@@ -569,100 +586,19 @@ jobs:
           ' "$tmp_research_cron" >"$tmp_research_cron_new"
           sudo -n -u agent-research crontab - <"$tmp_research_cron_new"
           rm -f "$tmp_research_cron" "$tmp_research_cron_new"
-          sudo tee /etc/systemd/system/trader-earnings-otm-daily.service >/dev/null <<'EOF_DAILY_SERVICE'
-          [Unit]
-          Description=Trader earnings OTM deterministic daily scan
-
-          [Service]
-          Type=oneshot
-          User=agent-research
-          Group=agent-research
-          Environment=TZ=Asia/Jerusalem
-          Environment=HOME=/home/agent-research
-          ExecStart=/agents/research/bin/earnings-otm-daily.sh
-          EOF_DAILY_SERVICE
-          sudo tee /etc/systemd/system/trader-earnings-otm-daily.timer >/dev/null <<'EOF_DAILY_TIMER'
-          [Unit]
-          Description=Run trader earnings OTM deterministic daily scan at 10:30 Asia/Jerusalem
-
-          [Timer]
-          OnCalendar=*-*-* 10:30:00 Asia/Jerusalem
-          Persistent=false
-
-          [Install]
-          WantedBy=timers.target
-          EOF_DAILY_TIMER
-          sudo tee /etc/systemd/system/trader-earnings-llm-postrun.service >/dev/null <<'EOF_POSTRUN_SERVICE'
-          [Unit]
-          Description=Trader earnings LLM postrun review
-
-          [Service]
-          Type=oneshot
-          User=agent-research
-          Group=agent-research
-          Environment=TZ=Asia/Jerusalem
-          Environment=HOME=/home/agent-research
-          Environment=EARNINGS_POSTRUN_DAILY_RUN_SCHEDULED_AT=10:30
-          ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-postrun-review >> /agents/research/logs/earnings-qc-research/llm-postrun-review.log 2>&1'
-          EOF_POSTRUN_SERVICE
-          sudo tee /etc/systemd/system/trader-earnings-llm-postrun.timer >/dev/null <<'EOF_POSTRUN_TIMER'
-          [Unit]
-          Description=Run trader earnings LLM postrun review every five minutes in Asia/Jerusalem time
-
-          [Timer]
-          OnCalendar=*-*-* *:0/5:00 Asia/Jerusalem
-          Persistent=false
-
-          [Install]
-          WantedBy=timers.target
-          EOF_POSTRUN_TIMER
-          sudo tee /etc/systemd/system/trader-earnings-llm-watchdog.service >/dev/null <<'EOF_WATCHDOG_SERVICE'
-          [Unit]
-          Description=Trader earnings LLM research watchdog
-
-          [Service]
-          Type=oneshot
-          User=agent-research
-          Group=agent-research
-          Environment=TZ=Asia/Jerusalem
-          Environment=HOME=/home/agent-research
-          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE=10:30
-          Environment=EARNINGS_WATCHDOG_DAILY_SCHEDULE_ZONE=Asia/Jerusalem
-          ExecStart=/bin/bash -lc '/agents/research/bin/earnings-llm-research-watchdog >> /agents/research/logs/earnings-qc-research/llm-research-watchdog.log 2>&1'
-          EOF_WATCHDOG_SERVICE
-          sudo tee /etc/systemd/system/trader-earnings-llm-watchdog.timer >/dev/null <<'EOF_WATCHDOG_TIMER'
-          [Unit]
-          Description=Run trader earnings LLM research watchdog every fifteen minutes in Asia/Jerusalem time
-
-          [Timer]
-          OnCalendar=*-*-* *:0/15:00 Asia/Jerusalem
-          Persistent=false
-
-          [Install]
-          WantedBy=timers.target
-          EOF_WATCHDOG_TIMER
-          sudo tee /etc/systemd/system/trader-research-retention.service >/dev/null <<'EOF_RETENTION_SERVICE'
-          [Unit]
-          Description=Trader research artifact and database retention
-
-          [Service]
-          Type=oneshot
-          Environment=TZ=Asia/Jerusalem
-          User=agent-research
-          Group=agent-research
-          ExecStart=/bin/bash -lc 'set -euo pipefail; /agents/research/bin/earnings-qc-research cleanup --older-than-days 3 --keep-last 20 >> /agents/research/logs/earnings-qc-research/retention.log 2>&1'
-          EOF_RETENTION_SERVICE
-          sudo tee /etc/systemd/system/trader-research-retention.timer >/dev/null <<'EOF_RETENTION_TIMER'
-          [Unit]
-          Description=Run trader research retention daily before the earnings scan
-
-          [Timer]
-          OnCalendar=*-*-* 04:15:00 Asia/Jerusalem
-          Persistent=false
-
-          [Install]
-          WantedBy=timers.target
-          EOF_RETENTION_TIMER
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-otm-daily.service" /etc/systemd/system/trader-earnings-otm-daily.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-otm-daily.timer" /etc/systemd/system/trader-earnings-otm-daily.timer
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-llm-postrun.service" /etc/systemd/system/trader-earnings-llm-postrun.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-llm-postrun.timer" /etc/systemd/system/trader-earnings-llm-postrun.timer
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-llm-watchdog.service" /etc/systemd/system/trader-earnings-llm-watchdog.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-earnings-llm-watchdog.timer" /etc/systemd/system/trader-earnings-llm-watchdog.timer
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-research-retention.service" /etc/systemd/system/trader-research-retention.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trader-research-retention.timer" /etc/systemd/system/trader-research-retention.timer
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-orchestrator.service" /etc/systemd/system/trading-orchestrator.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-orchestrator.timer" /etc/systemd/system/trading-orchestrator.timer
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-research-agent.service" /etc/systemd/system/trading-research-agent.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-workspace-cleanup.service" /etc/systemd/system/trading-workspace-cleanup.service
+          sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-workspace-cleanup.timer" /etc/systemd/system/trading-workspace-cleanup.timer
           command -v systemctl >/dev/null 2>&1
           sudo systemctl daemon-reload
           sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
@@ -805,106 +741,9 @@ jobs:
           sudo test -s /home/agent-research-watchdog/.codex/auth.json
           sudo -n -u agent-research-runner bash -lc 'test -s /home/agent-research-runner/.codex/auth.json && codex --version >/dev/null'
           sudo -n -u agent-research-watchdog bash -lc 'test -s /home/agent-research-watchdog/.codex/auth.json && codex --version >/dev/null'
-          sudo tee /usr/local/bin/trading-research-runner-codex >/dev/null <<'RUNNER_CODEX'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-            echo "usage: trading-research-runner-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
-            exit 64
-          fi
-          TASK_FILE="$1"
-          OUTPUT_DIR="$2"
-          MODEL="${3:-gpt-5.4-mini}"
-          case "$MODEL" in
-            *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
-          esac
-          case "$TASK_FILE" in
-            /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
-            *) echo "ERROR: task file must be an approved research handoff" >&2; exit 65 ;;
-          esac
-          case "$OUTPUT_DIR" in
-            /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
-            *) echo "ERROR: output dir must be an approved research reports directory" >&2; exit 67 ;;
-          esac
-          if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
-            echo "ERROR: task/output permissions are not usable" >&2
-            exit 66
-          fi
-          TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
-          OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
-          case "$TASK_REAL" in
-            /agents/research/handoff/research-pass-*-task.txt|/agents/research/handoff/idea-generation-*-task.txt) ;;
-            *) echo "ERROR: resolved task path escaped handoff" >&2; exit 68 ;;
-          esac
-          case "$OUT_REAL" in
-            /agents/research/reports/research-pass-*|/agents/research/reports/idea-generation-*) ;;
-            *) echo "ERROR: resolved output path escaped reports" >&2; exit 69 ;;
-          esac
-          cd "$OUT_REAL"
-          export HOME=/home/agent-research-runner
-          export PATH=/usr/local/bin:/usr/bin:/bin
-          export PYTHONDONTWRITEBYTECODE=1
-          umask 0007
-          if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
-            echo "ERROR: runner user can read QuantConnect secrets" >&2
-            exit 71
-          fi
-          exec /usr/bin/timeout 6h /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
-          RUNNER_CODEX
-          sudo chown root:root /usr/local/bin/trading-research-runner-codex
-          sudo chmod 755 /usr/local/bin/trading-research-runner-codex
-          sudo tee /usr/local/bin/trading-research-watchdog-codex >/dev/null <<'WATCHDOG_CODEX'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-            echo "usage: trading-research-watchdog-codex TASK_FILE OUTPUT_DIR [MODEL]" >&2
-            exit 64
-          fi
-          TASK_FILE="$1"
-          OUTPUT_DIR="$2"
-          MODEL="${3:-gpt-5.4-mini}"
-          case "$MODEL" in
-            *[!A-Za-z0-9._/-]*|"") echo "ERROR: unsafe model name" >&2; exit 70 ;;
-          esac
-          case "$TASK_FILE" in
-            /agents/research/handoff/research-watchdog-*-task.txt) ;;
-            *) echo "ERROR: task file must be an approved watchdog handoff" >&2; exit 65 ;;
-          esac
-          case "$OUTPUT_DIR" in
-            /agents/research/reports/research-watchdog-*) ;;
-            *) echo "ERROR: output dir must be an approved watchdog reports directory" >&2; exit 67 ;;
-          esac
-          if [[ -L "$TASK_FILE" || -L "$OUTPUT_DIR" || ! -r "$TASK_FILE" || ! -d "$OUTPUT_DIR" || ! -w "$OUTPUT_DIR" ]]; then
-            echo "ERROR: task/output permissions are not usable" >&2
-            exit 66
-          fi
-          TASK_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TASK_FILE")"
-          OUT_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$OUTPUT_DIR")"
-          case "$TASK_REAL" in
-            /agents/research/handoff/research-watchdog-*-task.txt) ;;
-            *) echo "ERROR: resolved task path escaped watchdog handoff" >&2; exit 68 ;;
-          esac
-          case "$OUT_REAL" in
-            /agents/research/reports/research-watchdog-*) ;;
-            *) echo "ERROR: resolved output path escaped watchdog reports" >&2; exit 69 ;;
-          esac
-          cd "$OUT_REAL"
-          export HOME=/home/agent-research-watchdog
-          export PATH=/usr/local/bin:/usr/bin:/bin
-          export PYTHONDONTWRITEBYTECODE=1
-          umask 0007
-          if [[ -r /etc/trading-agents/secrets/quantconnect/env ]]; then
-            echo "ERROR: watchdog user can read QuantConnect secrets" >&2
-            exit 71
-          fi
-          if sudo -n -l 2>/dev/null | grep -q 'trading-research-bounded-earnings-qc'; then
-            echo "ERROR: watchdog user has bounded QC sudo access" >&2
-            exit 72
-          fi
-          exec /usr/bin/timeout 20m /usr/local/bin/codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model "$MODEL" "$(cat "$TASK_REAL")"
-          WATCHDOG_CODEX
-          sudo chown root:root /usr/local/bin/trading-research-watchdog-codex
-          sudo chmod 755 /usr/local/bin/trading-research-watchdog-codex
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-runner-codex" /usr/local/bin/trading-research-runner-codex
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-watchdog-codex" /usr/local/bin/trading-research-watchdog-codex
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-workspace-cleanup" /usr/local/bin/trading-workspace-cleanup
           sudo tee /etc/sudoers.d/trading-agent-orchestrator-dispatch >/dev/null <<'EOF_SUDOERS'
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-coding-agent *
           agent-orchestrator ALL=(root) NOPASSWD: /usr/local/sbin/trading-dispatch-review-agent *

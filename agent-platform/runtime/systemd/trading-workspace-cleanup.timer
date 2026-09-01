@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Trading MVP-0 workspace cleanup daily
+
+[Timer]
+OnBootSec=15min
+OnCalendar=daily
+AccuracySec=10min
+Persistent=true
+Unit=trading-workspace-cleanup.service
+
+[Install]
+WantedBy=timers.target

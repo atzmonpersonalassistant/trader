@@ -1,0 +1,9 @@
+[Unit]
+Description=Run trader earnings LLM research watchdog every fifteen minutes in Asia/Jerusalem time
+
+[Timer]
+OnCalendar=*-*-* *:0/15:00 Asia/Jerusalem
+Persistent=false
+
+[Install]
+WantedBy=timers.target
