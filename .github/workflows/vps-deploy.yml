@@ -106,13 +106,9 @@ jobs:
           ssh -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" \
             "rm -rf '$DEPLOY_DIR' && install -d -m 700 '$DEPLOY_DIR'"
           scp -i ~/.ssh/vps_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            agent-platform/tools/trading-orchestrator \
-            agent-platform/tools/trading-coding-agent \
             agent-platform/tools/trading-dispatch-coding-agent \
             agent-platform/tools/trading-dispatch-review-agent \
             agent-platform/tools/trading-dispatch-coding-agent-stub \
-            agent-platform/tools/trading-review-agent \
-            agent-platform/tools/trading-research-agent \
             agent-platform/scripts/trading-research-agent-loop \
             agent-platform/scripts/trading-research-qc-smoke \
             agent-platform/scripts/trading-research-qc-broker \
@@ -606,7 +602,7 @@ jobs:
           sudo install -o root -g root -m 644 "$DEPLOY_DIR/trading-workspace-cleanup.timer" /etc/systemd/system/trading-workspace-cleanup.timer
           command -v systemctl >/dev/null 2>&1
           sudo systemctl daemon-reload
-          sudo systemctl enable --now trading-orchestrator.timer trading-workspace-cleanup.timer trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
+          sudo systemctl enable --now trader-earnings-otm-daily.timer trader-earnings-llm-postrun.timer trader-earnings-llm-watchdog.timer trader-research-retention.timer
           sudo install -d -o agent-research -g agent-research-runner -m 750 /agents/research/handoff
           sudo install -d -o root -g agent-lean -m 750 /agents/shared
           configure_shared_collab_dir /agents/shared/lean-projects
@@ -784,14 +780,13 @@ jobs:
           fi
           systemctl cat trading-orchestrator.timer | grep -q 'OnUnitActiveSec=10min'
           systemctl cat trading-workspace-cleanup.timer | grep -q 'OnCalendar=daily'
+          ! systemctl is-enabled --quiet trading-workspace-cleanup.timer
           systemctl cat trader-earnings-otm-daily.timer | grep -q 'OnCalendar=\*-\*-\* 10:30:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-postrun.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/5:00 Asia/Jerusalem'
           systemctl cat trader-earnings-llm-watchdog.timer | grep -q 'OnCalendar=\*-\*-\* \*:0/15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.timer | grep -q 'OnCalendar=\*-\*-\* 04:15:00 Asia/Jerusalem'
           systemctl cat trader-research-retention.service | grep -q 'earnings-qc-research cleanup --older-than-days 3 --keep-last 20'
           systemctl cat trader-research-retention.service | grep -q 'User=agent-research'
-          systemctl is-enabled --quiet trading-orchestrator.timer
-          systemctl is-enabled --quiet trading-workspace-cleanup.timer
           systemctl is-enabled --quiet trader-earnings-otm-daily.timer
           systemctl is-enabled --quiet trader-earnings-llm-postrun.timer
           systemctl is-enabled --quiet trader-earnings-llm-watchdog.timer

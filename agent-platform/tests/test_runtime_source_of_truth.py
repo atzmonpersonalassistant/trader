@@ -116,6 +116,29 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
         self.assertIn('/usr/local/bin/trading-coding-agent', script)
         self.assertIn('/etc/systemd/system/trader-earnings-otm-daily.timer', script)
 
+    def test_deploy_bundle_avoids_runtime_wrapper_basename_collisions(self) -> None:
+        workflow = WORKFLOW.read_text()
+        for rel in [
+            'agent-platform/tools/trading-orchestrator',
+            'agent-platform/tools/trading-coding-agent',
+            'agent-platform/tools/trading-review-agent',
+            'agent-platform/tools/trading-research-agent',
+        ]:
+            self.assertNotIn(f'            {rel} \\', workflow)
+        for rel in [
+            'agent-platform/runtime/bin/trading-orchestrator',
+            'agent-platform/runtime/bin/trading-coding-agent',
+            'agent-platform/runtime/bin/trading-review-agent',
+            'agent-platform/runtime/bin/trading-research-agent',
+        ]:
+            self.assertIn(f'            {rel} \\', workflow)
+
+    def test_destructive_workspace_cleanup_timer_is_not_auto_enabled(self) -> None:
+        workflow = WORKFLOW.read_text()
+        self.assertIn('trading-workspace-cleanup.timer', workflow)
+        self.assertNotIn('systemctl enable --now trading-workspace-cleanup.timer', workflow)
+        self.assertIn('! systemctl is-enabled --quiet trading-workspace-cleanup.timer', workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
