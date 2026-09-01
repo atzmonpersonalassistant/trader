@@ -80,6 +80,18 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
             self.assertTrue(text.startswith("#!/usr/bin/env bash"), path)
             self.assertNotRegex(text, re.compile(r"QUANTCONNECT_API_TOKEN=.+"), path)
 
+    def test_bootstrap_new_vps_uses_versioned_runtime_helpers(self) -> None:
+        bootstrap = (ROOT / 'agent-platform/scripts/bootstrap-new-vps.sh').read_text()
+        for snippet in [
+            "cat > /usr/local/bin/trading-research-runner-codex <<",
+            "cat > /usr/local/bin/trading-research-watchdog-codex <<",
+            "cat > /usr/local/bin/trading-workspace-cleanup <<",
+        ]:
+            self.assertNotIn(snippet, bootstrap)
+        self.assertIn('agent-platform/runtime/bin/trading-research-runner-codex', bootstrap)
+        self.assertIn('agent-platform/runtime/bin/trading-research-watchdog-codex', bootstrap)
+        self.assertIn('agent-platform/runtime/bin/trading-workspace-cleanup', bootstrap)
+
     def test_deploy_smoke_verifies_coding_codex_auth_not_only_binary(self) -> None:
         workflow = WORKFLOW.read_text()
         self.assertIn("sudo -n -u agent-coding bash -lc 'test -s /home/agent-coding/.codex/auth.json && codex --version >/dev/null'", workflow)
