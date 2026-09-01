@@ -481,7 +481,7 @@ jobs:
             stderr_file="$LOG_DIR/daily-${RUN_DATE}-attempt-${attempt}.stderr.log"
             echo "$(date -u +%FT%TZ) DAILY_RUN_ATTEMPT_START attempt=$attempt run_id=$run_id"
             set +e
-            earnings-qc-research run             --campaign "$CAMPAIGN"             --run-id "$run_id"             --run-dir "$run_dir"             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 1             --parallel 1             --end-to-end >"$stdout_file" 2>"$stderr_file"
+            earnings-qc-research run             --campaign "$CAMPAIGN"             --run-id "$run_id"             --run-dir "$run_dir"             --calendar-from-days 21             --calendar-to-days 28             --calendar-source nasdaq             --qc-resolution hour             --option-right call             --max-premium 0.50             --years 10             --parallel 1             --end-to-end >"$stdout_file" 2>"$stderr_file"
             rc=$?
             sed "s/^/[attempt $attempt stdout] /" "$stdout_file" || true
             sed "s/^/[attempt $attempt stderr] /" "$stderr_file" || true

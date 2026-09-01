@@ -3094,7 +3094,17 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
             {tuple(row["liquidity_warning_counts"].items()) for row in alg.rows},
             {(("zero_option_chain_slices_observed", 1),)},
         )
-        parsed = json.loads(alg.runtime_statistics["trader.stage2_json_0000"])
+        parts = [
+            alg.runtime_statistics[k]
+            for k in sorted(
+                (k for k in alg.runtime_statistics if k.startswith("trader.stage2_json_") and k.rsplit("_", 1)[1].isdigit()),
+                key=lambda k: int(k.rsplit("_", 1)[1]),
+            )
+        ]
+        self.assertEqual(int(alg.runtime_statistics["trader.stage2_json_chunk_count"]), len(parts))
+        joined = "".join(parts)
+        self.assertEqual(int(alg.runtime_statistics["trader.stage2_json_total_length"]), len(joined))
+        parsed = json.loads(joined)
         self.assertEqual(len(parsed["rows"]), 2)
         self.assertEqual(alg.option_chain_slice_count, 0)
 
@@ -3258,7 +3268,10 @@ class EarningsQcOptionsGeneratedCodeTests(unittest.TestCase):
         self.assertIn("trader.stage2_json_%04d", scan)
         self.assertNotIn("trader.stage2_json_%02d", scan)
         self.assertIn("key=lambda k: int(k.rsplit('_', 1)[1])", scan)
-        self.assertIn("out['parsed_result'] = json.loads(''.join(parts))", scan)
+        self.assertIn("trader.stage2_json_chunk_count", scan)
+        self.assertIn("trader.stage2_json_total_length", scan)
+        self.assertIn("stage2 chunk count mismatch", scan)
+        self.assertIn("stage2 payload length mismatch", scan)
         self.assertIn('"candidate_details": self.candidate_details', scan)
 
     def test_qc_cloud_extract_uses_four_digit_chunk_keys(self):
