@@ -802,6 +802,7 @@ jobs:
           grep -q "dispatch missing-reviews" /usr/local/bin/trading-orchestrator-tick
           bash -n /usr/local/bin/trading-research-runner-codex
           bash -n /usr/local/bin/trading-research-watchdog-codex
+          bash -n /usr/local/bin/trading-workspace-cleanup
           bash -n /usr/local/sbin/trading-research-bounded-earnings-qc
           bash -n /agents/research/bin/earnings-llm-postrun-review
           bash -n /agents/research/bin/earnings-llm-research-watchdog
