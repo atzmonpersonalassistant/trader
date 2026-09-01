@@ -79,6 +79,7 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
             text = path.read_text()
             self.assertTrue(text.startswith("#!/usr/bin/env bash"), path)
             self.assertNotRegex(text, re.compile(r"QUANTCONNECT_API_TOKEN=.+"), path)
+            subprocess.run(["bash", "-n", str(path)], check=True)
 
     def test_bootstrap_new_vps_uses_versioned_runtime_helpers(self) -> None:
         bootstrap = (ROOT / 'agent-platform/scripts/bootstrap-new-vps.sh').read_text()
