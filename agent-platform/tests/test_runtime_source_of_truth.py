@@ -13,6 +13,11 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
     def test_runtime_files_are_versioned_and_installed(self) -> None:
         workflow = WORKFLOW.read_text()
         expected = [
+            "agent-platform/runtime/bin/trading-orchestrator",
+            "agent-platform/runtime/bin/trading-coding-agent",
+            "agent-platform/runtime/bin/trading-coding-agent-stub",
+            "agent-platform/runtime/bin/trading-review-agent",
+            "agent-platform/runtime/bin/trading-research-agent",
             "agent-platform/runtime/bin/trading-research-runner-codex",
             "agent-platform/runtime/bin/trading-research-watchdog-codex",
             "agent-platform/runtime/bin/trading-workspace-cleanup",
@@ -39,6 +44,11 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
     def test_deploy_workflow_does_not_inline_runtime_helpers_or_units(self) -> None:
         workflow = WORKFLOW.read_text()
         forbidden = [
+            "sudo tee /usr/local/bin/trading-research-agent >/dev/null <<",
+            "sudo tee /usr/local/bin/trading-review-agent >/dev/null <<",
+            "sudo tee /usr/local/bin/trading-coding-agent-stub >/dev/null <<",
+            "sudo tee /usr/local/bin/trading-coding-agent >/dev/null <<",
+            "sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<",
             "sudo tee /usr/local/bin/trading-research-runner-codex >/dev/null <<",
             "sudo tee /usr/local/bin/trading-research-watchdog-codex >/dev/null <<",
             "sudo tee /usr/local/bin/trading-workspace-cleanup >/dev/null <<",
@@ -68,6 +78,30 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
             text = path.read_text()
             self.assertTrue(text.startswith("#!/usr/bin/env bash"), path)
             self.assertNotRegex(text, re.compile(r"QUANTCONNECT_API_TOKEN=.+"), path)
+
+    def test_deploy_smoke_verifies_coding_codex_auth_not_only_binary(self) -> None:
+        workflow = WORKFLOW.read_text()
+        self.assertIn("sudo -n -u agent-coding bash -lc 'test -s /home/agent-coding/.codex/auth.json && codex --version >/dev/null'", workflow)
+        self.assertIn("CODING_CODEX_AUTH_OK", workflow)
+        self.assertIn("trader-coding-codex-auth-smoke", workflow)
+        self.assertIn("codex exec --skip-git-repo-check", workflow)
+
+    def test_sync_inventory_script_tracks_deployed_artifacts(self) -> None:
+        script = (ROOT / 'agent-platform/scripts/verify-vps-runtime-sync').read_text()
+        for rel in [
+            'agent-platform/runtime/bin/trading-orchestrator',
+            'agent-platform/runtime/bin/trading-coding-agent',
+            'agent-platform/runtime/bin/trading-coding-agent-stub',
+            'agent-platform/runtime/bin/trading-review-agent',
+            'agent-platform/runtime/bin/trading-research-agent',
+            'agent-platform/runtime/bin/trading-research-runner-codex',
+            'agent-platform/runtime/bin/trading-research-watchdog-codex',
+            'agent-platform/runtime/bin/trading-workspace-cleanup',
+            'agent-platform/runtime/systemd/trader-earnings-otm-daily.timer',
+        ]:
+            self.assertIn(rel, script)
+        self.assertIn('/usr/local/bin/trading-coding-agent', script)
+        self.assertIn('/etc/systemd/system/trader-earnings-otm-daily.timer', script)
 
 
 if __name__ == "__main__":

@@ -131,6 +131,11 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
+            agent-platform/runtime/bin/trading-orchestrator \
+            agent-platform/runtime/bin/trading-coding-agent \
+            agent-platform/runtime/bin/trading-coding-agent-stub \
+            agent-platform/runtime/bin/trading-review-agent \
+            agent-platform/runtime/bin/trading-research-agent \
             agent-platform/runtime/bin/trading-research-runner-codex \
             agent-platform/runtime/bin/trading-research-watchdog-codex \
             agent-platform/runtime/bin/trading-workspace-cleanup \
@@ -629,31 +634,11 @@ jobs:
           command -v docker >/dev/null 2>&1
           sudo docker info >/dev/null
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading_agent_token.py" /usr/local/bin/trading-agent-token
-          sudo tee /usr/local/bin/trading-orchestrator >/dev/null <<'EOF_BIN'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec python3 /usr/local/lib/trading_orchestrator.py "$@"
-          EOF_BIN
-          sudo tee /usr/local/bin/trading-coding-agent >/dev/null <<'EOF_BIN'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec python3 /usr/local/lib/trading_coding_agent.py "$@"
-          EOF_BIN
-          sudo tee /usr/local/bin/trading-review-agent >/dev/null <<'EOF_BIN'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec python3 /usr/local/lib/trading_review_agent.py "$@"
-          EOF_BIN
-          sudo tee /usr/local/bin/trading-coding-agent-stub >/dev/null <<'EOF_BIN'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec python3 /usr/local/lib/trading_coding_agent_stub.py "$@"
-          EOF_BIN
-          sudo tee /usr/local/bin/trading-research-agent >/dev/null <<'EOF_BIN'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec python3 /usr/local/lib/trading_research_agent.py "$@"
-          EOF_BIN
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator" /usr/local/bin/trading-orchestrator
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-coding-agent" /usr/local/bin/trading-coding-agent
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-review-agent" /usr/local/bin/trading-review-agent
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-coding-agent-stub" /usr/local/bin/trading-coding-agent-stub
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-agent" /usr/local/bin/trading-research-agent
           sudo chmod 755 /usr/local/bin/trading-orchestrator /usr/local/bin/trading-coding-agent /usr/local/bin/trading-review-agent /usr/local/bin/trading-coding-agent-stub /usr/local/bin/trading-research-agent /usr/local/bin/trading-research-agent-loop /usr/local/bin/trading-research-qc-smoke /usr/local/bin/trading-research-qc-broker /usr/local/bin/trading-research-qc-cloud-extract /usr/local/bin/trading-orchestrator-tick /usr/local/sbin/trading-dispatch-coding-agent /usr/local/sbin/trading-dispatch-review-agent /usr/local/sbin/trading-dispatch-coding-agent-stub /agents/research/bin/earnings-qc-research /agents/research/libexec/earnings-qc-options/earnings-qc-options-scan /agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research run --help >/tmp/trader-earnings-qc-research-help.txt
           sudo -n -u agent-research env HOME=/home/agent-research PYTHONDONTWRITEBYTECODE=1 /agents/research/bin/earnings-qc-research insights --campaign deploy-smoke --pretty >/tmp/trader-earnings-qc-research-insights.txt
@@ -739,6 +724,8 @@ jobs:
             sudo install -o agent-research-watchdog -g agent-research-watchdog -m 600 /home/agent-research/.codex/auth.json /home/agent-research-watchdog/.codex/auth.json
           fi
           sudo test -s /home/agent-research-watchdog/.codex/auth.json
+          sudo -n -u agent-coding bash -lc 'test -s /home/agent-coding/.codex/auth.json && codex --version >/dev/null'
+          sudo -n -u agent-coding bash -lc 'cd /tmp && /usr/bin/timeout 60s codex exec --skip-git-repo-check --sandbox workspace-write -c approval_policy="never" --model gpt-5.5 --output-last-message /tmp/trader-coding-codex-auth-smoke.txt "Reply exactly CODING_CODEX_AUTH_OK" >/tmp/trader-coding-codex-auth-smoke.log 2>&1 && grep -q CODING_CODEX_AUTH_OK /tmp/trader-coding-codex-auth-smoke.txt'
           sudo -n -u agent-research-runner bash -lc 'test -s /home/agent-research-runner/.codex/auth.json && codex --version >/dev/null'
           sudo -n -u agent-research-watchdog bash -lc 'test -s /home/agent-research-watchdog/.codex/auth.json && codex --version >/dev/null'
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-runner-codex" /usr/local/bin/trading-research-runner-codex

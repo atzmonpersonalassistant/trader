@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import pathlib
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+@dataclass(frozen=True)
+class Artifact:
+    source: str
+    target: str
+    mode: str | None = None
+
+
+ARTIFACTS = [
+    Artifact('agent-platform/runtime/bin/trading-orchestrator', '/usr/local/bin/trading-orchestrator'),
+    Artifact('agent-platform/runtime/bin/trading-coding-agent', '/usr/local/bin/trading-coding-agent'),
+    Artifact('agent-platform/runtime/bin/trading-coding-agent-stub', '/usr/local/bin/trading-coding-agent-stub'),
+    Artifact('agent-platform/runtime/bin/trading-review-agent', '/usr/local/bin/trading-review-agent'),
+    Artifact('agent-platform/runtime/bin/trading-research-agent', '/usr/local/bin/trading-research-agent'),
+    Artifact('agent-platform/tools/trading-dispatch-coding-agent', '/usr/local/sbin/trading-dispatch-coding-agent'),
+    Artifact('agent-platform/tools/trading-dispatch-review-agent', '/usr/local/sbin/trading-dispatch-review-agent'),
+    Artifact('agent-platform/tools/trading-dispatch-coding-agent-stub', '/usr/local/sbin/trading-dispatch-coding-agent-stub'),
+    Artifact('agent-platform/tools/trading_orchestrator.py', '/usr/local/lib/trading_orchestrator.py'),
+    Artifact('agent-platform/tools/trading_coding_agent.py', '/usr/local/lib/trading_coding_agent.py'),
+    Artifact('agent-platform/tools/trading_review_agent.py', '/usr/local/lib/trading_review_agent.py'),
+    Artifact('agent-platform/tools/trading_research_agent.py', '/usr/local/lib/trading_research_agent.py'),
+    Artifact('agent-platform/tools/trading_coding_agent_stub.py', '/usr/local/lib/trading_coding_agent_stub.py'),
+    Artifact('agent-platform/tools/trading_agent_token.py', '/usr/local/bin/trading-agent-token'),
+    Artifact('agent-platform/scripts/trading-orchestrator-tick', '/usr/local/bin/trading-orchestrator-tick'),
+    Artifact('agent-platform/scripts/trading-research-agent-loop', '/usr/local/bin/trading-research-agent-loop'),
+    Artifact('agent-platform/scripts/trading-research-qc-smoke', '/usr/local/bin/trading-research-qc-smoke'),
+    Artifact('agent-platform/scripts/trading-research-qc-broker', '/usr/local/bin/trading-research-qc-broker'),
+    Artifact('agent-platform/scripts/trading-research-qc-cloud-extract', '/usr/local/bin/trading-research-qc-cloud-extract'),
+    Artifact('agent-platform/scripts/trading-research-qc-cloud-run', '/usr/local/bin/trading-research-qc-cloud-run'),
+    Artifact('agent-platform/scripts/trading-research-qc-run', '/usr/local/bin/trading-research-qc-run'),
+    Artifact('agent-platform/scripts/trading-research-qc-api-extract', '/usr/local/bin/trading-research-qc-api-extract'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-qc-research', '/agents/research/bin/earnings-qc-research'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-qc-classify-bounded-action', '/agents/research/libexec/earnings-qc-options/earnings-qc-classify-bounded-action'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-qc-precheck-bounded-action', '/agents/research/libexec/earnings-qc-options/earnings-qc-precheck-bounded-action'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-qc-options-scan', '/agents/research/libexec/earnings-qc-options/earnings-qc-options-scan'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-qc-multiyear-backtest', '/agents/research/libexec/earnings-qc-options/earnings-qc-multiyear-backtest'),
+    Artifact('agent-platform/scripts/earnings-qc-options/qc_cloud_capacity.py', '/agents/research/libexec/earnings-qc-options/qc_cloud_capacity.py'),
+    Artifact('agent-platform/scripts/earnings-qc-options/trading-research-bounded-earnings-qc', '/usr/local/sbin/trading-research-bounded-earnings-qc'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-llm-postrun-review', '/agents/research/bin/earnings-llm-postrun-review'),
+    Artifact('agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog', '/agents/research/bin/earnings-llm-research-watchdog'),
+    Artifact('agent-platform/runtime/bin/trading-research-runner-codex', '/usr/local/bin/trading-research-runner-codex'),
+    Artifact('agent-platform/runtime/bin/trading-research-watchdog-codex', '/usr/local/bin/trading-research-watchdog-codex'),
+    Artifact('agent-platform/runtime/bin/trading-workspace-cleanup', '/usr/local/bin/trading-workspace-cleanup'),
+    Artifact('agent-platform/runtime/systemd/trading-orchestrator.service', '/etc/systemd/system/trading-orchestrator.service'),
+    Artifact('agent-platform/runtime/systemd/trading-orchestrator.timer', '/etc/systemd/system/trading-orchestrator.timer'),
+    Artifact('agent-platform/runtime/systemd/trading-research-agent.service', '/etc/systemd/system/trading-research-agent.service'),
+    Artifact('agent-platform/runtime/systemd/trading-workspace-cleanup.service', '/etc/systemd/system/trading-workspace-cleanup.service'),
+    Artifact('agent-platform/runtime/systemd/trading-workspace-cleanup.timer', '/etc/systemd/system/trading-workspace-cleanup.timer'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-otm-daily.service', '/etc/systemd/system/trader-earnings-otm-daily.service'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-otm-daily.timer', '/etc/systemd/system/trader-earnings-otm-daily.timer'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-llm-postrun.service', '/etc/systemd/system/trader-earnings-llm-postrun.service'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-llm-postrun.timer', '/etc/systemd/system/trader-earnings-llm-postrun.timer'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-llm-watchdog.service', '/etc/systemd/system/trader-earnings-llm-watchdog.service'),
+    Artifact('agent-platform/runtime/systemd/trader-earnings-llm-watchdog.timer', '/etc/systemd/system/trader-earnings-llm-watchdog.timer'),
+    Artifact('agent-platform/runtime/systemd/trader-research-retention.service', '/etc/systemd/system/trader-research-retention.service'),
+    Artifact('agent-platform/runtime/systemd/trader-research-retention.timer', '/etc/systemd/system/trader-research-retention.timer'),
+]
+
+
+def sha256(path: pathlib.Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def remote_hashes(host: str, ssh_key: str | None) -> dict[str, str]:
+    paths = ' '.join(shlex.quote(a.target) for a in ARTIFACTS)
+    cmd = f"sha256sum {paths} 2>/dev/null || true"
+    ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
+    if ssh_key:
+        ssh += ['-i', ssh_key]
+    ssh += [host, cmd]
+    proc = subprocess.run(ssh, text=True, capture_output=True, timeout=120)
+    if proc.returncode != 0:
+        print(proc.stderr, file=sys.stderr)
+        raise SystemExit(proc.returncode)
+    out: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            out[parts[1]] = parts[0]
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description='Verify versioned Trader runtime artifacts match a VPS deployment.')
+    ap.add_argument('--host', required=True, help='SSH host, e.g. ubuntu@example.com')
+    ap.add_argument('--ssh-key')
+    ap.add_argument('--json', action='store_true')
+    args = ap.parse_args()
+    remote = remote_hashes(args.host, args.ssh_key)
+    rows = []
+    ok = True
+    for artifact in ARTIFACTS:
+        src = ROOT / artifact.source
+        local_hash = sha256(src) if src.exists() else None
+        remote_hash = remote.get(artifact.target)
+        status = 'match' if local_hash and remote_hash == local_hash else 'missing-local' if not local_hash else 'missing-remote' if not remote_hash else 'diff'
+        if status != 'match':
+            ok = False
+        rows.append({'status': status, 'source': artifact.source, 'target': artifact.target, 'local_sha256': local_hash, 'remote_sha256': remote_hash})
+    if args.json:
+        print(json.dumps({'ok': ok, 'artifacts': rows}, indent=2, sort_keys=True))
+    else:
+        for row in rows:
+            print(f"{row['status']}\t{row['target']}\t{row['source']}")
+    return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
