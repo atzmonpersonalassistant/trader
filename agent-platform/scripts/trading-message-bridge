@@ -25,9 +25,8 @@ DEFAULT_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 DEFAULT_STATE = Path(os.environ.get("TRADING_MESSAGE_BRIDGE_STATE", "/agents/orchestrator/state/message-bridge-state.json"))
 DEFAULT_LABELS = ["external:reviewer"]
-TARGET_RE = re.compile(
-    r"(?:github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/(\d+))|(?:\b(?:PR|pr|Issue|issue)\s*#\s*(\d+)\b)"
-)
+GITHUB_TARGET_RE = re.compile(r"github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)")
+LOCAL_TARGET_RE = re.compile(r"\b(?:PR|pr|Issue|issue)\s*#\s*(\d+)\b")
 
 
 def mint_github_token(token_cmd: str) -> str:
@@ -102,12 +101,15 @@ def add_labels(owner: str, repo: str, number: int, labels: list[str], token: str
     github_request("POST", f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/labels", token, {"labels": labels})
 
 
-def find_target_number(message: str, default_target: int | None = None) -> int | None:
-    match = TARGET_RE.search(message)
-    if not match:
-        return default_target
-    raw = match.group(1) or match.group(2)
-    return int(raw) if raw else default_target
+def find_target_number(message: str, owner: str = DEFAULT_OWNER, repo: str = DEFAULT_REPO, default_target: int | None = None) -> int | None:
+    for match in GITHUB_TARGET_RE.finditer(message):
+        target_owner, target_repo, raw_number = match.groups()
+        if target_owner.lower() == owner.lower() and target_repo.lower() == repo.lower():
+            return int(raw_number)
+    local = LOCAL_TARGET_RE.search(message)
+    if local:
+        return int(local.group(1))
+    return default_target
 
 
 def bridge_comment_body(row: dict[str, Any]) -> str:
@@ -128,7 +130,7 @@ def issue_title(row: dict[str, Any]) -> str:
 
 def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None) -> dict[str, Any]:
     message = row.get("message") or ""
-    target = find_target_number(message, args.default_target)
+    target = find_target_number(message, args.owner, args.repo, args.default_target)
     labels = [label for label in args.labels.split(",") if label]
 
     if target:

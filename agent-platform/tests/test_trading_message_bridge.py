@@ -47,6 +47,9 @@ class BridgeTests(unittest.TestCase):
     def test_finds_github_target_from_pull_url(self):
         self.assertEqual(bridge.find_target_number("see https://github.com/atzmonpersonalassistant/trader/pull/256"), 256)
 
+    def test_ignores_foreign_github_target_urls(self):
+        self.assertIsNone(bridge.find_target_number("see https://github.com/other/repo/pull/256"))
+
     def test_finds_github_target_from_pr_marker(self):
         self.assertEqual(bridge.find_target_number("PR #255 needs changes"), 255)
 
