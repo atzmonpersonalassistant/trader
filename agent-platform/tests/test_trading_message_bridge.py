@@ -77,6 +77,37 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["token"], "secret")
         self.assertEqual(payload["after_row"], "1")
 
+    def test_missing_target_is_processed_without_comment_or_labels(self):
+        calls = []
+
+        def fake_exists(owner, repo, number, token):
+            calls.append(("exists", number))
+            return False
+
+        def fake_request(method, url, token, payload=None):
+            calls.append((method, url, payload))
+            return {}
+
+        original_exists = bridge.github_issue_exists
+        original_request = bridge.github_request
+        bridge.github_issue_exists = fake_exists
+        bridge.github_request = fake_request
+        self.addCleanup(setattr, bridge, "github_issue_exists", original_exists)
+        self.addCleanup(setattr, bridge, "github_request", original_request)
+
+        args = type("Args", (), {
+            "default_target": None,
+            "labels": "external:reviewer",
+            "dry_run": False,
+            "owner": "atzmonpersonalassistant",
+            "repo": "trader",
+        })()
+        row = {"row": 9, "message": "PR #999999 please check", "created_at": "now"}
+        result = bridge.process_row(args, row, "gh-token")
+
+        self.assertEqual(result["action"], "missing_target")
+        self.assertEqual(calls, [("exists", 999999)])
+
     def test_labels_before_comment_to_avoid_duplicate_comments_on_label_failure(self):
         calls = []
 
@@ -98,8 +129,9 @@ class BridgeTests(unittest.TestCase):
         row = {"row": 8, "message": "PR #257 please check", "created_at": "now"}
         bridge.process_row(args, row, "gh-token")
 
-        self.assertIn("/labels", calls[0][1])
-        self.assertIn("/comments", calls[1][1])
+        self.assertIn("/issues/257", calls[0][1])
+        self.assertIn("/labels", calls[1][1])
+        self.assertIn("/comments", calls[2][1])
 
     def test_default_new_issue_labels_do_not_auto_dispatch(self):
         self.assertEqual(bridge.DEFAULT_LABELS, ["external:reviewer"])

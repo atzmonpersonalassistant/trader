@@ -90,9 +90,23 @@ def github_request(method: str, url: str, token: str, payload: Any | None = None
             "User-Agent": "trading-message-bridge",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = resp.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GitHub API {method} {url} failed with HTTP {exc.code}: {body[:500]}") from exc
     return json.loads(body) if body else None
+
+
+def github_issue_exists(owner: str, repo: str, number: int, token: str) -> bool:
+    try:
+        github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/issues/{number}", token)
+        return True
+    except RuntimeError as exc:
+        if "HTTP 404" in str(exc):
+            return False
+        raise
 
 
 def add_labels(owner: str, repo: str, number: int, labels: list[str], token: str) -> None:
@@ -143,6 +157,10 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
         }
         if not args.dry_run:
             assert token is not None
+            if not github_issue_exists(args.owner, args.repo, target, token):
+                action["action"] = "missing_target"
+                action["error"] = f"target issue/PR #{target} was not found"
+                return action
             # Apply idempotent labels before publishing the non-idempotent comment.
             # If labeling fails, the row can retry without duplicating a comment.
             add_labels(args.owner, args.repo, target, ["agent:needs-fix", "external:reviewer"], token)
