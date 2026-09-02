@@ -16,7 +16,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,7 @@ DEFAULT_OWNER = os.environ.get("TRADING_GITHUB_OWNER", "atzmonpersonalassistant"
 DEFAULT_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 DEFAULT_STATE = Path(os.environ.get("TRADING_MESSAGE_BRIDGE_STATE", "/agents/orchestrator/state/message-bridge-state.json"))
-DEFAULT_LABELS = ["external:reviewer", "agent:ready"]
+DEFAULT_LABELS = ["external:reviewer"]
 TARGET_RE = re.compile(
     r"(?:github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/(\d+))|(?:\b(?:PR|pr|Issue|issue)\s*#\s*(\d+)\b)"
 )
@@ -55,9 +54,22 @@ def write_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def fetch_rows(apps_script_url: str, bridge_token: str, after_row: int, limit: int) -> dict[str, Any]:
-    query = urllib.parse.urlencode({"action": "list", "after_row": str(after_row), "limit": str(limit), "token": bridge_token})
-    url = apps_script_url + ("&" if "?" in apps_script_url else "?") + query
-    with urllib.request.urlopen(url, timeout=30) as resp:
+    payload = json.dumps({
+        "action": "list",
+        "after_row": str(after_row),
+        "limit": str(limit),
+        "token": bridge_token,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        apps_script_url,
+        method="POST",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "trading-message-bridge",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read().decode("utf-8")
     data = json.loads(body)
     if not data.get("ok"):

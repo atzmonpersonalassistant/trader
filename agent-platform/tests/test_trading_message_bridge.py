@@ -19,8 +19,10 @@ class _Handler(BaseHTTPRequestHandler):
     response = {"ok": True, "last_row": 3, "messages": []}
     requests = []
 
-    def do_GET(self):
-        self.__class__.requests.append(self.path)
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        request_body = self.rfile.read(length).decode("utf-8") if length else ""
+        self.__class__.requests.append({"path": self.path, "body": request_body, "headers": dict(self.headers)})
         body = json.dumps(self.__class__.response).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -66,8 +68,14 @@ class BridgeTests(unittest.TestCase):
             rc = bridge.main(["--apps-script-url", url, "--bridge-token", "secret", "--state", str(state), "--dry-run"])
             self.assertEqual(rc, 0)
             self.assertFalse(state.exists())
-        self.assertIn("token=secret", _Handler.requests[0])
-        self.assertIn("after_row=1", _Handler.requests[0])
+        request = _Handler.requests[0]
+        self.assertNotIn("secret", request["path"])
+        payload = json.loads(request["body"])
+        self.assertEqual(payload["token"], "secret")
+        self.assertEqual(payload["after_row"], "1")
+
+    def test_default_new_issue_labels_do_not_auto_dispatch(self):
+        self.assertEqual(bridge.DEFAULT_LABELS, ["external:reviewer"])
 
     def test_start_at_latest_initializes_state_without_routing(self):
         url = self.serve({"ok": True, "last_row": 414, "messages": []})
