@@ -776,7 +776,11 @@ jobs:
           PY
           bash -n /usr/local/bin/trading-research-qc-api-extract
           bash -n /usr/local/bin/trading-orchestrator-tick
-          python3 -m py_compile /usr/local/bin/trading-message-bridge
+          python3 - <<'PY_BRIDGE_SYNTAX'
+          import ast
+          from pathlib import Path
+          ast.parse(Path('/usr/local/bin/trading-message-bridge').read_text(encoding='utf-8'))
+          PY_BRIDGE_SYNTAX
           test ! -e /usr/local/bin/earnings-qc-daily-run.sh
           test ! -e /usr/local/bin/earnings-otm-daily-root.sh
           if sudo crontab -l >/tmp/trader-root-crontab.txt 2>/dev/null; then
