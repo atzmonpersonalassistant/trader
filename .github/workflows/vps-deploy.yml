@@ -17,6 +17,7 @@ on:
       - "agent-platform/scripts/earnings-qc-options/**"
       - "agent-platform/skills/trader-research-system/**"
       - "agent-platform/scripts/trading-orchestrator-tick"
+      - "agent-platform/scripts/trading-message-bridge"
       - "agent-platform/runtime/**"
       - ".github/workflows/vps-deploy.yml"
   workflow_dispatch:
@@ -127,6 +128,7 @@ jobs:
             agent-platform/scripts/earnings-qc-options/earnings-llm-research-watchdog \
             agent-platform/skills/trader-research-system/SKILL.md \
             agent-platform/scripts/trading-orchestrator-tick \
+            agent-platform/scripts/trading-message-bridge \
             agent-platform/runtime/bin/trading-orchestrator \
             agent-platform/runtime/bin/trading-coding-agent \
             agent-platform/runtime/bin/trading-coding-agent-stub \
@@ -268,6 +270,7 @@ jobs:
               "trading_research_agent.py",
               "trading-research-qc-cloud-extract",
               "trading-research-qc-run",
+              "trading-message-bridge",
               "earnings-qc-research",
               "earnings-qc-classify-bounded-action",
               "earnings-qc-options-scan",
@@ -292,6 +295,7 @@ jobs:
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-run" /usr/local/bin/trading-research-qc-run
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-research-qc-api-extract" /usr/local/bin/trading-research-qc-api-extract
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-orchestrator-tick" /usr/local/bin/trading-orchestrator-tick
+          sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-message-bridge" /usr/local/bin/trading-message-bridge
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent" /usr/local/sbin/trading-dispatch-coding-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-review-agent" /usr/local/sbin/trading-dispatch-review-agent
           sudo install -o root -g root -m 755 "$DEPLOY_DIR/trading-dispatch-coding-agent-stub" /usr/local/sbin/trading-dispatch-coding-agent-stub
@@ -772,6 +776,11 @@ jobs:
           PY
           bash -n /usr/local/bin/trading-research-qc-api-extract
           bash -n /usr/local/bin/trading-orchestrator-tick
+          python3 - <<'PY_BRIDGE_SYNTAX'
+          import ast
+          from pathlib import Path
+          ast.parse(Path('/usr/local/bin/trading-message-bridge').read_text(encoding='utf-8'))
+          PY_BRIDGE_SYNTAX
           test ! -e /usr/local/bin/earnings-qc-daily-run.sh
           test ! -e /usr/local/bin/earnings-otm-daily-root.sh
           if sudo crontab -l >/tmp/trader-root-crontab.txt 2>/dev/null; then

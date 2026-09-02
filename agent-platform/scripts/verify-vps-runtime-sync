@@ -36,6 +36,7 @@ ARTIFACTS = [
     Artifact('agent-platform/tools/trading_coding_agent_stub.py', '/usr/local/lib/trading_coding_agent_stub.py'),
     Artifact('agent-platform/tools/trading_agent_token.py', '/usr/local/bin/trading-agent-token'),
     Artifact('agent-platform/scripts/trading-orchestrator-tick', '/usr/local/bin/trading-orchestrator-tick'),
+    Artifact('agent-platform/scripts/trading-message-bridge', '/usr/local/bin/trading-message-bridge'),
     Artifact('agent-platform/scripts/trading-research-agent-loop', '/usr/local/bin/trading-research-agent-loop'),
     Artifact('agent-platform/scripts/trading-research-qc-smoke', '/usr/local/bin/trading-research-qc-smoke'),
     Artifact('agent-platform/scripts/trading-research-qc-broker', '/usr/local/bin/trading-research-qc-broker'),

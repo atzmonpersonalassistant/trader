@@ -170,6 +170,12 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(bad_lines, [])
 
+    def test_message_bridge_post_install_syntax_check_does_not_write_bytecode(self):
+        workflow = workflow_text()
+
+        self.assertNotIn('python3 -m py_compile /usr/local/bin/trading-message-bridge', workflow)
+        self.assertIn("ast.parse(Path('/usr/local/bin/trading-message-bridge').read_text", workflow)
+
     def test_managed_earnings_timers_are_verified(self):
         workflow = workflow_text()
 

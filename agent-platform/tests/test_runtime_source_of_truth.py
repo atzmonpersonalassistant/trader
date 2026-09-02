@@ -120,9 +120,11 @@ class RuntimeSourceOfTruthTest(unittest.TestCase):
             'agent-platform/runtime/bin/trading-research-watchdog-codex',
             'agent-platform/runtime/bin/trading-workspace-cleanup',
             'agent-platform/runtime/systemd/trader-earnings-otm-daily.timer',
+            'agent-platform/scripts/trading-message-bridge',
         ]:
             self.assertIn(rel, script)
         self.assertIn('/usr/local/bin/trading-coding-agent', script)
+        self.assertIn('/usr/local/bin/trading-message-bridge', script)
         self.assertIn('/etc/systemd/system/trader-earnings-otm-daily.timer', script)
 
     def test_deploy_bundle_avoids_runtime_wrapper_basename_collisions(self) -> None:
