@@ -100,12 +100,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(calls[2][0], "POST")
         self.assertIn("/issues/257/labels", calls[2][1])
 
-    def test_missing_target_is_preserved_as_new_intake_issue(self):
+    def test_targeted_message_is_preserved_as_non_dispatching_intake_issue(self):
         calls = []
 
         def fake_exists(owner, repo, number, token):
             calls.append(("exists", number))
-            return False
+            return True
 
         def fake_request(method, url, token, payload=None):
             calls.append((method, url, payload))
@@ -125,44 +125,54 @@ class BridgeTests(unittest.TestCase):
             "owner": "atzmonpersonalassistant",
             "repo": "trader",
         })()
-        row = {"row": 9, "message": "PR #999999 please check", "created_at": "now"}
+        row = {"row": 9, "message": "PR #257 please check", "created_at": "now"}
         result = bridge.process_row(args, row, "gh-token")
 
-        self.assertEqual(result["action"], "create_issue_missing_target")
+        self.assertEqual(result["action"], "create_issue_targeted_intake")
         self.assertEqual(result["created_issue"], 321)
-        self.assertEqual(calls[0], ("exists", 999999))
+        self.assertEqual(result["target_status"], "found")
         issue_calls = [call for call in calls if call[0] == "POST" and call[1].endswith("/issues")]
         self.assertEqual(len(issue_calls), 1)
         self.assertEqual(issue_calls[0][2]["labels"], ["external:reviewer"])
-        self.assertIn("Missing target", issue_calls[0][2]["body"])
+        self.assertIn("did not comment", issue_calls[0][2]["body"])
+        urls = [call[1] for call in calls if isinstance(call, tuple) and len(call) > 1 and isinstance(call[1], str)]
+        self.assertFalse(any("/issues/257/comments" in url for url in urls))
+        self.assertFalse(any("/issues/257/labels" in url for url in urls))
 
-    def test_labels_before_comment_to_avoid_duplicate_comments_on_label_failure(self):
+    def test_missing_target_is_preserved_as_non_dispatching_intake_issue(self):
         calls = []
+
+        def fake_exists(owner, repo, number, token):
+            calls.append(("exists", number))
+            return False
 
         def fake_request(method, url, token, payload=None):
             calls.append((method, url, payload))
-            return {}
+            return {"number": 322}
 
-        original = bridge.github_request
+        original_exists = bridge.github_issue_exists
+        original_request = bridge.github_request
+        bridge.github_issue_exists = fake_exists
         bridge.github_request = fake_request
-        self.addCleanup(setattr, bridge, "github_request", original)
+        self.addCleanup(setattr, bridge, "github_issue_exists", original_exists)
+        self.addCleanup(setattr, bridge, "github_request", original_request)
 
         args = type("Args", (), {
             "default_target": None,
-            "labels": "external:reviewer",
+            "labels": "external:reviewer,agent:ready",
             "dry_run": False,
             "owner": "atzmonpersonalassistant",
             "repo": "trader",
         })()
-        row = {"row": 8, "message": "PR #257 please check", "created_at": "now"}
-        bridge.process_row(args, row, "gh-token")
+        row = {"row": 10, "message": "PR #999999 please check", "created_at": "now"}
+        result = bridge.process_row(args, row, "gh-token")
 
-        ordered_urls = [call[1] for call in calls]
-        issue_check = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257"))
-        label_apply = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257/labels"))
-        comment_post = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257/comments"))
-        self.assertLess(issue_check, label_apply)
-        self.assertLess(label_apply, comment_post)
+        self.assertEqual(result["action"], "create_issue_targeted_intake")
+        self.assertEqual(result["target_status"], "missing")
+        issue_calls = [call for call in calls if call[0] == "POST" and call[1].endswith("/issues")]
+        self.assertEqual(len(issue_calls), 1)
+        self.assertEqual(issue_calls[0][2]["labels"], ["external:reviewer"])
+        self.assertIn("missing", issue_calls[0][2]["body"])
 
     def test_default_new_issue_labels_do_not_auto_dispatch(self):
         self.assertEqual(bridge.DEFAULT_LABELS, ["external:reviewer"])

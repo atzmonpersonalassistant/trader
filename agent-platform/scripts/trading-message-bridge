@@ -175,36 +175,30 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
     labels = [label for label in args.labels.split(",") if label]
 
     if target:
+        safe_labels = [label for label in labels if label != "agent:ready"]
         action = {
             "row": row["row"],
-            "action": "comment",
+            "action": "create_issue_targeted_intake",
             "target": target,
-            "labels": ["agent:needs-fix"],
+            "labels": safe_labels,
             "dry_run": args.dry_run,
         }
         if not args.dry_run:
             assert token is not None
-            if not github_issue_exists(args.owner, args.repo, target, token):
-                labels = [label for label in labels if label != "agent:ready"]
-                ensure_labels(args.owner, args.repo, labels, token)
-                issue = github_request(
-                    "POST",
-                    f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",
-                    token,
-                    {
-                        "title": issue_title(row, f"External reviewer message for missing target #{target}"),
-                        "body": bridge_comment_body(row) + f"\n\nMissing target: issue/PR #{target} was not found, so the bridge preserved this as a new intake issue instead of dropping or retrying the row.",
-                        "labels": labels,
-                    },
-                )
-                action["action"] = "create_issue_missing_target"
-                action["created_issue"] = issue.get("number")
-                action["error"] = f"target issue/PR #{target} was not found"
-                return action
-            # Apply idempotent labels before publishing the non-idempotent comment.
-            # If labeling fails, the row can retry without duplicating a comment.
-            add_labels(args.owner, args.repo, target, ["agent:needs-fix", "external:reviewer"], token)
-            github_request("POST", f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target}/comments", token, {"body": bridge_comment_body(row)})
+            target_status = "found" if github_issue_exists(args.owner, args.repo, target, token) else "missing"
+            ensure_labels(args.owner, args.repo, safe_labels, token)
+            issue = github_request(
+                "POST",
+                f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",
+                token,
+                {
+                    "title": issue_title(row, f"External reviewer message mentioning #{target}"),
+                    "body": bridge_comment_body(row) + f"\n\nMentioned target: issue/PR #{target} ({target_status}). This public-sheet intake was preserved as a non-dispatching issue; it did not comment on the target PR or apply operational labels.",
+                    "labels": safe_labels,
+                },
+            )
+            action["created_issue"] = issue.get("number")
+            action["target_status"] = target_status
         return action
 
     action = {

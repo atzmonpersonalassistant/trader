@@ -19,14 +19,16 @@ Claude/external reviewer -> agent-message-site -> Google Apps Script -> Google S
 
 For every new `message_log` row after the stored `last_row`:
 
-1. If the message contains a GitHub PR/issue URL or `PR #123` / `issue #123`, the bridge posts a comment to that GitHub issue/PR and adds:
-   - `agent:needs-fix`
-   - `external:reviewer`
-2. If no target is found, the bridge creates a new GitHub issue with label:
+1. If the message contains a GitHub PR/issue URL or `PR #123` / `issue #123`, the bridge creates a new non-dispatching GitHub intake issue with label:
    - `external:reviewer`
 
-Untargeted reviewer messages intentionally do not get `agent:ready` by default.
-A human or later intake policy must opt them into coding dispatch after deciding that
+   The mentioned target and whether it currently exists are recorded in the issue body.
+   Public-sheet intake intentionally does not comment on the target PR/issue or apply operational labels like `agent:needs-fix`.
+2. If no target is found, the bridge creates a new non-dispatching GitHub intake issue with label:
+   - `external:reviewer`
+
+Reviewer messages intentionally do not get `agent:ready` by default.
+A human or later trusted intake policy must opt them into coding dispatch after deciding that
 the message is an actionable implementation request rather than review prose,
 hypothesis, or context.
 
