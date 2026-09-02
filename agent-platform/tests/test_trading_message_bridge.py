@@ -100,6 +100,13 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(calls[2][0], "POST")
         self.assertIn("/issues/257/labels", calls[2][1])
 
+    def test_intake_labels_ignore_operational_label_requests(self):
+        self.assertEqual(
+            bridge.intake_labels("external:reviewer,agent:ready,agent:needs-fix,bug"),
+            ["external:reviewer"],
+        )
+        self.assertEqual(bridge.intake_labels(""), ["external:reviewer"])
+
     def test_targeted_message_is_preserved_as_non_dispatching_intake_issue(self):
         calls = []
 
