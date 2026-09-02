@@ -25,6 +25,10 @@ DEFAULT_REPO = os.environ.get("TRADING_GITHUB_REPO", "trader")
 DEFAULT_TOKEN_CMD = os.environ.get("TRADING_AGENT_TOKEN_CMD", "trading-agent-token")
 DEFAULT_STATE = Path(os.environ.get("TRADING_MESSAGE_BRIDGE_STATE", "/agents/orchestrator/state/message-bridge-state.json"))
 DEFAULT_LABELS = ["external:reviewer"]
+LABEL_DEFINITIONS = {
+    "external:reviewer": {"color": "5319E7", "description": "External reviewer intake routed into GitHub"},
+    "agent:needs-fix": {"color": "D93F0B", "description": "Agent PR needs follow-up fixes"},
+}
 GITHUB_TARGET_RE = re.compile(r"github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)")
 LOCAL_TARGET_RE = re.compile(r"\b(?:PR|pr|Issue|issue)\s*#\s*(\d+)\b")
 
@@ -109,9 +113,32 @@ def github_issue_exists(owner: str, repo: str, number: int, token: str) -> bool:
         raise
 
 
+def ensure_label(owner: str, repo: str, label: str, token: str) -> None:
+    definition = LABEL_DEFINITIONS.get(label)
+    if not definition:
+        return
+    try:
+        github_request("GET", f"https://api.github.com/repos/{owner}/{repo}/labels/{label}", token)
+    except RuntimeError as exc:
+        if "HTTP 404" not in str(exc):
+            raise
+        github_request(
+            "POST",
+            f"https://api.github.com/repos/{owner}/{repo}/labels",
+            token,
+            {"name": label, **definition},
+        )
+
+
+def ensure_labels(owner: str, repo: str, labels: list[str], token: str) -> None:
+    for label in labels:
+        ensure_label(owner, repo, label, token)
+
+
 def add_labels(owner: str, repo: str, number: int, labels: list[str], token: str) -> None:
     if not labels:
         return
+    ensure_labels(owner, repo, labels, token)
     github_request("POST", f"https://api.github.com/repos/{owner}/{repo}/issues/{number}/labels", token, {"labels": labels})
 
 
@@ -159,6 +186,7 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
             assert token is not None
             if not github_issue_exists(args.owner, args.repo, target, token):
                 labels = [label for label in labels if label != "agent:ready"]
+                ensure_labels(args.owner, args.repo, labels, token)
                 issue = github_request(
                     "POST",
                     f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",
@@ -188,6 +216,7 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
     }
     if not args.dry_run:
         assert token is not None
+        ensure_labels(args.owner, args.repo, labels, token)
         issue = github_request(
             "POST",
             f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",

@@ -77,6 +77,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["token"], "secret")
         self.assertEqual(payload["after_row"], "1")
 
+    def test_add_labels_provisions_known_missing_labels(self):
+        calls = []
+
+        def fake_request(method, url, token, payload=None):
+            calls.append((method, url, payload))
+            if method == "GET" and url.endswith("/labels/external:reviewer"):
+                raise RuntimeError("GitHub API GET label failed with HTTP 404: not found")
+            return {}
+
+        original_request = bridge.github_request
+        bridge.github_request = fake_request
+        self.addCleanup(setattr, bridge, "github_request", original_request)
+
+        bridge.add_labels("atzmonpersonalassistant", "trader", 257, ["external:reviewer"], "gh-token")
+
+        self.assertEqual(calls[0][0], "GET")
+        self.assertIn("/labels/external:reviewer", calls[0][1])
+        self.assertEqual(calls[1][0], "POST")
+        self.assertTrue(calls[1][1].endswith("/labels"))
+        self.assertEqual(calls[1][2]["name"], "external:reviewer")
+        self.assertEqual(calls[2][0], "POST")
+        self.assertIn("/issues/257/labels", calls[2][1])
+
     def test_missing_target_is_preserved_as_new_intake_issue(self):
         calls = []
 
@@ -108,9 +131,10 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(result["action"], "create_issue_missing_target")
         self.assertEqual(result["created_issue"], 321)
         self.assertEqual(calls[0], ("exists", 999999))
-        self.assertIn("/issues", calls[1][1])
-        self.assertEqual(calls[1][2]["labels"], ["external:reviewer"])
-        self.assertIn("Missing target", calls[1][2]["body"])
+        issue_calls = [call for call in calls if call[0] == "POST" and call[1].endswith("/issues")]
+        self.assertEqual(len(issue_calls), 1)
+        self.assertEqual(issue_calls[0][2]["labels"], ["external:reviewer"])
+        self.assertIn("Missing target", issue_calls[0][2]["body"])
 
     def test_labels_before_comment_to_avoid_duplicate_comments_on_label_failure(self):
         calls = []
@@ -133,9 +157,12 @@ class BridgeTests(unittest.TestCase):
         row = {"row": 8, "message": "PR #257 please check", "created_at": "now"}
         bridge.process_row(args, row, "gh-token")
 
-        self.assertIn("/issues/257", calls[0][1])
-        self.assertIn("/labels", calls[1][1])
-        self.assertIn("/comments", calls[2][1])
+        ordered_urls = [call[1] for call in calls]
+        issue_check = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257"))
+        label_apply = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257/labels"))
+        comment_post = next(i for i, url in enumerate(ordered_urls) if url.endswith("/issues/257/comments"))
+        self.assertLess(issue_check, label_apply)
+        self.assertLess(label_apply, comment_post)
 
     def test_default_new_issue_labels_do_not_auto_dispatch(self):
         self.assertEqual(bridge.DEFAULT_LABELS, ["external:reviewer"])
