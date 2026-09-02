@@ -77,7 +77,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["token"], "secret")
         self.assertEqual(payload["after_row"], "1")
 
-    def test_missing_target_is_processed_without_comment_or_labels(self):
+    def test_missing_target_is_preserved_as_new_intake_issue(self):
         calls = []
 
         def fake_exists(owner, repo, number, token):
@@ -86,7 +86,7 @@ class BridgeTests(unittest.TestCase):
 
         def fake_request(method, url, token, payload=None):
             calls.append((method, url, payload))
-            return {}
+            return {"number": 321}
 
         original_exists = bridge.github_issue_exists
         original_request = bridge.github_request
@@ -97,7 +97,7 @@ class BridgeTests(unittest.TestCase):
 
         args = type("Args", (), {
             "default_target": None,
-            "labels": "external:reviewer",
+            "labels": "external:reviewer,agent:ready",
             "dry_run": False,
             "owner": "atzmonpersonalassistant",
             "repo": "trader",
@@ -105,8 +105,12 @@ class BridgeTests(unittest.TestCase):
         row = {"row": 9, "message": "PR #999999 please check", "created_at": "now"}
         result = bridge.process_row(args, row, "gh-token")
 
-        self.assertEqual(result["action"], "missing_target")
-        self.assertEqual(calls, [("exists", 999999)])
+        self.assertEqual(result["action"], "create_issue_missing_target")
+        self.assertEqual(result["created_issue"], 321)
+        self.assertEqual(calls[0], ("exists", 999999))
+        self.assertIn("/issues", calls[1][1])
+        self.assertEqual(calls[1][2]["labels"], ["external:reviewer"])
+        self.assertIn("Missing target", calls[1][2]["body"])
 
     def test_labels_before_comment_to_avoid_duplicate_comments_on_label_failure(self):
         calls = []

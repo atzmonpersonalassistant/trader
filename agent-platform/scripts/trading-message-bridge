@@ -137,9 +137,9 @@ def bridge_comment_body(row: dict[str, Any]) -> str:
     )[:65000]
 
 
-def issue_title(row: dict[str, Any]) -> str:
+def issue_title(row: dict[str, Any], prefix: str = "External reviewer request") -> str:
     first = " ".join((row.get("message") or "").strip().split())[:80]
-    return f"External reviewer request from bridge row {row['row']}: {first or 'message'}"
+    return f"{prefix} from bridge row {row['row']}: {first or 'message'}"
 
 
 def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None) -> dict[str, Any]:
@@ -158,7 +158,19 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
         if not args.dry_run:
             assert token is not None
             if not github_issue_exists(args.owner, args.repo, target, token):
-                action["action"] = "missing_target"
+                labels = [label for label in labels if label != "agent:ready"]
+                issue = github_request(
+                    "POST",
+                    f"https://api.github.com/repos/{args.owner}/{args.repo}/issues",
+                    token,
+                    {
+                        "title": issue_title(row, f"External reviewer message for missing target #{target}"),
+                        "body": bridge_comment_body(row) + f"\n\nMissing target: issue/PR #{target} was not found, so the bridge preserved this as a new intake issue instead of dropping or retrying the row.",
+                        "labels": labels,
+                    },
+                )
+                action["action"] = "create_issue_missing_target"
+                action["created_issue"] = issue.get("number")
                 action["error"] = f"target issue/PR #{target} was not found"
                 return action
             # Apply idempotent labels before publishing the non-idempotent comment.
