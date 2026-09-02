@@ -22,9 +22,13 @@ For every new `message_log` row after the stored `last_row`:
 1. If the message contains a GitHub PR/issue URL or `PR #123` / `issue #123`, the bridge posts a comment to that GitHub issue/PR and adds:
    - `agent:needs-fix`
    - `external:reviewer`
-2. If no target is found, the bridge creates a new GitHub issue with labels:
+2. If no target is found, the bridge creates a new GitHub issue with label:
    - `external:reviewer`
-   - `agent:ready`
+
+Untargeted reviewer messages intentionally do not get `agent:ready` by default.
+A human or later intake policy must opt them into coding dispatch after deciding that
+the message is an actionable implementation request rather than review prose,
+hypothesis, or context.
 
 The local state file stores the last processed Sheet row, so rows are not replayed.
 
@@ -48,7 +52,7 @@ To avoid replaying old historical Sheet rows:
 trading-message-bridge --start-at-latest
 ```
 
-Then subsequent runs can poll normally:
+Then subsequent runs can poll normally. The bridge calls the Apps Script read API with POST JSON so the shared token is not placed in URL query strings:
 
 ```bash
 trading-message-bridge

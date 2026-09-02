@@ -74,6 +74,30 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["token"], "secret")
         self.assertEqual(payload["after_row"], "1")
 
+    def test_labels_before_comment_to_avoid_duplicate_comments_on_label_failure(self):
+        calls = []
+
+        def fake_request(method, url, token, payload=None):
+            calls.append((method, url, payload))
+            return {}
+
+        original = bridge.github_request
+        bridge.github_request = fake_request
+        self.addCleanup(setattr, bridge, "github_request", original)
+
+        args = type("Args", (), {
+            "default_target": None,
+            "labels": "external:reviewer",
+            "dry_run": False,
+            "owner": "atzmonpersonalassistant",
+            "repo": "trader",
+        })()
+        row = {"row": 8, "message": "PR #257 please check", "created_at": "now"}
+        bridge.process_row(args, row, "gh-token")
+
+        self.assertIn("/labels", calls[0][1])
+        self.assertIn("/comments", calls[1][1])
+
     def test_default_new_issue_labels_do_not_auto_dispatch(self):
         self.assertEqual(bridge.DEFAULT_LABELS, ["external:reviewer"])
 

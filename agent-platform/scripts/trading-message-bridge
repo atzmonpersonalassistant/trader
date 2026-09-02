@@ -141,8 +141,10 @@ def process_row(args: argparse.Namespace, row: dict[str, Any], token: str | None
         }
         if not args.dry_run:
             assert token is not None
-            github_request("POST", f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target}/comments", token, {"body": bridge_comment_body(row)})
+            # Apply idempotent labels before publishing the non-idempotent comment.
+            # If labeling fails, the row can retry without duplicating a comment.
             add_labels(args.owner, args.repo, target, ["agent:needs-fix", "external:reviewer"], token)
+            github_request("POST", f"https://api.github.com/repos/{args.owner}/{args.repo}/issues/{target}/comments", token, {"body": bridge_comment_body(row)})
         return action
 
     action = {
