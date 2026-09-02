@@ -3266,6 +3266,58 @@ class MVP0AgentTests(unittest.TestCase):
         self.assertFalse(malformed_passed)
         self.assertIn("did not start with PASS or FAIL", malformed_text)
 
+    def test_review_model_pass_does_not_mask_deterministic_failure_or_report_malformed(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        deterministic_pass = {"pass": True, "findings": [], "checklist": []}
+        deterministic_fail = {"pass": False, "findings": ["deterministic finding"], "checklist": []}
+        model_pass = {"returncode": 0, "review_text": "PASS\nLooks good"}
+        model_fail = {"returncode": 0, "review_text": "FAIL\nProblem found"}
+        model_malformed = {"returncode": 0, "review_text": "Looks okay but missing prefix"}
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            _, det_pass_model_pass_text, det_pass_model_pass_passed = review.write_review(
+                tmp_path,
+                30,
+                deterministic_pass,
+                dict(model_pass),
+            )
+            _, det_fail_model_pass_text, det_fail_model_pass_passed = review.write_review(
+                tmp_path,
+                31,
+                deterministic_fail,
+                dict(model_pass),
+            )
+            _, det_fail_model_fail_text, det_fail_model_fail_passed = review.write_review(
+                tmp_path,
+                32,
+                deterministic_fail,
+                dict(model_fail),
+            )
+            _, det_pass_model_malformed_text, det_pass_model_malformed_passed = review.write_review(
+                tmp_path,
+                33,
+                deterministic_pass,
+                dict(model_malformed),
+            )
+
+        self.assertTrue(det_pass_model_pass_passed)
+        self.assertIn("Result: PASS", det_pass_model_pass_text)
+        self.assertNotIn("did not start with PASS or FAIL", det_pass_model_pass_text)
+
+        self.assertFalse(det_fail_model_pass_passed)
+        self.assertIn("Result: FAIL", det_fail_model_pass_text)
+        self.assertIn("deterministic finding", det_fail_model_pass_text)
+        self.assertNotIn("did not start with PASS or FAIL", det_fail_model_pass_text)
+
+        self.assertFalse(det_fail_model_fail_passed)
+        self.assertIn("Result: FAIL", det_fail_model_fail_text)
+        self.assertIn("deterministic finding", det_fail_model_fail_text)
+        self.assertNotIn("did not start with PASS or FAIL", det_fail_model_fail_text)
+
+        self.assertFalse(det_pass_model_malformed_passed)
+        self.assertIn("did not start with PASS or FAIL", det_pass_model_malformed_text)
+
     def test_agent_command_timeout_redacts_tokens(self):
         review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
         url_fixture = "https://x-access-token:" + "ghs_TIMEOUTSECRET" + "@github.com/owner/repo.git"
@@ -3371,6 +3423,37 @@ class MVP0AgentTests(unittest.TestCase):
             _, review_text, passed = review.write_review(Path(tmp), 13, token_unsafe, None)
         self.assertFalse(passed)
         self.assertIn("raw diff was not sent to the model", review_text)
+
+    def test_review_risk_sensitive_vocabulary_finding_reports_matched_terms(self):
+        review = load("trading_review_agent", "agent-platform/tools/trading_review_agent.py")
+        ibkr_only = review.deterministic_review({
+            "diff": '-    sensitive_terms = ("auth", "secret", "deploy", "workflow", "risk", "trading", "ibkr")\n',
+            "pr": {"labels": []},
+        })
+        multiple_terms = review.deterministic_review({
+            "diff": '+    sensitive_terms = ("live trading", "ibkr", "position sizing", "risk limit")\n',
+            "pr": {"labels": []},
+        })
+        approved = review.deterministic_review({
+            "diff": "+risk limit docs mention ibkr\n",
+            "pr": {"labels": [{"name": "human:approved"}]},
+        })
+
+        self.assertFalse(ibkr_only["pass"])
+        self.assertEqual(
+            ibkr_only["findings"],
+            ["Diff mentions risk-sensitive vocabulary ('ibkr'); requires human:approved label."],
+        )
+        self.assertFalse(multiple_terms["pass"])
+        self.assertEqual(
+            multiple_terms["findings"],
+            [
+                "Diff mentions risk-sensitive vocabulary "
+                "('live trading', 'ibkr', 'position sizing', 'risk limit'); requires human:approved label."
+            ],
+        )
+        self.assertTrue(approved["pass"])
+        self.assertEqual(approved["findings"], [])
 
 
 
