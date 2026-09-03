@@ -222,7 +222,7 @@ case "$CMD" in
         --symbols) validate_symbols "${2:-}"; OUT+=(--symbols "$2"); HAVE_SCOPE=1; HAVE_SYMBOLS=1; shift 2 ;;
         --max-chunks) safe_int "${2:-}" || fail "invalid --max-chunks"; (( 1 <= 10#$2 && 10#$2 <= 2 )) || fail "--max-chunks must be 1..2"; OUT+=(--max-chunks "$2"); HAVE_SCOPE=1; HAVE_MAX_CHUNKS=1; shift 2 ;;
         --start-offset) safe_int "${2:-}" || fail "invalid --start-offset"; (( 0 <= 10#$2 && 10#$2 <= 2000 )) || fail "--start-offset must be 0..2000"; OUT+=(--start-offset "$2"); shift 2 ;;
-        --years) safe_int "${2:-}" || fail "invalid --years"; (( 1 <= 10#$2 && 10#$2 <= 2 )) || fail "run --years must be 1..2"; YEARS="$2"; shift 2 ;;
+        --years) safe_int "${2:-}" || fail "invalid --years"; (( 1 <= 10#$2 && 10#$2 <= 10 )) || fail "run --years must be 1..10"; YEARS="$2"; shift 2 ;;
         --parallel) safe_int "${2:-}" || fail "invalid --parallel"; (( 10#$2 == 1 )) || fail "--parallel must be 1"; PARALLEL="$2"; shift 2 ;;
         --chunk-size) safe_int "${2:-}" || fail "invalid --chunk-size"; (( 1 <= 10#$2 && 10#$2 <= 25 )) || fail "--chunk-size must be 1..25"; CHUNK_SIZE="$2"; shift 2 ;;
         --end-to-end) OUT+=(--end-to-end); shift ;;

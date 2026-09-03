@@ -454,7 +454,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn('resolved run-dir outside approved research roots', wrapper)
         self.assertIn('run-dir must not be a symlink or alias', wrapper)
         self.assertIn('--not*', wrapper)
-        self.assertIn('run --years must be 1..2', wrapper)
+        self.assertIn('run --years must be 1..10', wrapper)
         self.assertIn('historical must be scoped by --run-dir', wrapper)
         self.assertIn('summarize must be scoped by --run-dir', wrapper)
         self.assertNotIn('--run-id) safe_id', wrapper)
